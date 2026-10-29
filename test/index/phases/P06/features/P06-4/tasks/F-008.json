@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-4-f008-pi-mcp-session.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f008-pi-mcp-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f008-pi-mcp-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f001-mcp-startup-plan.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f005-mcp-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f006-mcp-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f007-mcp-audit.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f007-mcp-native-redaction.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-3-f004-resource-binding.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-adapter.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-runner.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-composition.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-stopping.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-2-access-integration.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-4-pi-managed-session.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts", "all": true },
+      { "file": "test/modules/host/p05-1-f006-submission-tools.test.ts", "all": true },
+      { "file": "test/modules/authorization/p04-2-work-tool-channel.test.ts", "all": true },
+      { "file": "test/modules/host/p04-2-work-tools.test.ts", "all": true }
+    ]
+  }]
+}

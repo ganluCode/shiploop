@@ -115,6 +115,8 @@ export function createSqliteAtomicCommandStore(
             state.createProjectWithBindingInTransaction(project, binding, {
               recordRegisteredEvent: true,
             })),
+          rebindRepository: guarded(state.rebindRepositoryInTransaction),
+          listRepositoryBindingSnapshots: guarded(state.listRepositoryBindingSnapshots),
           // F-009：配置读写原语；创建路径同事务写 settings.*_created 创建事件
           // （P01 直接服务首建不写，契约 §15.3），更新路径复用 P01 既有 *_updated 写入。
           getGlobalSettingsOrNull: guarded(state.getGlobalSettingsOrNull),
@@ -150,7 +152,14 @@ export function createSqliteAtomicCommandStore(
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),
           // P03-1 / F-007：纯标签 CAS 编辑（只触达 labels/revision/updated_at）。
-          updatePlanEntityLabels: guarded(plan.updatePlanEntityLabelsInTransaction),
+          updatePlanEntityLabels: guarded((input: unknown) => {
+            const entityType = typeof input === 'object' && input !== null
+              ? (input as { readonly entityType?: unknown }).entityType
+              : undefined;
+            return entityType === 'run'
+              ? executions.updateExecutionRunLabelsInTransaction(input)
+              : plan.updatePlanEntityLabelsInTransaction(input);
+          }),
           // P03-1 / F-004：计划域脱敏事件追加（同一 BEGIN IMMEDIATE 内原子生效）。
           appendPlanEvent: guarded(plan.appendPlanEventInTransaction),
           // P03-1 / F-005：导入事务内重核原语（Phase/制品/既有任务身份，只读）。
@@ -163,6 +172,7 @@ export function createSqliteAtomicCommandStore(
           replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
           // P03-2 / F-001：Task 策略副本 CAS 编辑事务内读取与写入原语。
           getTask: guarded(plan.getTaskInTransaction),
+          readTaskStrategyReapplicationViewInTransaction: guarded(plan.readTaskStrategyReapplicationViewInTransaction),
           blockTaskApproval: guarded((input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }) => {
             const task = plan.getTaskInTransaction(input.projectId, input.taskId);
             if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {

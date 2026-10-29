@@ -69,7 +69,7 @@ function previewMembers(preview: Awaited<ReturnType<Awaited<ReturnType<typeof op
 function runRecord(id: string, featureId: string): RunRecord {
   return {
     id, createdAtUtcMs: NOW, projectId: 'project-1', revision: 1, updatedAtUtcMs: NOW,
-    batchId: 'batch-f009', featureId, purpose: 'execute', inputSnapshot: {}, configSnapshot: {}, status: 'queued',
+    batchId: 'batch-f009', featureId, purpose: 'execute', labels: [], inputSnapshot: {}, configSnapshot: {}, status: 'queued',
     scopeDigest: 'a'.repeat(64), workKey: `work-${id}`, dispatchOrdinal: 1, maxAttemptsPerRun: 1,
     runTimeLimitMs: 60_000, attemptsCreated: 0, reason: null, startedAtUtcMs: null, endedAtUtcMs: null,
     pauseRequestedAtUtcMs: null,

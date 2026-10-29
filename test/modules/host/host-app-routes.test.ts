@@ -716,7 +716,12 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
         'execution.retryFinal',
         'project.register',
+        'project.repository.rebind',
         'project.metadata.update',
+        'project.profile.confirm',
+        'project.profile.detect',
+        'project.profile.modify',
+        'project.profile.reject',
         'settings.global.create',
         'settings.global.update',
         'settings.project.create',
@@ -743,6 +748,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'feature.plan.revise',
         // P03-2 / F-001：Task 策略副本 CAS 编辑随 Core 白名单进入接线宣告。
         'task.strategy.update',
+        // P06-6 / F-004：默认策略批量重应用随 Core 白名单进入接线宣告。
+        'task.strategy.reapply',
         // P03-2 / F-002：计划批准/拒绝决策随 Core 白名单进入接线宣告。
         'feature.plan.decide',
         'task.approval.block',
@@ -770,6 +777,10 @@ describe('F-011 传输纪律与版本门禁', () => {
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
+        'project.resource.import',
+        'project.resource.enable',
+        'project.resource.disable',
+        'project.resource.revoke',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -965,7 +976,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       path: '/v1/host/handshake',
       token: STUB_TOKEN,
       body: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         protocolVersion: 1,
         hostInstanceId: STUB_INSTANCE,
         dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -976,7 +987,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       expectedHostInstanceId: STUB_INSTANCE,
       expectedDataRootIdentity: STUB_ROOT_IDENTITY,
     });
-    expect(validated.schemaVersion).toBe(5);
+    expect(validated.schemaVersion).toBe(6);
     expect(validated.capabilities.application).toEqual({
       commands: [
         'execution.attempt.cancel',
@@ -988,7 +999,13 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
         'execution.retryFinal',
         'project.register',
+        'repository.move.confirm',
+        'project.repository.rebind',
         'project.metadata.update',
+        'project.profile.confirm',
+        'project.profile.detect',
+        'project.profile.modify',
+        'project.profile.reject',
         'settings.global.create',
         'settings.global.update',
         'settings.project.create',
@@ -1014,6 +1031,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'feature.plan.revise',
         // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线。
         'task.strategy.update',
+        // P06-6 / F-004：默认策略批量重应用经既有 /v1/commands 通用路由接线。
+        'task.strategy.reapply',
         // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
         'feature.plan.decide',
         'task.approval.block',
@@ -1034,6 +1053,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
+        'project.resource.import',
+        'project.resource.enable',
+        'project.resource.disable',
+        'project.resource.revoke',
       ],
       queries: [
         'execution.sessions.list',
@@ -1048,6 +1071,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'projects.labelCounts',
         'projects.inspect',
         'projects.overview',
+        'projects.profile.get',
+        'projects.profile.match',
         'settings.global.get',
         'settings.global.export',
         'settings.project.get',
@@ -1068,6 +1093,12 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'features.get',
         'tasks.list',
         'tasks.get',
+        // P06-6 / F-007：四层标签 Run 列表与实体标签计数查询真实接线
+        //（能力位复用 project.read；与 Core runs.list / labels.counts 同步）。
+        'runs.list',
+        'labels.counts',
+        // P06-6 / F-001：默认策略重应用只读预览查询真实接线。
+        'task.strategy.reapply.preview',
         // P03-2 / F-007：审批决策查询真实接线（能力位复用 project.read）。
         'features.approvals',
         // P03-3 / F-011：预算状态与修订历史只读查询经 Batch 路由真实接线。
@@ -1106,6 +1137,12 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'planning.contexts.list',
         'planning.context.get',
         'planning.candidate.get',
+        'project.resources.list',
+        'project.resources.candidates',
+        'project.resources.preview',
+        // P06-3 / F-006：owner 管理入口来源登记经真实 Host 路由接线并宣告能力。
+        'project.resources.sources.configure',
+        'repository.move.preview',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
@@ -1149,7 +1186,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 5,
+          schemaVersion: 6,
           protocolVersion: 1,
           hostInstanceId: discovery.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,

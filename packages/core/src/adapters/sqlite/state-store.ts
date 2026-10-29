@@ -50,6 +50,7 @@
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { PrincipalScope } from '../../ports/authorization.js';
+import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
@@ -69,6 +70,7 @@ import {
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
   PROJECT_SETTINGS_CREATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
   projectMetadataChangedFields,
@@ -76,6 +78,7 @@ import {
   validateCreateProjectInput,
   validateCreateProjectSettingsInput,
   validateCreateRepositoryBindingInput,
+  validateRebindRepositoryInput,
   validateProjectListFilter,
   validateUpdateProjectInput,
   validatePutSettingsInput,
@@ -92,6 +95,8 @@ import type {
   ProjectWithInitialSettingsRecord,
   ProjectWithRepositoryBindingResult,
   RepositoryBindingRecord,
+  RepositoryBindingSnapshotRecord,
+  RepositoryRebindResult,
   SettingsWriteConsistency,
   StateStore,
   ValidatedCreateProjectInput,
@@ -142,6 +147,35 @@ interface RepositoryBindingRow {
   readonly git_common_dir: string | null;
   readonly repo_identity: string;
   readonly binding_revision: number;
+}
+
+interface RepositoryBindingSnapshotRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly binding_id: string;
+  readonly revision: number;
+  readonly binding_revision: number;
+  readonly canonical_path: string;
+  readonly git_common_dir: string | null;
+  readonly repo_identity: string;
+  readonly captured_at: number;
+  readonly change_kind: 'previous' | 'current';
+}
+
+function bindingSnapshotFromRow(row: RepositoryBindingSnapshotRow): RepositoryBindingSnapshotRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    bindingId: row.binding_id,
+    revision: row.revision,
+    bindingRevision: row.binding_revision,
+    canonicalPath: row.canonical_path,
+    gitCommonDir: row.git_common_dir,
+    repoIdentity: row.repo_identity,
+    capturedAtUtcMs: row.captured_at,
+    changeKind: row.change_kind,
+  };
 }
 
 function bindingFromRow(row: RepositoryBindingRow): RepositoryBindingRecord {
@@ -405,6 +439,9 @@ export function createSqliteStateAccess(
     bindingInput: unknown,
     options?: { readonly timestamp?: number; readonly recordRegisteredEvent?: boolean },
   ): ProjectWithRepositoryBindingResult;
+  /** F-003：项目绑定 CAS 更新；调用方必须已持有写事务。 */
+  rebindRepositoryInTransaction(projectId: string, input: unknown, timestamp?: number): RepositoryRebindResult;
+  listRepositoryBindingSnapshots(projectId: string): readonly RepositoryBindingSnapshotRecord[];
   /** F-009：全局当前配置同步读取（未配置 null）；原子命令事务内外复用同一实现。 */
   getGlobalSettingsOrNull(): GlobalSettingsRecord | null;
   /** F-009：项目当前配置同步读取（未配置 null）。 */
@@ -423,13 +460,13 @@ export function createSqliteStateAccess(
   createProjectSettingsInTransaction(
     projectId: string,
     input: unknown,
-    options?: { readonly timestamp?: number; readonly recordCreatedEvent?: boolean },
+    options?: { readonly timestamp?: number; readonly recordCreatedEvent?: boolean; readonly resourceWrite?: boolean },
   ): ProjectSettingsRecord;
   /** F-009：项目配置 expectedRevision CAS 更新同步原语（consistency 先于 CAS 核对）。 */
   updateProjectSettingsInTransaction(
     projectId: string,
     input: unknown,
-    options?: { readonly timestamp?: number },
+    options?: { readonly timestamp?: number; readonly resourceWrite?: boolean },
   ): ProjectSettingsRecord;
   /** F-010：可见范围下推的项目列表查询（复用 P01 筛选/分页 SQL 构建）。 */
   listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage;
@@ -565,7 +602,9 @@ export function createSqliteStateAccess(
     projectId: string,
   ): RepositoryBindingRow | undefined {
     return db
-      .prepare<[string], RepositoryBindingRow>('SELECT * FROM repository_bindings WHERE project_id = ?')
+      .prepare<[string], RepositoryBindingRow>(
+        'SELECT repository_bindings.* FROM repository_bindings JOIN projects ON projects.repository_binding_id = repository_bindings.id WHERE projects.id = ?',
+      )
       .get(projectId) as RepositoryBindingRow | undefined;
   }
 
@@ -678,6 +717,8 @@ export function createSqliteStateAccess(
   interface SettingsWritePrimitiveOptions {
     readonly timestamp?: number;
     readonly recordCreatedEvent?: boolean;
+    /** Adapter-only: bypass generic settings resource guard after resource service validation. */
+    readonly resourceWrite?: boolean;
   }
 
   /** 全局当前配置同步读取；未配置返回 null（不是错误），损坏 JSON/未知版本仍 corrupt。 */
@@ -819,6 +860,11 @@ export function createSqliteStateAccess(
     const id = validateProjectId(projectId, operation, 'project_settings');
     const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
     const valid = validateCreateProjectSettingsInput(input, operation, entity);
+    if (valid.payload.projectResources !== undefined && options.resourceWrite !== true) {
+      throw new StorageError('validation', operation, 'Resource changes require the resource service', {
+        entity, details: { reason: 'resource_service_required' },
+      });
+    }
     const timestamp = options.timestamp ?? nowUtcMs();
     const context: ValidationContext = { operation, entity };
     const db = session.database;
@@ -868,6 +914,15 @@ export function createSqliteStateAccess(
     const id = validateProjectId(projectId, operation, 'project_settings');
     const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
     const valid = validateUpdateProjectSettingsInput(input, operation, entity);
+    if (valid.payload.projectResources !== undefined && options.resourceWrite !== true) {
+      throw new StorageError('validation', operation, 'Resource changes require the resource service', {
+        entity, details: { reason: 'resource_service_required' },
+      });
+    }
+    // Ordinary settings replacements retain the Core-managed section. Its revision
+    // shares this exact row/CAS; it cannot be erased by an older settings client.
+    const currentResources = options.resourceWrite === true ? undefined : getProjectSettingsOrNull(id)?.payload.projectResources;
+    const payload = currentResources === undefined ? valid.payload : { ...valid.payload, projectResources: currentResources };
     const timestamp = options.timestamp ?? nowUtcMs();
     const context: ValidationContext = { operation, entity };
     const db = session.database;
@@ -880,7 +935,7 @@ export function createSqliteStateAccess(
         'UPDATE project_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
           'WHERE project_id = ? AND revision = ?',
       )
-      .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), id, valid.expectedRevision);
+      .run(timestamp, payload.schemaVersion, JSON.stringify(payload), id, valid.expectedRevision);
     if (result.changes === 0) {
       requireCasTarget(
         (db
@@ -901,7 +956,7 @@ export function createSqliteStateAccess(
       aggregateType: 'project_settings',
       aggregateId: updated.id,
       aggregateRevision: updated.revision,
-      summary: settingsChangeSummary(valid.payload),
+      summary: settingsChangeSummary(payload),
     });
     return updated;
   }
@@ -1243,6 +1298,20 @@ export function createSqliteStateAccess(
     // 胜者已提交的绑定并复用，不新增行、不覆盖既有元数据、不写创建事件。
     const existing = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
     if (existing !== undefined) {
+      const legacyPathIdentity = validBinding.gitCommonDir === null
+        ? null
+        : deriveRepoIdentity(validBinding.gitCommonDir);
+      if (
+        existing.repo_identity !== validBinding.repoIdentity &&
+        existing.repo_identity !== legacyPathIdentity
+      ) {
+        throw conflict(
+          operation,
+          '规范路径已绑定到不同的本地仓库身份',
+          { type: 'repository_binding', projectId: existing.project_id },
+          { reason: 'repository_identity_mismatch' },
+        );
+      }
       return alreadyExistsResult(db, existing, operation);
     }
     insertProjectRow(db, projectId, timestamp, validProject);
@@ -1283,6 +1352,164 @@ export function createSqliteStateAccess(
     return bindingFromRow(row);
   }
 
+  /** F-004：重新绑定的资格门控必须与绑定 CAS 位于同一 BEGIN IMMEDIATE。租约到期、PID 消失
+   * 或客户端断开都不改变这些持久事实；只有领域收尾/释放原语才可移除占用。 */
+  function assertRepositoryRebindIdle(projectId: string, operation: string): void {
+    const db = session.database;
+    const baselineOccupancy = db.prepare<[], { holder_operation_id: string | null }>(
+      "SELECT holder_operation_id FROM baseline_occupancy WHERE id = 'global'",
+    ).get();
+    if (baselineOccupancy?.holder_operation_id !== null && baselineOccupancy?.holder_operation_id !== undefined) {
+      throw conflict(operation, '基线占用尚未安全释放，拒绝重新绑定', { type: 'baseline_occupancy', projectId }, {
+        reason: 'baseline_occupancy_unresolved',
+      });
+    }
+    const activeBaseline = db.prepare<[string], { id: string }>(
+      "SELECT id FROM baseline_operations WHERE project_id = ? AND status IN ('accepted', 'running', 'cancelling', 'interrupted') LIMIT 1",
+    ).get(projectId);
+    if (activeBaseline !== undefined) {
+      throw conflict(operation, '项目存在活动基线，拒绝重新绑定', { type: 'baseline_operation', id: activeBaseline.id, projectId }, {
+        reason: 'active_baseline',
+      });
+    }
+    const activeExecution = db.prepare<[string, string], { id: string }>(
+      "SELECT id FROM runs WHERE project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') UNION ALL SELECT id FROM execution_batches WHERE project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') LIMIT 1",
+    ).get(projectId, projectId);
+    if (activeExecution !== undefined) {
+      throw conflict(operation, '项目存在待执行或运行中的 Work，拒绝重新绑定', { type: 'run', id: activeExecution.id, projectId }, {
+        reason: 'active_work',
+      });
+    }
+    const activeAttempt = db.prepare<[string], { id: string }>(
+      "SELECT id FROM attempts WHERE project_id = ? AND status IN ('preparing', 'executing', 'verifying') LIMIT 1",
+    ).get(projectId);
+    if (activeAttempt !== undefined) {
+      throw conflict(operation, '项目存在活动 Attempt，拒绝重新绑定', { type: 'attempt', id: activeAttempt.id, projectId }, {
+        reason: 'active_attempt',
+      });
+    }
+    const retainedLease = db.prepare<[string], { id: string }>(
+      "SELECT id FROM workspace_leases WHERE project_id = ? AND state IN ('held', 'quarantined') LIMIT 1",
+    ).get(projectId);
+    if (retainedLease !== undefined) {
+      throw conflict(operation, '项目存在持有或隔离中的工作区占用，拒绝重新绑定', { type: 'workspace_lease', id: retainedLease.id, projectId }, {
+        reason: 'workspace_occupancy_unresolved',
+      });
+    }
+    const uncertainStop = db.prepare<[string], { id: string }>(
+      "SELECT id FROM execution_stop_operations WHERE project_id = ? AND status IN ('stopping', 'uncertain') LIMIT 1",
+    ).get(projectId);
+    if (uncertainStop !== undefined) {
+      throw conflict(operation, '项目存在停止未确认或恢复隔离状态，拒绝重新绑定', { type: 'workspace_operation', id: uncertainStop.id, projectId }, {
+        reason: 'stop_unconfirmed',
+      });
+    }
+  }
+
+  /**
+   * F-003：在一个 BEGIN IMMEDIATE 内创建新 binding 身份并切换项目指针。
+   * 旧 binding 行永不更新，因而基线/工作区/Git 记录的外键仍解析到原路径。
+   */
+  function rebindRepositoryInTransaction(
+    projectId: string,
+    input: unknown,
+    timestamp = nowUtcMs(),
+  ): RepositoryRebindResult {
+    const operation = 'StateStore.rebindRepository';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('仓库重新绑定必须位于写事务内');
+    const id = validateProjectId(projectId, operation, 'project');
+    const valid = validateRebindRepositoryInput(input, operation);
+    const project = selectProjectRow(session.database, id, operation);
+    if (project.status !== 'active') {
+      throw conflict(operation, '项目当前状态不允许重新绑定', { type: 'project', id }, {
+        reason: 'project_not_active', status: project.status,
+      });
+    }
+    assertRepositoryRebindIdle(id, operation);
+    const previousRow = selectBindingRowByProjectId(session.database, id);
+    if (previousRow === undefined) {
+      throw notFound(operation, { type: 'repository_binding', projectId: id }, `项目 ${id} 尚无仓库绑定`);
+    }
+    if (valid.expectedBindingId !== undefined && valid.expectedBindingId !== previousRow.id) {
+      throw conflict(operation, '当前绑定身份已变化，重新绑定 CAS 未命中', { type: 'repository_binding', projectId: id }, {
+        reason: 'binding_identity_mismatch', expectedBindingId: valid.expectedBindingId, actualBindingId: previousRow.id,
+      });
+    }
+    if (previousRow.revision !== valid.expectedRevision || previousRow.binding_revision !== valid.expectedBindingRevision) {
+      throw conflict(operation, '当前绑定 revision 已变化，重新绑定 CAS 未命中', { type: 'repository_binding', projectId: id }, {
+        reason: 'revision_mismatch', expectedRevision: valid.expectedRevision, actualRevision: previousRow.revision,
+        expectedBindingRevision: valid.expectedBindingRevision, actualBindingRevision: previousRow.binding_revision,
+      });
+    }
+    const occupied = selectBindingRowByCanonicalPath(session.database, valid.canonicalPath);
+    if (occupied !== undefined) {
+      throw conflict(operation, '目标规范路径已被其他绑定占用', { type: 'repository_binding', projectId: occupied.project_id }, {
+        reason: 'canonical_path_occupied', canonicalPath: valid.canonicalPath,
+      });
+    }
+    const nextBindingId = randomUUID();
+    const nextRevision = previousRow.revision + 1;
+    const nextBindingRevision = previousRow.binding_revision + 1;
+    session.database.prepare(
+      'INSERT INTO repository_bindings (id, created_at, project_id, revision, updated_at, canonical_path, git_common_dir, repo_identity, binding_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(nextBindingId, timestamp, id, nextRevision, timestamp, valid.canonicalPath, valid.gitCommonDir ?? null, valid.repoIdentity, nextBindingRevision);
+    const switched = session.database.prepare(
+      'UPDATE projects SET repository_binding_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND repository_binding_id = ?',
+    ).run(nextBindingId, timestamp, id, previousRow.id);
+    if (switched.changes !== 1) {
+      throw conflict(operation, '项目当前绑定已变化，重新绑定未提交', { type: 'project', id }, { reason: 'project_binding_mismatch' });
+    }
+    const snapshotRows: RepositoryBindingSnapshotRecord[] = [];
+    for (const [row, changeKind] of [[previousRow, 'previous'], [selectBindingRowByCanonicalPath(session.database, valid.canonicalPath), 'current']] as const) {
+      if (row === undefined) throw new Error(`${operation}: 新绑定行不可读，事务回滚`);
+      const snapshotId = randomUUID();
+      session.database.prepare(
+        'INSERT INTO repository_binding_snapshots (id, created_at, project_id, binding_id, revision, binding_revision, canonical_path, git_common_dir, repo_identity, captured_at, change_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(snapshotId, timestamp, id, row.id, row.revision, row.binding_revision, row.canonical_path, row.git_common_dir, row.repo_identity, timestamp, changeKind);
+      const snapshot = session.database.prepare< [string], RepositoryBindingSnapshotRow >(
+        'SELECT * FROM repository_binding_snapshots WHERE id = ?',
+      ).get(snapshotId) as RepositoryBindingSnapshotRow;
+      snapshotRows.push(bindingSnapshotFromRow(snapshot));
+    }
+    const updatedProject = projectFromRow(selectProjectRow(session.database, id, operation), {
+      operation, entity: { type: 'project', id },
+    });
+    insertStateEventRow(session.database, timestamp, {
+      projectId: id,
+      eventType: PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
+      aggregateType: 'project',
+      aggregateId: id,
+      aggregateRevision: updatedProject.revision,
+      summary: {
+        rebound: true,
+        previousBindingId: previousRow.id,
+        bindingId: nextBindingId,
+        previousBindingRevision: previousRow.binding_revision,
+        bindingRevision: nextBindingRevision,
+      },
+    });
+    const currentRow = selectBindingRowByCanonicalPath(session.database, valid.canonicalPath);
+    if (currentRow === undefined) throw new Error(`${operation}: 当前绑定行不可读，事务回滚`);
+    return {
+      project: updatedProject,
+      previousBinding: bindingFromRow(previousRow),
+      binding: bindingFromRow(currentRow),
+      snapshots: snapshotRows,
+    };
+  }
+
+  function listRepositoryBindingSnapshots(projectId: string): readonly RepositoryBindingSnapshotRecord[] {
+    const operation = 'StateStore.listRepositoryBindingSnapshots';
+    assertOpen(operation);
+    const id = validateProjectId(projectId, operation, 'repository_binding');
+    selectProjectRow(session.database, id, operation);
+    const rows = session.database.prepare<[string], RepositoryBindingSnapshotRow>(
+      'SELECT * FROM repository_binding_snapshots WHERE project_id = ? ORDER BY captured_at ASC, CASE change_kind WHEN \'previous\' THEN 0 ELSE 1 END, id ASC',
+    ).all(id) as RepositoryBindingSnapshotRow[];
+    return rows.map(bindingSnapshotFromRow);
+  }
+
   const store: StateStore = {
     async createProject(input: unknown): Promise<ProjectRecord> {
       const operation = 'StateStore.createProject';
@@ -1306,6 +1533,11 @@ export function createSqliteStateAccess(
       // 两个输入都在任何 SQL 之前完成校验：第二步校验失败不会残留项目行。
       const validProject = validateCreateProjectInput(projectInput, operation);
       const validSettings = validatePutSettingsInput(settingsInput, operation, { type: 'project_settings' });
+      if (validSettings.payload.projectResources !== undefined) {
+        throw new StorageError('validation', operation, 'Resource changes require the resource service', {
+          details: { reason: 'resource_service_required' },
+        });
+      }
       const timestamp = nowUtcMs();
       const projectId = randomUUID();
       const projectContext: ValidationContext = { operation, entity: { type: 'project', id: projectId } };
@@ -1366,6 +1598,18 @@ export function createSqliteStateAccess(
 
     async getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord> {
       return getRepositoryBinding(projectId);
+    },
+
+    async rebindRepository(projectId: string, input: unknown): Promise<RepositoryRebindResult> {
+      const operation = 'StateStore.rebindRepository';
+      assertOpen(operation);
+      const id = validateProjectId(projectId, operation, 'project');
+      validateRebindRepositoryInput(input, operation);
+      return session.transactWrite(operation, () => rebindRepositoryInTransaction(id, input));
+    },
+
+    async listRepositoryBindingSnapshots(projectId: string): Promise<readonly RepositoryBindingSnapshotRecord[]> {
+      return listRepositoryBindingSnapshots(projectId);
     },
 
     async updateProject(projectId: string, input: unknown): Promise<ProjectRecord> {
@@ -1445,6 +1689,8 @@ export function createSqliteStateAccess(
     getRepositoryBinding,
     updateProjectInTransaction,
     createProjectWithBindingInTransaction,
+    rebindRepositoryInTransaction,
+    listRepositoryBindingSnapshots,
     getGlobalSettingsOrNull,
     getProjectSettingsOrNull,
     createGlobalSettingsInTransaction,

@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-4-f005-mcp-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-stdio.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-fake-server.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f004-mcp-dispatch.test.ts", "all": true }
+    ]
+  }]
+}

@@ -101,6 +101,7 @@ const ALLOWED_OPTION_KEYS = [
   'capabilityCatalog',
   'runtimeRecoveryDescriptors',
   'runtimeRecoverySources',
+  'projectResourceSources',
   'platform',
   'env',
   'nativeAddonPath',
@@ -133,6 +134,8 @@ export interface HostStartOptions {
   readonly capabilityCatalog: RuntimeCapabilityCatalog;
   /** 可信恢复能力证据；仅静态装配，不能由 CLI、环境或请求提供。 */
   readonly runtimeRecoveryDescriptors?: readonly RuntimeRecoveryCapabilities[];
+  /** Trusted source resolver supplied by the embedding application, never argv or HTTP. */
+  readonly projectResourceSources?: CoreApplicationOptions['projectResourceSources'];
   /** Core 恢复来源权威；缺省时恢复来源请求保持拒绝。 */
   readonly runtimeRecoverySources?: RuntimeRecoverySourceReader;
   /** 平台注入口（默认 process.platform）；仅 'darwin' 受支持。 */
@@ -230,6 +233,10 @@ function validateStartOptions(options: HostStartOptions): void {
   }
   if (options.runtimeRecoveryDescriptors !== undefined && !Array.isArray(options.runtimeRecoveryDescriptors)) {
     throw invalidInput('invalid_recovery_descriptors', { field: 'runtimeRecoveryDescriptors' });
+  }
+  if (options.projectResourceSources !== undefined && (options.projectResourceSources === null
+    || typeof options.projectResourceSources !== 'object' || typeof options.projectResourceSources.getSource !== 'function')) {
+    throw invalidInput('trusted_resource_source_required', { field: 'projectResourceSources' });
   }
   if (options.runtimeRecoverySources !== undefined && (
     options.runtimeRecoverySources === null || typeof options.runtimeRecoverySources !== 'object'
@@ -380,6 +387,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       runtimeRecoveryDescriptors: recoveryDescriptors,
       ...(options.runtimeRecoverySources === undefined ? {}
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
+      ...(options.projectResourceSources === undefined ? {} : { projectResourceSources: options.projectResourceSources }),
       workRuntimeFactory: options.workRuntimeFactory,
       batchDeliveryFactory: options.batchDeliveryFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
@@ -512,11 +520,17 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         commandService: locked.writer.commandService,
         queryService: locked.writer.queryService,
         commandReceiptsService: locked.writer.commandReceiptsService,
+        projectResourceService: locked.writer.projectResourceService,
+        repositoryMoveService: locked.writer.repositoryMoveService,
         // P02-3 / F-006（§7.2/§7.3）：静态接入用例只经 Core 窄端口接线。
         onboardingService: locked.writer.onboardingService,
+        projectProfileService: locked.writer.projectProfileService,
         // P02-3 / F-014（§3.2/§7.4-§7.6）：基线查询与 baseline.run 执行编排接线
         //（与握手能力清单一致，不宣告未接线接口）。
         baselineQueryService: locked.writer.baselineQueryService,
+        baselineComparisonService: locked.writer.baselineComparisonService,
+        knowledgeQueryService: locked.writer.knowledgeQueryService,
+        memoryQueryService: locked.writer.memoryQueryService,
         baselineExecutionService: locked.writer.baselineExecutionService,
         // P05-1 / F-012：规划上下文/候选只读查询接线（与握手能力清单一致；
         // 授权/可见性/候选正文完整性全部在 Core 复核）。

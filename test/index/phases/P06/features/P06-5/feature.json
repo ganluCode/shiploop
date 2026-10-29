@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P06",
+  "feature": "P06-5",
+  "scope": "brownfield integration and affected regression indexes; not full/Phase/live acceptance",
+  "tasks": [
+    { "task_id": "F-001", "index": "test/index/phases/P06/features/P06-5/tasks/F-001.json" },
+    { "task_id": "F-002", "index": "test/index/phases/P06/features/P06-5/tasks/F-002.json" },
+    { "task_id": "F-003", "index": "test/index/phases/P06/features/P06-5/tasks/F-003.json" },
+    { "task_id": "F-004", "index": "test/index/phases/P06/features/P06-5/tasks/F-004.json" },
+    { "task_id": "F-005", "index": "test/index/phases/P06/features/P06-5/tasks/F-005.json" },
+    { "task_id": "F-006", "index": "test/index/phases/P06/features/P06-5/tasks/F-006.json" },
+    { "task_id": "F-007", "index": "test/index/phases/P06/features/P06-5/tasks/F-007.json" },
+    { "task_id": "F-008", "index": "test/index/phases/P06/features/P06-5/tasks/F-008.json" },
+    { "task_id": "F-009", "index": "test/index/phases/P06/features/P06-5/tasks/F-009.json" },
+    { "task_id": "F-010", "index": "test/index/phases/P06/features/P06-5/tasks/F-010.json" },
+    { "task_id": "F-011", "index": "test/index/phases/P06/features/P06-5/tasks/F-011.json" },
+    { "task_id": "F-012", "index": "test/index/phases/P06/features/P06-5/tasks/F-012.json" },
+    { "task_id": "F-013", "index": "test/index/phases/P06/features/P06-5/tasks/F-013.json" }
+  ]
+}

@@ -1,3 +1,5 @@
+import { validateProfileExecutionSnapshot } from './project-profile.js';
+import type { ProfileExecutionSnapshot } from './project-profile.js';
 import { validateWorkProcessIdentity } from './work-resources.js';
 import type { CommandProcessIdentity } from './command-process.js';
 import { validateRuntimeFallbackAttemptMetadata, type RuntimeFallbackAttemptMetadata } from './runtime-fallback-switch.js';
@@ -6,7 +8,8 @@ import {
   validatePlanningAttemptInputSnapshot,
   type PlanningAttemptInputSnapshot,
 } from './planning-claim.js';
-import { CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS, isContextBuildError, validateContextReworkInput, type ContextReworkInput } from './context-build.js';
+import { CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS, isContextBuildError, validateContextReworkInput,
+  validateContextKnowledgeInput, validateContextKnowledgeBudget, type ContextReworkInput } from './context-build.js';
 import { validateWorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
 import type { WorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
 import { validateExecutionInputRef } from './execution-input.js';
@@ -52,6 +55,8 @@ export interface AttemptRecord {
   readonly inputSnapshot: AttemptInputSnapshot;
   readonly inputDigest: string;
   readonly inputRef: string;
+  /** P06-1：Attempt 创建时固定的画像/能力模块身份摘要。 */
+  readonly profile?: ProfileExecutionSnapshot;
   /** Core identities, never SDK requestId/providerSessionId aliases. No Session table here. */
   readonly sessionId: string | null;
   readonly invocationId: string | null;
@@ -155,13 +160,25 @@ export function validateAttemptInputSnapshot(value: unknown): AttemptInputSnapsh
     return validatePlanningAttemptInputSnapshot(value);
   }
   const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
-    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework', 'recovery', 'runtimeFallback'], 'inputSnapshot');
+    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'profile', 'knowledge', 'knowledgeBudget', 'rework', 'recovery', 'runtimeFallback'], 'inputSnapshot');
   // 历史快照不随 ContextBuilder 升版失效：v1/v2 历史快照与当前版本均可读回，未知版本拒绝。
   const snapshotSchemaVersion = raw.schemaVersion as number;
   if (!(CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS as readonly number[]).includes(snapshotSchemaVersion)) {
     throw validationError(context, 'inputSnapshot.schemaVersion', 'unsupported_context_version');
   }
   const projectId = id(raw.projectId, 'inputSnapshot.projectId');
+  const profile = raw.profile === undefined || raw.profile === null ? undefined : validateProfileExecutionSnapshot(raw.profile);
+  let knowledge: PreparedExecutionInputGroup['knowledge'];
+  let knowledgeBudget: PreparedExecutionInputGroup['knowledgeBudget'];
+  if (raw.knowledge !== undefined || raw.knowledgeBudget !== undefined) {
+    if (snapshotSchemaVersion < 5) throw validationError(context, 'inputSnapshot.knowledge', 'knowledge_requires_context_v5');
+    try {
+      if (raw.knowledge !== undefined) knowledge = validateContextKnowledgeInput({ selections: raw.knowledge }, projectId).selections;
+      if (raw.knowledgeBudget !== undefined) knowledgeBudget = validateContextKnowledgeBudget(raw.knowledgeBudget);
+    } catch {
+      throw validationError(context, 'inputSnapshot.knowledge', 'invalid_knowledge');
+    }
+  }
   const group = object(raw.group, ['snapshot', 'manifest', 'prompt'], 'inputSnapshot.group');
   const digests = object(raw.digests, ['snapshotDigest', 'manifestDigest', 'promptDigest', 'strategyCopyDigest', 'permissionsDigest'], 'inputSnapshot.digests');
   const approval = object(raw.approval, ['planDigest', 'checkPolicyDigest', 'decisionId', 'featureRevision'], 'inputSnapshot.approval');
@@ -187,6 +204,9 @@ export function validateAttemptInputSnapshot(value: unknown): AttemptInputSnapsh
       checkPolicyDigest: digest(approval.checkPolicyDigest, 'inputSnapshot.approval.checkPolicyDigest'),
       decisionId: nullable(approval.decisionId, id, 'inputSnapshot.approval.decisionId'),
       featureRevision: positive(approval.featureRevision, 'inputSnapshot.approval.featureRevision') },
+    ...(profile === undefined ? {} : { profile }),
+    ...(knowledge === undefined ? {} : { knowledge }),
+    ...(knowledgeBudget === undefined ? {} : { knowledgeBudget }),
     taskRevision: positive(raw.taskRevision, 'inputSnapshot.taskRevision'), promptBytes: nonnegative(raw.promptBytes, 'inputSnapshot.promptBytes'),
     tokenEstimate: { value: nonnegative(estimate.value, 'inputSnapshot.tokenEstimate.value'),
       kind: member(estimate.kind, ['estimation'], 'inputSnapshot.tokenEstimate.kind'), method: text(estimate.method, 'inputSnapshot.tokenEstimate.method') },

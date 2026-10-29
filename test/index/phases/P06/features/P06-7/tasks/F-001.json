@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p06-acceptance-contract.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

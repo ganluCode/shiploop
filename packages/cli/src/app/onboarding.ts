@@ -49,12 +49,25 @@ export interface InitRequestView {
   readonly labels: readonly string[];
 }
 
+export interface ProjectHealthHistoryView {
+  readonly operation: {
+    readonly operationId: string;
+    readonly status: string;
+    readonly reasonCode?: string;
+    readonly summary: { readonly total: number; readonly passed: number; readonly failed: number; readonly error: number; readonly inconclusive: number; readonly notRun: number };
+  };
+  readonly checks: readonly { readonly checkKey?: string; readonly status: string; readonly required: boolean; readonly reasonCode?: string }[];
+}
+
 /** §7.3/§8.2 健康摘要（注册状态之外独立的一轴）。 */
 export interface ProjectHealthView {
   readonly status: 'healthy' | 'unhealthy' | 'not_run';
   readonly lastBaselineOperationId: string | null;
   readonly lastCompletedAt: string | null;
   readonly reasonCode?: string;
+  readonly applicability?: 'applicable' | 'inapplicable' | 'unknown';
+  readonly applicabilityReasons?: readonly string[];
+  readonly lastBaseline?: ProjectHealthHistoryView;
 }
 
 /** §7.3 `projects.overview` 响应的窄视图（注册与健康严格分开）。 */
@@ -65,7 +78,13 @@ export interface ProjectOverviewView {
     readonly description: string | null;
     readonly labels: readonly string[];
   };
-  readonly binding: { readonly canonicalPath: string } | null;
+  readonly binding: {
+    readonly id?: string;
+    readonly canonicalPath: string;
+    readonly repoIdentity?: string;
+    readonly revision?: number;
+    readonly bindingRevision?: number;
+  } | null;
   readonly registration: { readonly status: 'registered' | 'not_registered' };
   readonly settings:
     | { readonly configured: false }
@@ -294,8 +313,18 @@ export function formatOverviewResult(overview: ProjectOverviewView): string {
   const settings = overview.settings.configured
     ? `已配置（revision=${overview.settings.revision} schemaVersion=${overview.settings.schemaVersion}）`
     : '未配置';
-  const binding =
-    overview.binding === null ? '无（未绑定仓库）' : overview.binding.canonicalPath;
+  const binding = overview.binding === null
+    ? '无（未绑定仓库）'
+    : `${overview.binding.canonicalPath}（${overview.binding.id === undefined ? '绑定身份缺失' : `id=${overview.binding.id} repoIdentity=${overview.binding.repoIdentity ?? '缺失'} revision=${overview.binding.revision ?? '缺失'} bindingRevision=${overview.binding.bindingRevision ?? '缺失'}`}）`;
+  const healthDetails = overview.health.applicability === undefined ? [] : [
+    `  健康适用性：${overview.health.applicability}`,
+    `  健康缺口：${overview.health.applicabilityReasons === undefined || overview.health.applicabilityReasons.length === 0 ? '无' : overview.health.applicabilityReasons.join(',')}`,
+  ];
+  const history = overview.health.lastBaseline;
+  const historyDetails = history === undefined ? [] : [
+    `  最近基线：operationId=${history.operation.operationId} status=${history.operation.status} counts=${JSON.stringify(history.operation.summary)}`,
+    `  最近基线逐项状态：${history.checks.map(check => `${check.checkKey ?? 'unknown'}=${check.status}${check.reasonCode === undefined ? '' : `(${check.reasonCode})`}`).join(', ') || '（无）'}`,
+  ];
   return [
     'project overview 结果：',
     `  项目：${overview.project.displayName}（id=${overview.project.id}）`,
@@ -303,6 +332,8 @@ export function formatOverviewResult(overview: ProjectOverviewView): string {
     `  注册状态：${overview.registration.status}`,
     `  配置：${settings}`,
     `  健康状态：${describeHealthStatus(overview.health)}（注册状态与健康状态分开）`,
+    ...healthDetails,
+    ...historyDetails,
     `  读取时间：${overview.readAt}`,
     '',
   ].join('\n');
@@ -340,6 +371,7 @@ export function composeAppCliStreams(input: {
     | 'baseline.run'
     | 'baseline.list'
     | 'baseline.status'
+    | 'baseline.compare'
     | 'baseline.cancel'
     | 'baseline.evidence'
   >;

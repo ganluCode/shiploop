@@ -10,6 +10,9 @@
  * shiploop-core 公共入口的纯校验函数（不另立第二份），事件去重缓存与重连
  * 均有界。
  */
+export type { KnowledgeReadResult, KnowledgeSearchResultSet } from 'shiploop-core/protocol';
+export type { BrownfieldMovePreview } from 'shiploop-core/protocol';
+
 export { connectToHost, probeDiscoveredHost } from './host-client.js';
 export type {
   ConnectHostClientOptions,
@@ -37,6 +40,8 @@ export type {
   HostEventSubscription,
   EventStreamEnd,
   ListProjectsInput,
+  UpdateProjectProfileInput,
+  MatchProjectProfileInput,
   SubmitCommandInput,
   SubmitCommandOptions,
   SubscribeEventsInput,
@@ -47,6 +52,7 @@ export type {
   ReviseFeaturePlanInput,
   DecideFeaturePlanInput,
   UpdateTaskStrategyInput,
+  TaskStrategyReapplicationInput,
   TaskApprovalBlockInput,
   TaskApprovalDecisionInput,
   TaskVerificationContinueInput,
@@ -62,6 +68,10 @@ export type {
   ReviseExecutionBudgetInput,
   BudgetRevisionListInput,
   PlanListPageInput,
+  PlanEntityListInput,
+  EntityLabelFilterInput,
+  RunListInput,
+  EntityLabelCountsInput,
   DispatchQueueListInput,
   ResourceListInput,
   PlanLabelEntityType,
@@ -83,6 +93,8 @@ export {
   validateFeaturePlanReviseResultWire,
   validateFeaturePlanDecideResultWire,
   validateTaskStrategyUpdateResultWire,
+  validateTaskStrategyReapplicationPreviewWire,
+  validateTaskStrategyReapplicationResultWire,
   validateTaskApprovalBlockResultWire,
   validateTaskApprovalDecisionResultWire,
   validateTaskVerificationContinueResultWire,
@@ -101,6 +113,7 @@ export {
   validateWorkspaceOperationListResultWire,
   validateWorkspaceOperationDetailResultWire,
   validateWorkspaceDiscardPreviewWire,
+  validateRepositoryMovePreviewWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateFeatureDeliveryCommandResultWire,
   validateIntegrationStartCommandResultWire,
@@ -120,6 +133,8 @@ export type {
   FeaturePlanReviseResult,
   FeaturePlanDecideResult,
   TaskStrategyUpdateResult,
+  TaskStrategyReapplicationPreviewWire,
+  TaskStrategyReapplicationResult,
   TaskApprovalItemRecordWire,
   TaskApprovalBlockResult,
   TaskApprovalDecisionResult,

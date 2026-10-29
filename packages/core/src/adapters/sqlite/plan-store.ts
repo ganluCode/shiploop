@@ -21,6 +21,7 @@
  */
 import { validatePhaseMutationInput } from '../../ports/phase-lifecycle.js';
 import { validateFeaturePhaseMoveInput } from '../../ports/feature-phase.js';
+import { entityLabelCondition } from './entity-label-condition.js';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
@@ -58,7 +59,7 @@ import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
 import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
 import { validateFeatureDag, evaluateFeatureDag } from '../../ports/feature-dag.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
-import { assertPrincipalVisibility } from '../../ports/queries.js';
+import { assertPrincipalVisibility, PLAN_LIST_MAX_LIMIT } from '../../ports/queries.js';
 import type {
   FeatureApprovalsView,
   FeaturePlanView,
@@ -75,13 +76,22 @@ import type {
   ExecutionPreviewScopeView,
   ExecutionPreviewView,
 } from '../../ports/execution-preview.js';
+import type {
+  TaskStrategyReapplicationReadView,
+  TaskStrategyReapplicationTaskFact,
+} from '../../ports/task-strategy-preview.js';
 import type { ProjectStatus } from '../../ports/state-store.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
+import type { ProjectProfileStore } from '../../ports/project-profile-store.js';
+import { computeProfileConfirmationDigest, validateProfileModuleSelection } from '../../ports/project-profile.js';
+import type { ProfileExecutionSnapshot } from '../../ports/project-profile.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
 export interface SqlitePlanStoreOptions {
+  /** P06-1：与计划一致读视图共用的画像权威读取端口。 */
+  readonly profileStore?: ProjectProfileStore;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性时间。 */
   readonly nowUtcMs?: () => number;
 }
@@ -296,6 +306,15 @@ export interface SqlitePlanAccess {
   /** F-006：Phase + Feature DAG + Task 计数/活动范围的单一一致读视图。 */
   readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined;
   readTaskRecord(taskId: unknown): TaskRecord | undefined;
+  readTaskStrategyReapplicationView(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView;
+  /** F-002：确认命令在同一 BEGIN IMMEDIATE 内重读预览事实。 */
+  readTaskStrategyReapplicationViewInTransaction(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView;
   /** F-006：Feature + 全部 Task + 全部依赖边（单一 DEFERRED 读事务一致视图）。 */
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
   /** P03-2 / F-002：Feature + 全部计划决策记录（单一 DEFERRED 读事务一致视图）。 */
@@ -399,7 +418,50 @@ export function createSqlitePlanAccess(
   options: SqlitePlanStoreOptions = {},
 ): SqlitePlanAccess {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+  const profileStore = options.profileStore;
 
+  function readExecutionProfileSnapshot(projectId: string, operation: string): ProfileExecutionSnapshot | null | undefined {
+    if (profileStore === undefined) return undefined;
+    const profiles = profileStore.listProjectProfiles(projectId);
+    let current = null;
+    for (let index = profiles.length - 1; index >= 0; index -= 1) {
+      if (profiles[index]!.profile.status === 'confirmed') {
+        current = profiles[index]!;
+        break;
+      }
+    }
+    if (current === null) return null;
+    const catalog = profileStore.listCapabilityModules(projectId).map((row) => row.module);
+    validateProfileModuleSelection(current.profile, catalog);
+    const moduleKeys = new Set<string>();
+    const modules = current.profile.modules.flatMap((binding) => [
+      { id: binding.id, version: binding.version, reason: 'confirmed_profile_scope_match' },
+      ...binding.capabilityRefs.map((reference) => {
+        const separator = reference.lastIndexOf('@');
+        return separator > 0
+          ? { id: reference.slice(0, separator), version: reference.slice(separator + 1), reason: 'confirmed_profile_dependency' }
+          : null;
+      }).filter((value): value is { id: string; version: string; reason: string } => value !== null),
+    ]).filter((module) => {
+      const key = `${module.id}@${module.version}`;
+      if (moduleKeys.has(key)) return false;
+      moduleKeys.add(key);
+      return true;
+    }).sort((a, b) => `${a.id}@${a.version}`.localeCompare(`${b.id}@${b.version}`));
+    if (current.profile.confirmedBy === null) return null;
+    return {
+      schemaVersion: 1,
+      profileVersion: current.profile.version,
+      profileDigest: current.profileDigest,
+      confirmationDigest: computeProfileConfirmationDigest({
+        projectId,
+        profileVersion: current.profile.version,
+        profileDigest: current.profileDigest,
+        confirmedBy: current.profile.confirmedBy,
+      }),
+      modules,
+    };
+  }
   function assertOpen(operation: string): void {
     if (!session.isOpen()) {
       throw new Error(`SQLite 存储会话已关闭，拒绝继续操作（operation: ${operation}）`);
@@ -1194,6 +1256,9 @@ export function createSqlitePlanAccess(
       projectId: valid.projectId,
       id: valid.id,
     };
+    if (valid.entityType === 'run') {
+      throw new StorageError('validation', operation, 'Run 标签由执行存储原语更新');
+    }
     // 表名/SELECT 来自冻结映射（非用户输入）；全部查询使用绑定参数。
     const spec = LABELS_EDIT_TARGET_SPECS[valid.entityType];
     const row = db
@@ -1933,9 +1998,9 @@ export function createSqlitePlanAccess(
         (typeof request.afterId !== 'string' || request.afterId.length === 0)) ||
       typeof request.limit !== 'number' ||
       !Number.isInteger(request.limit) ||
-      request.limit < 1
+      request.limit < 1 || request.limit > PLAN_LIST_MAX_LIMIT
     ) {
-      throw new TypeError('PlanStore.list: request 必须是 {afterId: string|null, limit: ≥1 整数}（已校验分页形态）');
+      throw new TypeError('PlanStore.list: request 必须是 {afterId: string|null, limit: 1..200 整数}（已校验分页形态）');
     }
   }
 
@@ -1975,6 +2040,9 @@ export function createSqlitePlanAccess(
     if (extraCondition !== undefined) {
       conditions.push(extraCondition);
     }
+    const labels = entityLabelCondition('labels', request);
+    conditions.push(labels.condition);
+    params.push(...labels.params);
     params.push(request.limit + 1);
     const rows = session.database
       .prepare<unknown[], unknown>(
@@ -2061,6 +2129,132 @@ export function createSqlitePlanAccess(
       .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE id = ?`)
       .get(id);
     return row === undefined ? undefined : taskFromRow(row);
+  }
+
+  function validateTaskStrategyReapplicationIds(
+    operation: string,
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): { readonly projectId: string; readonly taskIds: readonly string[] } {
+    const context = { operation, entity: { type: 'project' as const } };
+    const validProjectId = validateStableId(projectId, context, 'projectId');
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      throw new StorageError('validation', operation, 'taskIds 必须是非空数组', {
+        entity: { type: 'project', id: validProjectId }, details: { field: 'taskIds' },
+      });
+    }
+    const validTaskIds = taskIds.map((taskId, index) =>
+      validateStableId(taskId, context, `taskIds[${index}]`),
+    );
+    if (new Set(validTaskIds).size !== validTaskIds.length) {
+      throw new StorageError('validation', operation, 'taskIds 不得重复', {
+        entity: { type: 'project', id: validProjectId }, details: { field: 'taskIds' },
+      });
+    }
+    return { projectId: validProjectId, taskIds: validTaskIds };
+  }
+
+  function readTaskStrategyReapplicationViewFromDatabase(
+    db: typeof session.database,
+    operation: string,
+    validProjectId: string,
+    validTaskIds: readonly string[],
+  ): TaskStrategyReapplicationReadView {
+    const projectExists = db.prepare<[string], { id: string }>(
+      'SELECT id FROM projects WHERE id = ?',
+    ).get(validProjectId) !== undefined;
+    const globalRow = db.prepare<[], { revision: number; payload: string }>(
+      "SELECT revision, payload FROM global_settings WHERE id = 'global'",
+    ).get();
+    const projectRow = db.prepare<[string], { revision: number; payload: string }>(
+      'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+    ).get(validProjectId);
+    const settings = (
+      row: { readonly revision: number; readonly payload: string } | undefined,
+      scope: 'global' | 'project',
+    ) => row === undefined ? null : {
+      revision: row.revision,
+      payload: parseStoredSettingsPayload(row.payload, {
+        operation,
+        entity: scope === 'global'
+          ? { type: 'global_settings', id: 'global' }
+          : { type: 'project_settings', projectId: validProjectId },
+      }),
+    };
+
+    const placeholders = validTaskIds.map(() => '?').join(',');
+    const rows = db.prepare<unknown[], TaskSqlRow>(
+      `${SELECT_TASK} WHERE id IN (${placeholders}) ORDER BY id`,
+    ).all(...validTaskIds) as TaskSqlRow[];
+    const rowById = new Map(rows.map((row) => [row.id, row]));
+    const tasks: TaskStrategyReapplicationTaskFact[] = validTaskIds.map((taskId) => {
+      const row = rowById.get(taskId);
+      if (row === undefined) {
+        return {
+          task: null,
+          ownership: 'missing',
+          execution: { hasExecutionHistory: false, hasActiveExecutionInputs: false, hasAuthorizedBatchScope: false },
+        };
+      }
+      const task = taskFromRow(row);
+      if (task.projectId !== validProjectId) {
+        return {
+          task,
+          ownership: 'other_project',
+          execution: { hasExecutionHistory: false, hasActiveExecutionInputs: false, hasAuthorizedBatchScope: false },
+        };
+      }
+      const hasAttempt = db.prepare<[string, string], { present: number }>(
+        'SELECT EXISTS (SELECT 1 FROM attempts WHERE project_id = ? AND task_id = ?) AS present',
+      ).get(validProjectId, task.id)?.present === 1;
+      const hasRun = db.prepare<[string, string], { present: number }>(
+        'SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND feature_id = ?) AS present',
+      ).get(validProjectId, task.featureId)?.present === 1;
+      const hasActiveRun = db.prepare<[string, string], { present: number }>(
+        "SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND feature_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')) AS present",
+      ).get(validProjectId, task.featureId)?.present === 1;
+      const hasAuthorizedBatch = db.prepare<[string, string], { present: number }>(
+        'SELECT EXISTS (SELECT 1 FROM execution_batch_members WHERE project_id = ? AND feature_id = ?) AS present',
+      ).get(validProjectId, task.featureId)?.present === 1;
+      return {
+        task,
+        ownership: 'same_project',
+        execution: {
+          hasExecutionHistory: hasAttempt || hasRun,
+          hasActiveExecutionInputs: hasActiveRun,
+          hasAuthorizedBatchScope: hasAuthorizedBatch,
+        },
+      };
+    });
+    return {
+      projectExists,
+      globalSettings: settings(globalRow, 'global'),
+      projectSettings: settings(projectRow, 'project'),
+      tasks,
+    };
+  }
+
+  function readTaskStrategyReapplicationView(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView {
+    const operation = 'PlanStore.readTaskStrategyReapplicationView';
+    assertOpen(operation);
+    const valid = validateTaskStrategyReapplicationIds(operation, projectId, taskIds);
+    return transactSqliteConsistentRead(session, operation, (db) =>
+      readTaskStrategyReapplicationViewFromDatabase(db, operation, valid.projectId, valid.taskIds));
+  }
+
+  function readTaskStrategyReapplicationViewInTransaction(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView {
+    const operation = 'PlanStore.readTaskStrategyReapplicationViewInTransaction';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateTaskStrategyReapplicationIds(operation, projectId, taskIds);
+    return readTaskStrategyReapplicationViewFromDatabase(
+      session.database, operation, valid.projectId, valid.taskIds);
   }
 
   /**
@@ -2220,6 +2414,7 @@ export function createSqlitePlanAccess(
         tasks: taskRows.map((row) => taskFromRow(row)),
         dependencies: dependencyRows.map((row) => taskDependencyFromRow(row)),
         approvals: approvalRows.map((row) => approvalFromRow(row)),
+        profile: readExecutionProfileSnapshot(validProjectId, operation),
         settings: {
           global:
             globalRow === undefined
@@ -2751,6 +2946,8 @@ export function createSqlitePlanAccess(
     readPhaseRecord,
     readPhaseGraphView,
     readTaskRecord,
+    readTaskStrategyReapplicationView,
+    readTaskStrategyReapplicationViewInTransaction,
     readFeaturePlanView,
     readFeatureApprovalsView,
     readExecutionInputPreparationView,

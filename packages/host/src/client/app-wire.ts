@@ -16,7 +16,11 @@
  * - 本模块只做结构校验：无 I/O、不读时钟、不导入 node:http/net/fs；错误为
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
-import { validateBatchDeliveryCommandResult } from 'shiploop-core/protocol';
+import { validateBatchDeliveryCommandResult, validateKnowledgeQueryResponse } from 'shiploop-core/protocol';
+import type { KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
+import { validateTaskStrategyReapplicationPreview, validateTaskStrategyReapplicationResult } from 'shiploop-core/protocol';
+import type { TaskStrategyReapplicationPreviewWire, TaskStrategyReapplicationResult } from 'shiploop-core/protocol';
+export type { KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
 import { BATCH_DELIVERY_STATUSES, isBatchDeliveryPublicSummary } from 'shiploop-core/protocol';
 import type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
 export type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
@@ -35,6 +39,7 @@ import {
   ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
   ATTEMPT_STATUSES,
   BASELINE_CHECKS_MAX,
+  BASELINE_COMPARISON_SCHEMA_VERSION,
   BASELINE_CHECK_STATUSES,
   BASELINE_CHECK_TAIL_MAX_BYTES,
   BASELINE_OPERATION_STATUSES,
@@ -46,6 +51,7 @@ import {
   PLAN_LIST_CURSOR_PREFIX,
   PUBLIC_EVENT_SCHEMA_VERSION,
   PUBLIC_STATE_EVENT_TYPES,
+  validateProfileAuditPayload,
   SETTINGS_EXPORT_FORMAT_VERSION,
   SETTINGS_SCHEMA_VERSION,
   STATE_EVENT_TYPE_SPECS,
@@ -80,6 +86,8 @@ import {
   isIsoUtcDateTime,
   isUuidV4,
   validateBaselineAuthorizationSummary,
+  validateBaselineDirtyScope,
+  validateBaselineEnvironmentIdentity,
   validateExecutionBudgetProposal,
   EXECUTION_BATCH_STATUSES,
   EXECUTION_RUN_STATUSES,
@@ -139,6 +147,9 @@ import type {
   PublicPlanningContextRecord,
   BaselineAuthorizationSummary,
   BaselineCheckCounts,
+  BaselineComparisonResult,
+  BaselineComparisonCheck,
+  BaselineComparisonSource,
   BaselineCheckOutputRef,
   BaselineCheckResult,
   BaselineDetailResult,
@@ -186,6 +197,10 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  EntityLabelCountsResult,
+  LabelEntity,
+  PublicLabelRunRecord,
+  RunListResult,
   GitOperationDetailResult,
   GitOperationListResult,
   FeatureDeliveryDetailResult,
@@ -198,6 +213,13 @@ import type {
 } from 'shiploop-core/protocol';
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
+import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core/protocol';
+import { validateProjectResourceCandidate, validateProjectResourceSettings, PROJECT_RESOURCE_CANDIDATE_REASONS } from 'shiploop-core/protocol';
+import { validateBrownfieldMovePreview } from 'shiploop-core/protocol';
+import type { BrownfieldMovePreview } from 'shiploop-core/protocol';
+
+
 
 /** P03-3 / F-012：执行预览/预算查询结果形状经公共面再导出（供 CLI 纯视图层使用）。 */
 export type {
@@ -284,6 +306,7 @@ export type {
 
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
 export type AppQueryOperation =
+  | 'knowledge.search' | 'knowledge.read' | 'memory.search'
   | 'execution.sessions.list'
   | 'execution.session.get'
   | 'execution.session.evidence.get'
@@ -295,6 +318,8 @@ export type AppQueryOperation =
   | 'projects.labelCounts'
   | 'projects.inspect'
   | 'projects.overview'
+  | 'projects.profile.get'
+  | 'projects.profile.match'
   | 'settings.global.get'
   | 'settings.global.export'
   | 'settings.project.get'
@@ -303,6 +328,7 @@ export type AppQueryOperation =
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
+  | 'baselines.compare'
   // P03-1 / F-009 §6.6：计划域查询（与 Core PLAN_QUERY_OPERATIONS 同源）。
   | 'phases.list'
   | 'phases.get'
@@ -311,6 +337,11 @@ export type AppQueryOperation =
   | 'features.get'
   | 'tasks.list'
   | 'tasks.get'
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数查询（与 Core runs.list /
+  // labels.counts 操作身份同源）。
+  | 'runs.list'
+  | 'labels.counts'
+  | 'task.strategy.reapply.preview'
   // P03-2 / F-007：审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
   | 'execution.budget.get'
@@ -356,13 +387,76 @@ export type AppQueryOperation =
   // 同源；候选正文经受管内容接口核验读取）。
   | 'planning.contexts.list'
   | 'planning.context.get'
-  | 'planning.candidate.get';
+  | 'planning.candidate.get'
+  | 'project.resources.list'
+  | 'project.resources.candidates'
+  | 'project.resources.preview'
+  | 'repository.move.preview';
 
+function validateProjectProfileQueryWire(operation: HostOperation, body: unknown): ProjectProfileQueryResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'projectId', 'candidate', 'confirmed', 'modules']);
+  if (object.schemaVersion !== 1) unsupportedVersion(operation, 'schemaVersion');
+  if (typeof object.projectId !== 'string') malformed(operation, 'profile_query_header_invalid');
+  requireStableId(operation, object.projectId as string);
+  const validateRecord = (value: unknown): unknown => {
+    if (value === null) return null;
+    const record = requirePlain(operation, value);
+    exactKeys(operation, record, ['projectId', 'version', 'revision', 'status', 'confirmed', 'confirmedBy', 'modules', 'evidence', 'profileDigest', 'storeRevision']);
+    if (record.projectId !== object.projectId || typeof record.version !== 'number' || !Number.isSafeInteger(record.version) || record.version < 1 || typeof record.confirmed !== 'boolean' || typeof record.profileDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(record.profileDigest) || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(record.status as string) || record.confirmed !== (record.status === 'confirmed')) malformed(operation, 'profile_record_invalid');
+    if (!Array.isArray(record.modules) || !Array.isArray(record.evidence)) malformed(operation, 'profile_record_invalid');
+    for (const item of record.modules) {
+      const module = requirePlain(operation, item);
+      exactKeys(operation, module, ['id', 'version', 'roots', 'languages', 'frameworks', 'capabilityRefs', 'checkRefs']);
+      if (typeof module.id !== 'string' || typeof module.version !== 'string'
+        || !Array.isArray(module.roots) || !Array.isArray(module.languages)
+        || !Array.isArray(module.frameworks) || !Array.isArray(module.capabilityRefs)
+        || !Array.isArray(module.checkRefs)
+        || [module.roots, module.languages, module.frameworks, module.capabilityRefs, module.checkRefs]
+          .some(values => values.some(value => typeof value !== 'string'))) malformed(operation, 'profile_module_invalid');
+    }
+    for (const item of record.evidence) {
+      const evidence = requirePlain(operation, item);
+      exactKeys(operation, evidence, ['id', 'detectorId', 'detectorVersion', 'source', 'summary', 'status', 'confirmed']);
+      if (typeof evidence.id !== 'string' || typeof evidence.summary !== 'string' || typeof evidence.confirmed !== 'boolean' || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(evidence.status as string)) malformed(operation, 'profile_evidence_invalid');
+    }
+    return record;
+  };
+  const candidate = validateRecord(object.candidate);
+  const confirmed = validateRecord(object.confirmed);
+  if (!Array.isArray(object.modules)) malformed(operation, 'profile_modules_invalid');
+  for (const item of object.modules) {
+    const module = requirePlain(operation, item);
+    exactKeys(operation, module, ['id', 'version', 'status', 'scope', 'appliesTo', 'dependencies', 'digest']);
+    if (typeof module.id !== 'string' || typeof module.version !== 'string' || typeof module.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(module.digest) || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(module.status as string)) malformed(operation, 'profile_module_invalid');
+    for (const key of ['scope', 'appliesTo', 'dependencies'] as const) if (!Array.isArray(module[key]) || module[key].some(value => typeof value !== 'string')) malformed(operation, 'profile_module_invalid');
+  }
+  return object as unknown as ProjectProfileQueryResult;
+}
+
+function validateProjectProfileMatchQueryWire(operation: HostOperation, body: unknown): ProjectProfileMatchQueryResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'projectId', 'match']);
+  if (object.schemaVersion !== 1) unsupportedVersion(operation, 'schemaVersion');
+  if (typeof object.projectId !== 'string') malformed(operation, 'profile_match_header_invalid');
+  requireStableId(operation, object.projectId as string);
+  const match = requirePlain(operation, object.match);
+  exactKeys(operation, match, ['status', 'profileVersion', 'modules', 'missing', 'reason']);
+  if (!['ready', 'not_ready'].includes(match.status as string) || (match.profileVersion !== null && typeof match.profileVersion !== 'number') || !Array.isArray(match.modules) || !Array.isArray(match.missing)) malformed(operation, 'profile_match_invalid');
+  for (const item of match.modules) {
+    const module = requirePlain(operation, item);
+    exactKeys(operation, module, ['id', 'version', 'reason']);
+    if (typeof module.id !== 'string' || typeof module.version !== 'string' || typeof module.reason !== 'string') malformed(operation, 'profile_match_invalid');
+  }
+  if (match.missing.some(value => typeof value !== 'string')) malformed(operation, 'profile_match_invalid');
+  return object as unknown as ProjectProfileMatchQueryResult;
+}
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
     details: { reason },
   });
 }
+
 
 function unsupportedVersion(operation: HostOperation, field: string): never {
   throw new HostProtocolError(
@@ -473,11 +567,23 @@ export function validateCommandReceiptWire(
   if (expected.expectedProjectId !== undefined && (receipt.scope.kind !== 'project' || receipt.scope.projectId !== expected.expectedProjectId)) {
     malformed(operation, 'receipt_scope_mismatch');
   }
+  if (receipt.status === 'completed' && ['project.resource.import', 'project.resource.enable', 'project.resource.disable', 'project.resource.revoke'].includes(receipt.operation)) {
+    const result = requirePlain(operation, receipt.result);
+    exactKeys(operation, result, ['configuration', 'resourceLoaded', 'runtimeExecuted', 'appliesTo']);
+    if (result.resourceLoaded !== false || result.runtimeExecuted !== false || result.appliesTo !== 'new_attempts_only') malformed(operation, 'project_resource_receipt_invalid');
+    let configuration: ProjectResourceConfiguration;
+    try { configuration = validateProjectResourceQueryWire('project.resources.list', result.configuration) as ProjectResourceConfiguration; }
+    catch { malformed(operation, 'project_resource_receipt_invalid'); }
+    if (receipt.scope.kind !== 'project' || configuration.projectId !== receipt.scope.projectId) malformed(operation, 'project_resource_receipt_scope_invalid');
+  }
   if (receipt.status === 'completed' && (receipt.operation === 'execution.batch.finalize' || receipt.operation === 'phase.delivery.approve')) {
     let result;
     try { result = validateBatchDeliveryCommandResult(receipt.result); } catch { malformed(operation, 'batch_delivery_command_result_invalid'); }
     if (receipt.scope.kind !== 'project' || result.projectId !== receipt.scope.projectId ||
       result.status !== (receipt.operation === 'phase.delivery.approve' ? 'approved' : 'ready_for_phase_approval')) malformed(operation, 'batch_delivery_command_scope_invalid');
+  }
+  if (receipt.status === 'completed' && receipt.operation === 'task.strategy.reapply') {
+    validateTaskStrategyReapplicationResultWire(receipt.result, operation);
   }
   return receipt;
 }
@@ -504,6 +610,13 @@ function validateEventPayload(
 ): Record<string, unknown> {
   const object = requirePlain(operation, payload);
   const kind = STATE_EVENT_TYPE_SPECS[type].payloadKind;
+  if (kind === 'projectProfile') {
+    try {
+      const checked = validateProfileAuditPayload(object);
+      if (type !== `project_profile.${checked.action}`) malformed(operation, 'event_payload_violation');
+      return { ...checked };
+    } catch { malformed(operation, 'event_payload_violation'); }
+  }
   if (kind === 'registered') {
     exactKeys(operation, object, ['registered']);
     if (object.registered !== true) {
@@ -664,7 +777,7 @@ function validateEventPayload(
     return { operationId: object.operationId, status: object.status };
   }
   // settingsSummary
-  exactKeys(operation, object, ['schemaVersion', 'strategies', 'policies']);
+  exactKeys(operation, object, ['schemaVersion', 'strategies', 'policies', 'resources']);
   if (object.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
     malformed(operation, 'event_payload_violation');
   }
@@ -674,10 +787,21 @@ function validateEventPayload(
       malformed(operation, 'event_payload_violation');
     }
   }
+  let resources: { count: number; digest: string } | undefined;
+  if (object.resources !== undefined) {
+    const raw = object.resources;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) malformed(operation, 'event_payload_violation');
+    const item = raw as Record<string, unknown>;
+    exactKeys(operation, item, ['count', 'digest']);
+    if (typeof item.count !== 'number' || !Number.isSafeInteger(item.count) || item.count < 0 || item.count > 64
+      || typeof item.digest !== 'string' || !/^[a-f0-9]{64}$/.test(item.digest)) malformed(operation, 'event_payload_violation');
+    resources = { count: item.count as number, digest: item.digest as string };
+  }
   return {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     strategies: [...(object.strategies as string[])],
     policies: [...(object.policies as string[])],
+    ...(resources === undefined ? {} : { resources }),
   };
 }
 
@@ -872,6 +996,9 @@ export function validateStateEventWire(
     malformed(operation, 'event_occurred_at_invalid');
   }
   const payload = validateEventPayload(operation, type, object.payload);
+  if (spec.payloadKind === 'projectProfile' && revision !== payload.version) {
+    malformed(operation, 'event_payload_violation');
+  }
 
   return {
     schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,
@@ -1332,7 +1459,7 @@ interface ValidatedPlanListPage<R> {
 
 function validatePlanListPageOf<R>(
   operation: HostOperation,
-  scope: 'phase-list' | 'feature-list' | 'task-list',
+  scope: 'phase-list' | 'feature-list' | 'task-list' | 'run-list',
   validateRecord: (op: HostOperation, value: unknown) => R,
   body: unknown,
 ): ValidatedPlanListPage<R> {
@@ -1374,6 +1501,75 @@ function validateFeatureListPage(operation: HostOperation, body: unknown): Featu
 function validateTaskListPage(operation: HostOperation, body: unknown): TaskListResult {
   const page = validatePlanListPageOf(operation, 'task-list', validateTaskRecordWire, body);
   return { schemaVersion: page.schemaVersion, scope: 'task-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+/**
+ * P06-6 / F-007：Run 列表记录（仅持久元数据投影；执行/配置快照不进入此
+ * 投影，字段集与 Core PublicLabelRunRecord 一一对应）。
+ */
+function validateLabelRunRecordWire(operation: HostOperation, value: unknown): PublicLabelRunRecord {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'id', 'projectId', 'featureId', 'batchId', 'labels', 'status', 'purpose', 'revision', 'createdAt', 'updatedAt',
+  ]);
+  const record = {
+    id: requireStableId(operation, object.id),
+    projectId: requireStableId(operation, object.projectId),
+    featureId: requireStableId(operation, object.featureId),
+    batchId: requireStableId(operation, object.batchId),
+    labels: requireLabelsArray(operation, object.labels),
+    status:
+      typeof object.status === 'string' && object.status.length > 0
+        ? object.status
+        : malformed(operation, 'run_status_invalid'),
+    purpose:
+      typeof object.purpose === 'string' && object.purpose.length > 0
+        ? object.purpose
+        : malformed(operation, 'run_purpose_invalid'),
+    revision: requirePositiveInteger(operation, object.revision),
+  };
+  if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
+    malformed(operation, 'run_time_invalid');
+  }
+  return { ...record, createdAt: object.createdAt, updatedAt: object.updatedAt };
+}
+
+function validateRunListPage(operation: HostOperation, body: unknown): RunListResult {
+  const page = validatePlanListPageOf(operation, 'run-list', validateLabelRunRecordWire, body);
+  return { schemaVersion: page.schemaVersion, scope: 'run-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+const LABEL_ENTITIES: readonly LabelEntity[] = ['phase', 'feature', 'task', 'run'];
+
+/** P06-6 / F-007：四层实体标签去重计数（实体枚举 + 非负整数计数）。 */
+function validateEntityLabelCountsResultWire(
+  operation: HostOperation,
+  body: unknown,
+): EntityLabelCountsResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['entity', 'labels']);
+  if (typeof object.entity !== 'string' || !LABEL_ENTITIES.includes(object.entity as LabelEntity)) {
+    malformed(operation, 'label_entity_invalid');
+  }
+  if (!Array.isArray(object.labels)) {
+    malformed(operation, 'label_counts_invalid');
+  }
+  const labels = object.labels.map((entry) => {
+    const record = requirePlain(operation, entry);
+    exactKeys(operation, record, ['label', 'count']);
+    if (typeof record.label !== 'string' || record.label.length === 0) {
+      malformed(operation, 'label_counts_invalid');
+    }
+    if (
+      typeof record.count !== 'number' ||
+      !Number.isSafeInteger(record.count) ||
+      record.count < 0
+    ) {
+      malformed(operation, 'label_counts_invalid');
+    }
+    return { label: record.label, count: record.count };
+  });
+  return { entity: object.entity as LabelEntity, labels };
 }
 
 /** features.get 完整 DAG 详情（Feature + 校验摘要 + 不可执行原因 + Task + 边）。 */
@@ -1833,6 +2029,23 @@ export function validateTaskStrategyUpdateResultWire(
   return { task: validateTaskRecordWire(operation, object.task) };
 }
 
+export type { TaskStrategyReapplicationPreviewWire, TaskStrategyReapplicationResult } from 'shiploop-core/protocol';
+
+export function validateTaskStrategyReapplicationPreviewWire(
+  value: unknown,
+  operation: HostOperation = 'task.strategy.reapply.preview',
+): TaskStrategyReapplicationPreviewWire {
+  try { return validateTaskStrategyReapplicationPreview(value); }
+  catch { malformed(operation, 'task_strategy_preview_invalid'); }
+}
+
+export function validateTaskStrategyReapplicationResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): TaskStrategyReapplicationResult {
+  try { return validateTaskStrategyReapplicationResult(value); }
+  catch { malformed(operation, 'task_strategy_reapply_result_invalid'); }
+}
 /** 制品组单正文引用（身份级；正文永不内联）。 */
 export interface ExecutionInputGroupBodyRefWire {
   readonly artifactId: string;
@@ -2397,7 +2610,7 @@ function validateProjectOverview(
   let health: ProjectHealthSummary;
   const healthKeys = Object.keys(healthRecord);
   if (
-    !healthKeys.every((key) => ['status', 'lastBaselineOperationId', 'lastCompletedAt', 'reasonCode'].includes(key)) ||
+    !healthKeys.every((key) => ['status', 'lastBaselineOperationId', 'lastCompletedAt', 'reasonCode', 'applicability', 'applicabilityReasons', 'lastBaseline'].includes(key)) ||
     healthKeys.length < 3
   ) {
     malformed(operation, 'overview_health_invalid');
@@ -2411,18 +2624,43 @@ function validateProjectOverview(
   ) {
     malformed(operation, 'overview_health_invalid');
   }
-  if (
-    healthRecord.reasonCode !== undefined &&
-    typeof healthRecord.reasonCode !== 'string'
-  ) {
-    malformed(operation, 'overview_health_invalid');
+  if (healthRecord.applicability !== undefined && !['applicable', 'inapplicable', 'unknown'].includes(String(healthRecord.applicability))) {
+    malformed(operation, 'overview_health_applicability_invalid');
   }
+  if (healthRecord.applicabilityReasons !== undefined && (!Array.isArray(healthRecord.applicabilityReasons) || healthRecord.applicabilityReasons.some((reason) => typeof reason !== 'string'))) {
+    malformed(operation, 'overview_health_applicability_invalid');
+  }
+  if (healthRecord.lastBaseline !== undefined) {
+    const lastBaseline = requirePlain(operation, healthRecord.lastBaseline);
+    exactKeys(operation, lastBaseline, ['operation', 'checks']);
+    validateBaselineOperationSummaryWire(operation, lastBaseline.operation);
+    if (!Array.isArray(lastBaseline.checks)) malformed(operation, 'overview_health_history_invalid');
+    for (const rawCheck of lastBaseline.checks as unknown[]) {
+      const check = requirePlain(operation, rawCheck);
+      exactKeys(operation, check, ['checkKey', 'status', 'required', 'reasonCode']);
+      if (check.checkKey !== undefined && typeof check.checkKey !== 'string') malformed(operation, 'overview_health_history_invalid');
+      if (!['passed', 'failed', 'error', 'inconclusive', 'not_run'].includes(String(check.status)) || typeof check.required !== 'boolean') {
+        malformed(operation, 'overview_health_history_invalid');
+      }
+      if (check.reasonCode !== undefined && typeof check.reasonCode !== 'string') malformed(operation, 'overview_health_history_invalid');
+    }
+  }
+
   health = {
     status: healthRecord.status as ProjectHealthSummary['status'],
     lastBaselineOperationId: healthRecord.lastBaselineOperationId as string | null,
     lastCompletedAt: healthRecord.lastCompletedAt as string | null,
     ...(healthRecord.reasonCode !== undefined
       ? { reasonCode: healthRecord.reasonCode as ProjectHealthSummary['reasonCode'] }
+      : {}),
+    ...(healthRecord.applicability !== undefined
+      ? { applicability: healthRecord.applicability as ProjectHealthSummary['applicability'] }
+      : {}),
+    ...(healthRecord.applicabilityReasons !== undefined
+      ? { applicabilityReasons: [...healthRecord.applicabilityReasons] as ProjectHealthSummary['applicabilityReasons'] }
+      : {}),
+    ...(healthRecord.lastBaseline !== undefined
+      ? { lastBaseline: healthRecord.lastBaseline as ProjectHealthSummary['lastBaseline'] }
       : {}),
   };
   if (!isIsoUtcDateTime(object.readAt)) {
@@ -2669,21 +2907,179 @@ function validateBaselineDetail(operation: HostOperation, body: unknown): Baseli
   exactKeys(operation, object, ['schemaVersion', 'operation', 'authorization', 'checks']);
   requireOnboardingSchemaVersion(operation, object.schemaVersion);
   const summary = validateBaselineOperationSummaryWire(operation, object.operation);
-  const authorization =
-    object.authorization === null
-      ? null
-      : validateAuthorizationSummaryWire(operation, object.authorization);
-  if (!Array.isArray(object.checks)) {
-    malformed(operation, 'baseline_checks_invalid');
-  }
+  const authorization = object.authorization === null
+    ? null
+    : validateAuthorizationSummaryWire(operation, object.authorization);
+  if (!Array.isArray(object.checks)) malformed(operation, 'baseline_checks_invalid');
   const checks = object.checks.map((check) => validateBaselineCheckResultWire(operation, check));
+  return { schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION, operation: summary, authorization, checks };
+}
+
+function validateBaselineComparison(
+  operation: HostOperation,
+  body: unknown,
+): BaselineComparisonResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, [
+    'schemaVersion', 'projectId', 'previous', 'current', 'codeDiff', 'identityDiff', 'checks', 'comparable', 'gaps',
+  ]);
+  if (object.schemaVersion !== BASELINE_COMPARISON_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') unsupportedVersion(operation, 'schemaVersion');
+    malformed(operation, 'baseline_comparison_schema_invalid');
+  }
+  const projectId = requireStableId(operation, object.projectId);
+  const gaps = validateComparisonGaps(operation, object.gaps);
+  const previous = validateComparisonSource(operation, object.previous, projectId);
+  const current = validateComparisonSource(operation, object.current, projectId);
+  const codeDiff = requirePlain(operation, object.codeDiff);
+  exactKeys(operation, codeDiff, ['headCommitChanged', 'workingTreeDigestChanged', 'uncommittedChangesChanged', 'anyChanged']);
+  const identityDiff = requirePlain(operation, object.identityDiff);
+  exactKeys(operation, identityDiff, ['repositoryBindingChanged', 'dirtyScopeChanged', 'environmentChanged']);
+  for (const value of [codeDiff, identityDiff]) {
+    for (const key of Object.keys(value)) if (typeof value[key] !== 'boolean') malformed(operation, 'baseline_comparison_diff_invalid');
+  }
+  if (!Array.isArray(object.checks)) malformed(operation, 'baseline_comparison_checks_invalid');
+  const checks = object.checks.map((value) => validateComparisonCheck(operation, value, projectId, previous, current));
+  if (typeof object.comparable !== 'boolean') malformed(operation, 'baseline_comparison_comparable_invalid');
   return {
-    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
-    operation: summary,
-    authorization,
+    schemaVersion: BASELINE_COMPARISON_SCHEMA_VERSION,
+    projectId,
+    previous,
+    current,
+    codeDiff: codeDiff as unknown as BaselineComparisonResult['codeDiff'],
+    identityDiff: identityDiff as unknown as BaselineComparisonResult['identityDiff'],
     checks,
+    comparable: object.comparable,
+    gaps,
   };
 }
+
+const BASELINE_COMPARISON_CLASSIFICATIONS = [
+  'unchanged_passed', 'existing_failure', 'regressed', 'new_failure', 'fixed', 'not_run',
+  'incomparable', 'removed', 'added',
+] as const;
+const BASELINE_COMPARISON_GAPS = [
+  'baseline_not_completed', 'authorization_missing', 'code_identity_missing', 'binding_identity_missing',
+  'binding_identity_changed', 'dirty_scope_missing', 'dirty_scope_changed', 'environment_identity_missing',
+  'environment_identity_changed', 'check_not_run', 'evidence_missing', 'evidence_incomplete', 'stop_unconfirmed',
+  'failure_identity_missing', 'check_removed', 'check_added', 'check_definition_changed',
+] as const;
+
+function validateComparisonGaps(operation: HostOperation, value: unknown): BaselineComparisonResult['gaps'] {
+  if (!Array.isArray(value) || value.some(item => !(BASELINE_COMPARISON_GAPS as readonly unknown[]).includes(item))) {
+    malformed(operation, 'baseline_comparison_gaps_invalid');
+  }
+  return value as BaselineComparisonResult['gaps'];
+}
+
+function validateComparisonIdentity(operation: HostOperation, value: unknown): BaselineComparisonSource['codeIdentity'] {
+  if (value === null) return null;
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['headCommit', 'workingTreeDigest', 'hasUncommittedChanges']);
+  if ((object.headCommit !== null && (typeof object.headCommit !== 'string' || !COMMIT_ID_PATTERN.test(object.headCommit)))
+    || typeof object.workingTreeDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.workingTreeDigest)
+    || typeof object.hasUncommittedChanges !== 'boolean') {
+    malformed(operation, 'baseline_comparison_identity_invalid');
+  }
+  return object as unknown as BaselineComparisonSource['codeIdentity'];
+}
+
+function validateComparisonSource(
+  operation: HostOperation,
+  value: unknown,
+  projectId: string,
+): BaselineComparisonSource {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'operationId', 'projectId', 'operationStatus', 'codeIdentity', 'repositoryBindingId',
+    'repositoryBindingRevision', 'dirtyScope', 'environmentIdentity', 'evidence', 'gaps',
+  ]);
+  const operationId = requireEventOperationId(operation, object.operationId);
+  if (object.projectId !== projectId || typeof object.operationStatus !== 'string'
+    || !(BASELINE_OPERATION_STATUSES as readonly unknown[]).includes(object.operationStatus)) {
+    malformed(operation, 'baseline_comparison_source_invalid');
+  }
+  if (object.repositoryBindingId !== null && !isUuidV4(object.repositoryBindingId)) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.repositoryBindingRevision !== null
+    && (typeof object.repositoryBindingRevision !== 'number' || !Number.isSafeInteger(object.repositoryBindingRevision) || object.repositoryBindingRevision < 1)) {
+    malformed(operation, 'baseline_comparison_identity_invalid');
+  }
+  let dirtyScope: BaselineComparisonSource['dirtyScope'];
+  let environmentIdentity: BaselineComparisonSource['environmentIdentity'];
+  try {
+    dirtyScope = object.dirtyScope === null ? null : validateBaselineDirtyScope(object.dirtyScope, operation, 'dirtyScope');
+    environmentIdentity = object.environmentIdentity === null ? null : validateBaselineEnvironmentIdentity(object.environmentIdentity, operation, 'environmentIdentity');
+  } catch {
+    malformed(operation, 'baseline_comparison_identity_invalid');
+  }
+  if (!Array.isArray(object.evidence)) malformed(operation, 'baseline_comparison_evidence_invalid');
+  const evidence = object.evidence.map(value => {
+    const item = requirePlain(operation, value);
+    exactKeys(operation, item, ['operationId', 'checkKey', 'artifactId']);
+    if (item.operationId !== operationId || typeof item.checkKey !== 'string' || !CHECK_KEY_PATTERN.test(item.checkKey)
+      || (item.artifactId !== null && typeof item.artifactId !== 'string')) malformed(operation, 'baseline_comparison_evidence_invalid');
+    if (item.artifactId !== null) requireStableId(operation, item.artifactId);
+    return { operationId, checkKey: item.checkKey as string, artifactId: item.artifactId as string | null };
+  });
+  const sourceGaps = validateComparisonGaps(operation, object.gaps);
+  const hasGap = (gap: string): boolean => sourceGaps.includes(gap as never);
+  if (object.codeIdentity === null && !hasGap('authorization_missing') && !hasGap('code_identity_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.repositoryBindingId === null && !hasGap('authorization_missing') && !hasGap('binding_identity_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.dirtyScope === null && !hasGap('authorization_missing') && !hasGap('dirty_scope_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.environmentIdentity === null && !hasGap('authorization_missing') && !hasGap('environment_identity_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  return {
+    operationId,
+    projectId,
+    operationStatus: object.operationStatus as BaselineComparisonSource['operationStatus'],
+    codeIdentity: validateComparisonIdentity(operation, object.codeIdentity),
+    repositoryBindingId: object.repositoryBindingId as string | null,
+    repositoryBindingRevision: object.repositoryBindingRevision as number | null,
+    dirtyScope,
+    environmentIdentity,
+    evidence,
+    gaps: sourceGaps,
+  };
+}
+
+function validateComparisonCheck(
+  operation: HostOperation,
+  value: unknown,
+  projectId: string,
+  previous: BaselineComparisonSource,
+  current: BaselineComparisonSource,
+): BaselineComparisonCheck {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['checkKey', 'classification', 'reason', 'definitionChanged', 'previous', 'current', 'evidence']);
+  if (typeof object.checkKey !== 'string' || !CHECK_KEY_PATTERN.test(object.checkKey)
+    || !(BASELINE_COMPARISON_CLASSIFICATIONS as readonly unknown[]).includes(object.classification)
+    || typeof object.definitionChanged !== 'boolean') malformed(operation, 'baseline_comparison_check_invalid');
+  if (object.reason !== undefined && !(BASELINE_COMPARISON_GAPS as readonly unknown[]).includes(object.reason)) malformed(operation, 'baseline_comparison_check_invalid');
+  const validateDetail = (value: unknown): BaselineCheckResult | null => value === null ? null : validateBaselineCheckResultWire(operation, value);
+  const previousCheck = validateDetail(object.previous);
+  const currentCheck = validateDetail(object.current);
+  if ((previousCheck !== null && previousCheck.checkKey !== object.checkKey) || (currentCheck !== null && currentCheck.checkKey !== object.checkKey)) malformed(operation, 'baseline_comparison_check_invalid');
+  const evidenceObject = requirePlain(operation, object.evidence);
+  exactKeys(operation, evidenceObject, ['previous', 'current']);
+  const evidence = (side: unknown, source: BaselineComparisonSource): BaselineComparisonCheck['evidence'][keyof BaselineComparisonCheck['evidence']] => {
+    if (side === null) return null;
+    const item = requirePlain(operation, side);
+    exactKeys(operation, item, ['operationId', 'checkKey', 'artifactId']);
+    if (item.operationId !== source.operationId || item.checkKey !== object.checkKey
+      || (item.artifactId !== null && typeof item.artifactId !== 'string')) malformed(operation, 'baseline_comparison_evidence_invalid');
+    if (item.artifactId !== null) requireStableId(operation, item.artifactId);
+    return { operationId: item.operationId as string, checkKey: item.checkKey as string, artifactId: item.artifactId as string | null };
+  };
+  return {
+    checkKey: object.checkKey,
+    classification: object.classification as BaselineComparisonCheck['classification'],
+    ...(object.reason === undefined ? {} : { reason: object.reason as BaselineComparisonCheck['reason'] }),
+    definitionChanged: object.definitionChanged,
+    previous: previousCheck,
+    current: currentCheck,
+    evidence: { previous: evidence(evidenceObject.previous, previous), current: evidence(evidenceObject.current, current) },
+  };
+}
+
 
 /**
  * §6 baseline.preview 回执内嵌 result（completed 时）：预览摘要形状把关。
@@ -2697,7 +3093,12 @@ export function validateBaselinePreviewResultWire(
   exactKeys(operation, object, [
     'previewDigest',
     'policyRevision',
+    'repositoryBindingId',
+    'repositoryBindingRevision',
+    'bindingRecordRevision',
     'codeIdentity',
+    'dirtyScope',
+    'environmentIdentity',
     'workspace',
     'checks',
     'warnings',
@@ -2709,6 +3110,26 @@ export function validateBaselinePreviewResultWire(
     !SHA256_HEX_PATTERN.test(object.policyRevision)
   ) {
     malformed(operation, 'preview_digest_invalid');
+  }
+  if (
+    typeof object.repositoryBindingId !== 'string' ||
+    !isUuidV4(object.repositoryBindingId) ||
+    typeof object.repositoryBindingRevision !== 'number' ||
+    !Number.isSafeInteger(object.repositoryBindingRevision) ||
+    object.repositoryBindingRevision < 1 ||
+    typeof object.bindingRecordRevision !== 'number' ||
+    !Number.isSafeInteger(object.bindingRecordRevision) ||
+    object.bindingRecordRevision < 1
+  ) {
+    malformed(operation, 'preview_binding_identity_invalid');
+  }
+  let dirtyScope: BaselinePreviewResult['dirtyScope'];
+  let environmentIdentity: BaselinePreviewResult['environmentIdentity'];
+  try {
+    dirtyScope = validateBaselineDirtyScope(object.dirtyScope, operation, 'dirtyScope');
+    environmentIdentity = validateBaselineEnvironmentIdentity(object.environmentIdentity, operation, 'environmentIdentity');
+  } catch {
+    malformed(operation, 'preview_environment_identity_invalid');
   }
   const codeIdentity = requirePlain(operation, object.codeIdentity);
   exactKeys(operation, codeIdentity, ['headCommit', 'workingTreeDigest', 'hasUncommittedChanges']);
@@ -2789,7 +3210,12 @@ export function validateBaselinePreviewResultWire(
   return {
     previewDigest: object.previewDigest,
     policyRevision: object.policyRevision,
+    repositoryBindingId: object.repositoryBindingId,
+    repositoryBindingRevision: object.repositoryBindingRevision,
+    bindingRecordRevision: object.bindingRecordRevision,
     codeIdentity: codeIdentity as unknown as BaselinePreviewResult['codeIdentity'],
+    dirtyScope,
+    environmentIdentity,
     workspace: workspace as unknown as BaselinePreviewResult['workspace'],
     checks,
     warnings,
@@ -6713,6 +7139,121 @@ export function validatePlanningCandidateDetailResultWire(
   return object as unknown as PlanningCandidateDetailResult;
 }
 
+export function validateRepositoryMovePreviewWire(
+  value: unknown,
+  operation: HostOperation = 'repository.move.preview',
+): BrownfieldMovePreview {
+  try {
+    return validateBrownfieldMovePreview(value);
+  } catch {
+    malformed(operation, 'repository_move_preview_invalid');
+  }
+}
+
+/** project.repository.rebind completed receipt result; snapshots remain opaque evidence rows. */
+export function validateRepositoryMoveConfirmResultWire(
+  value: unknown,
+  operation: HostOperation = 'repository.move.confirm',
+): { readonly project: PublicProjectRecord; readonly previousBinding: PublicRepositoryBindingRecord; readonly binding: PublicRepositoryBindingRecord; readonly snapshots: readonly unknown[] } {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['project', 'previousBinding', 'binding', 'snapshots']);
+  if (!Array.isArray(object.snapshots)) malformed(operation, 'repository_move_snapshots_invalid');
+  return {
+    project: validateProjectRecord(operation, object.project),
+    previousBinding: validateBindingRecord(operation, object.previousBinding),
+    binding: validateBindingRecord(operation, object.binding),
+    snapshots: object.snapshots,
+  };
+}
+function validateProjectResourceQueryWire(operation: HostOperation, body: unknown): unknown {
+  const object = requirePlain(operation, body);
+  if (object.schemaVersion !== 1) throw new HostProtocolError('unsupported_schema_version', operation, '项目资源响应版本不受支持');
+  if (typeof object.projectId !== 'string') malformed(operation, 'project_resource_identity_invalid');
+  if (operation === 'project.resources.list') {
+    exactKeys(operation, object, ['schemaVersion', 'projectId', 'revision', 'resources', 'digest']);
+    if (typeof object.revision !== 'number' || !Number.isSafeInteger(object.revision) || object.revision < 0
+      || !Array.isArray(object.resources) || object.resources.length > 64 || typeof object.digest !== 'string' || !/^[a-f0-9]{64}$/.test(object.digest)) malformed(operation, 'project_resource_configuration_invalid');
+    if (object.resources.length > 0) {
+      try { validateProjectResourceSettings({ schemaVersion: 1, projectId: object.projectId, resources: object.resources }, { operation }); }
+      catch { malformed(operation, 'project_resource_configuration_invalid'); }
+    }
+    return object;
+  }
+  exactKeys(operation, object, operation === 'project.resources.preview'
+    ? ['schemaVersion', 'projectId', 'entries', 'candidates', 'rejected', 'configurationChanged']
+    : ['schemaVersion', 'projectId', 'sources', 'candidates', 'rejected', 'configurationChanged']);
+  if (!Array.isArray(object.candidates) || object.candidates.length > 2048 || !Array.isArray(object.rejected) || object.rejected.length > 32 || object.configurationChanged !== false) {
+    malformed(operation, 'project_resource_candidates_invalid');
+  }
+  for (const value of object.candidates) {
+    const candidate = requirePlain(operation, value);
+    const { metadata: rawMetadata, availability, ...identity } = candidate;
+    if (availability !== 'available' && availability !== 'unverified') malformed(operation, 'project_resource_candidate_invalid');
+    try {
+      const parsed = validateProjectResourceCandidate(identity);
+      if (parsed.projectId !== object.projectId || typeof identity.digest !== 'string' || identity.summary === undefined) malformed(operation, 'project_resource_candidate_invalid');
+    } catch { malformed(operation, 'project_resource_candidate_invalid'); }
+    const metadata = requirePlain(operation, rawMetadata);
+    exactKeys(operation, metadata, ['description', 'promptSummary', 'toolNames']);
+    if (![metadata.description, metadata.promptSummary].every(v => v === null || (typeof v === 'string' && v.length <= 4096))
+      || !Array.isArray(metadata.toolNames) || metadata.toolNames.length > 128 || metadata.toolNames.some(v => typeof v !== 'string' || v.length > 128)) malformed(operation, 'project_resource_metadata_invalid');
+  }
+  const reasons = new Set<string>(PROJECT_RESOURCE_CANDIDATE_REASONS);
+  for (const value of object.rejected) {
+    const item = requirePlain(operation, value);
+    exactKeys(operation, item, ['sourceId', 'reason']);
+    requireStableId(operation, item.sourceId);
+    if (typeof item.reason !== 'string' || !reasons.has(item.reason)) malformed(operation, 'project_resource_rejection_invalid');
+  }
+  if (operation === 'project.resources.preview') {
+    if (!Array.isArray(object.entries) || object.entries.length > 2080) malformed(operation, 'project_resource_preview_invalid');
+    for (const value of object.entries) {
+      const entry = requirePlain(operation, value);
+      exactKeys(operation, entry, ['sourceId', 'candidateId', 'name', 'status', 'reason']);
+      requireStableId(operation, entry.sourceId);
+      if (entry.candidateId !== null) requireStableId(operation, entry.candidateId);
+      if (!(entry.name === null || typeof entry.name === 'string') || !['pending', 'selected', 'conflict', 'rejected'].includes(entry.status as string)
+        || !(entry.reason === null || (typeof entry.reason === 'string' && (reasons.has(entry.reason) || ['already_selected', 'already_configured'].includes(entry.reason))))) malformed(operation, 'project_resource_preview_invalid');
+    }
+  } else {
+    if (!Array.isArray(object.sources) || object.sources.length > 32) malformed(operation, 'project_resource_sources_invalid');
+    for (const value of object.sources) {
+      const source = requirePlain(operation, value);
+      exactKeys(operation, source, ['sourceId', 'sourceDigest', 'status', 'candidateIds', 'error']);
+      requireStableId(operation, source.sourceId);
+      if (!Array.isArray(source.candidateIds) || source.candidateIds.length > 64) malformed(operation, 'project_resource_sources_invalid');
+      source.candidateIds.forEach(id => requireStableId(operation, id));
+      if (source.status === 'accepted') {
+        if (typeof source.sourceDigest !== 'string' || !/^[a-f0-9]{64}$/.test(source.sourceDigest) || source.error !== null) malformed(operation, 'project_resource_sources_invalid');
+      } else if (source.status === 'rejected') {
+        const error = requirePlain(operation, source.error);
+        exactKeys(operation, error, ['reason']);
+        if (source.sourceDigest !== null || source.candidateIds.length !== 0 || typeof error.reason !== 'string' || !reasons.has(error.reason)) malformed(operation, 'project_resource_sources_invalid');
+      } else malformed(operation, 'project_resource_sources_invalid');
+    }
+  }
+  return object;
+}
+
+/**
+ * 按 §7.2/§8 冻结形状校验查询响应。schema 版本不符 → unsupported_schema_version；
+ * 形状/字段/scope 不符 → response_malformed。不修改输入对象以外的任何状态。
+ */
+export function validateAppQueryResponse(
+  operation: 'task.strategy.reapply.preview',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): TaskStrategyReapplicationPreviewWire;
+export function validateAppQueryResponse(
+  operation: 'projects.profile.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ProjectProfileQueryResult;
+export function validateAppQueryResponse(
+  operation: 'projects.profile.match',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ProjectProfileMatchQueryResult;
 export function validateAppQueryResponse(
   operation: 'execution.budget.get',
   body: unknown,
@@ -6734,6 +7275,11 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): BaselineDetailResult;
+export function validateAppQueryResponse(
+  operation: 'baselines.compare',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BaselineComparisonResult;
 // P03-1 / F-009 §6.6：计划域查询响应重载。
 export function validateAppQueryResponse(operation: 'phases.graph.get', body: unknown, expectation?: SnapshotExpectation): PhaseGraphResult;
 export function validateAppQueryResponse(
@@ -6761,6 +7307,17 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): TaskListResult;
+// P06-6 / F-007：四层标签 Run 列表与实体标签计数查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'runs.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): RunListResult;
+export function validateAppQueryResponse(
+  operation: 'labels.counts',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): EntityLabelCountsResult;
 export function validateAppQueryResponse(
   operation: 'tasks.get',
   body: unknown,
@@ -6853,8 +7410,20 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): IntegrationPlanQueryResult;
-// P03-8 / F-010：Feature 分轴结果查询响应重载。
+// P06-2：知识与记忆查询复用 Core 的同一线协议校验器。
+export function validateAppQueryResponse(operation: 'knowledge.search', body: unknown): KnowledgeSearchResultSet;
+export function validateAppQueryResponse(operation: 'knowledge.read', body: unknown): KnowledgeReadResult;
+export function validateAppQueryResponse(operation: 'memory.search', body: unknown): MemorySearchResultSet;
 export function validateAppQueryResponse(operation: 'features.report.get', body: unknown, expectation?: SnapshotExpectation): FeatureExecutionReport;
+export function validateAppQueryResponse(operation: 'project.resources.list', body: unknown, expectation?: SnapshotExpectation): ProjectResourceConfiguration;
+export function validateAppQueryResponse(operation: 'project.resources.candidates', body: unknown, expectation?: SnapshotExpectation): ProjectResourceCandidateDiscoveryResult;
+export function validateAppQueryResponse(operation: 'project.resources.preview', body: unknown, expectation?: SnapshotExpectation): ProjectResourceCandidatePreview;
+export function validateAppQueryResponse(
+  operation: 'repository.move.preview',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BrownfieldMovePreview;
+
 export function validateAppQueryResponse(
   operation: 'features.delivery.get',
   body: unknown,
@@ -6957,6 +7526,12 @@ export function validateAppQueryResponse(
   expectation?: SnapshotExpectation,
 ): unknown {
   switch (operation) {
+    case 'knowledge.search':
+    case 'knowledge.read':
+    case 'memory.search':
+      if (isPlainObject(body) && body.schemaVersion !== 1) throw new HostProtocolError('unsupported_schema_version', operation, '知识查询响应版本不受支持');
+      try { return validateKnowledgeQueryResponse(operation, body); }
+      catch { throw new HostProtocolError('response_malformed', operation, '知识查询响应无效'); }
     case 'execution.sessions.list': return validateWorkSessionListWire(body);
     case 'execution.session.get': return validateWorkSessionDetailWire(body);
     case 'execution.session.evidence.get': return validateWorkSessionEvidenceWire(body);
@@ -7002,6 +7577,10 @@ export function validateAppQueryResponse(
     }
     case 'projects.inspect':
       return validateProjectInspection(operation, body);
+    case 'projects.profile.get':
+      return validateProjectProfileQueryWire(operation, body);
+    case 'projects.profile.match':
+      return validateProjectProfileMatchQueryWire(operation, body);
     case 'projects.overview':
       return validateProjectOverview(operation, body);
     case 'settings.global.get':
@@ -7019,6 +7598,8 @@ export function validateAppQueryResponse(
       return validateBaselineListPage(operation, body);
     case 'baselines.get':
       return validateBaselineDetail(operation, body);
+    case 'baselines.compare':
+      return validateBaselineComparison(operation, body);
     // P03-1 / F-009 §6.6：计划域查询响应分发（同一冻结字段集纪律）。
     case 'phases.graph.get': return validatePhaseGraphWire(body);
     case 'phases.list':
@@ -7034,12 +7615,18 @@ export function validateAppQueryResponse(
       return validateFeaturePlanDetailWire(operation, body);
     case 'tasks.list':
       return validateTaskListPage(operation, body);
+    case 'runs.list':
+      return validateRunListPage(operation, body);
+    case 'labels.counts':
+      return validateEntityLabelCountsResultWire(operation, body);
     case 'tasks.get': {
       const object = requirePlain(operation, body);
       exactKeys(operation, object, ['task']);
       return { task: validateTaskRecordWire(operation, object.task) };
     }
-    // P03-2 / F-007：审批决策查询响应分发（同一冻结字段集纪律）。
+    case 'task.strategy.reapply.preview':
+      return validateTaskStrategyReapplicationPreviewWire(body, operation);
+
     case 'features.approvals':
       return validateFeatureApprovalsResultWire(operation, body);
     case 'execution.budget.get':
@@ -7065,6 +7652,13 @@ export function validateAppQueryResponse(
       return validatePlanningContextDetailResultWire(body, operation);
     case 'planning.candidate.get':
       return validatePlanningCandidateDetailResultWire(body, operation);
+    case 'project.resources.list':
+    case 'project.resources.candidates':
+    case 'project.resources.preview':
+      return validateProjectResourceQueryWire(operation, body);
+    case 'repository.move.preview':
+      return validateRepositoryMovePreviewWire(body, operation);
+
     // P03-7 / F-013：Task 证据/人审/返工链查询响应分发（同一冻结字段集纪律）。
     case 'execution.task.verification.get':
       return validateTaskVerificationResultWire(body, operation);

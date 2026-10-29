@@ -22,6 +22,7 @@ import {
   CURRENT_HOST_CAPABILITIES,
   FEATURE_DELIVERY_COMMAND_CAPABILITIES,
   BATCH_DELIVERY_COMMAND_CAPABILITIES,
+  KNOWLEDGE_QUERY_CAPABILITIES,
   hostCapabilitiesForDelivery,
   LIFECYCLE_ROUTE_NAMES,
   isLifecycleState,
@@ -108,12 +109,15 @@ export function validateHandshakeRequestShape(input: unknown): HandshakeRequest 
 
 /** §8 顺序第 4/5 步：schema 未知 → 400；协议不兼容 → 426（details 给支持版本）。 */
 export function ensureHandshakeVersionCompatibility(request: HandshakeRequest): void {
-  if (request.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+  // v5 is the immediately previous lifecycle schema. It remains accepted for
+  // already deployed clients; the response echoes that request version so the
+  // client and Host keep the same capability shape during the handshake.
+  if (request.schemaVersion !== CURRENT_SCHEMA_VERSION && request.schemaVersion !== 5) {
     throw new HostProtocolError(
       'unsupported_schema_version',
       'host.handshake',
       '不支持的消息 schema 版本',
-      { details: { supportedSchemaVersions: [CURRENT_SCHEMA_VERSION] } },
+      { details: { supportedSchemaVersions: [CURRENT_SCHEMA_VERSION, 5] } },
     );
   }
   if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly number[]).includes(request.protocolVersion)) {
@@ -258,7 +262,8 @@ function validateCapabilities(input: unknown): HostCapabilities {
     surface,
     'capabilities.application.queries',
     application.queries,
-    hostCapabilitiesForDelivery(false, false, Array.isArray(application.queries) && application.queries.includes('execution.batch.delivery.get')).application.queries,
+    hostCapabilitiesForDelivery(false, false, Array.isArray(application.queries) && application.queries.includes('execution.batch.delivery.get'),
+      KNOWLEDGE_QUERY_CAPABILITIES.filter(query => Array.isArray(application.queries) && application.queries.includes(query))).application.queries,
   );
   if (Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))
     && (!Array.isArray(application.queries) || !application.queries.includes('execution.batch.delivery.get'))) {

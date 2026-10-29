@@ -26,7 +26,13 @@
  *
  * import 本模块无副作用：不发起网络、不读文件系统/argv/env。
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { ProjectResourceSourceInput, ProjectResourceSourceResult } from 'shiploop-core/protocol';
+import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview, BrownfieldMovePreview } from 'shiploop-core/protocol';
+
+import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
+
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
   validateBatchDeliveryCommandResult,
@@ -48,7 +54,11 @@ import type {
   AttemptListResult,
   DispatchQueueListResult,
   ResourceListResult,
+  EntityLabelCountsResult,
+  LabelEntity,
+  RunListResult,
   BaselineDetailResult,
+  BaselineComparisonResult,
   BaselineListResult,
   CommandReceipt,
   CommandScope,
@@ -115,6 +125,7 @@ import {
   EXECUTION_RESOURCES_ROUTE,
   ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
+  BASELINE_COMPARE_ROUTE,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
@@ -138,11 +149,15 @@ import {
   PLANNING_CONTEXTS_ROUTE,
   PLANNING_CONTEXTS_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
+  PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX,
+  PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
+  RUNS_ROUTE,
   RUNS_ROUTE_PREFIX,
+  LABEL_COUNTS_ROUTE,
   RUN_CONTROL_ROUTE_SUFFIX,
   RUN_RECOVERY_ROUTE_SUFFIX,
   BATCH_CONTROL_ROUTE_SUFFIX,
@@ -156,6 +171,7 @@ import {
   SUBMIT_COMMAND_BUDGET_MS,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
+  TASK_STRATEGY_REAPPLICATION_ROUTE,
   WORKSPACES_ROUTE,
   WORKSPACES_ROUTE_PREFIX,
   WORKSPACE_OPERATIONS_ROUTE,
@@ -165,9 +181,10 @@ import {
 } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
+import type { TaskStrategyReapplicationPreviewWire } from './app-wire.js';
 import {
-  validatePlanningDecisionResultWire,
   validateBatchDeliveryResultWire,
+  validatePlanningDecisionResultWire,
   validateAppQueryResponse,
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
@@ -189,9 +206,13 @@ import {
   validateTaskApprovalBlockResultWire,
   validateTaskApprovalDecisionResultWire,
   validateTaskStrategyUpdateResultWire,
+  validateTaskStrategyReapplicationPreviewWire,
+  validateTaskStrategyReapplicationResultWire,
   validateTaskVerificationContinueResultWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateWorkspaceDiscardPreviewWire,
+  validateRepositoryMoveConfirmResultWire,
+  validateRepositoryMovePreviewWire,
   validateGitAgentRepairQueryResultWire,
 } from './app-wire.js';
 
@@ -358,6 +379,30 @@ export interface PlanListPageInput {
   readonly cursor?: string;
 }
 
+/** P06-6 / F-007：四层标签筛选输入（可重复标签 + any/all；规范化由 Core 复核）。 */
+export interface EntityLabelFilterInput {
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
+}
+
+/** 计划层级列表输入（分页 + 标签筛选；labels/match 缺省即无标签约束）。 */
+export interface PlanEntityListInput extends PlanListPageInput, EntityLabelFilterInput {}
+
+/** P06-6 / F-007：Run 列表输入（父级可选；查询零写入，仅持久元数据投影）。 */
+export interface RunListInput extends PlanEntityListInput {
+  readonly featureId?: string;
+  readonly batchId?: string;
+}
+
+/** P06-6 / F-007：四层实体标签计数输入（计数不接受分页参数）。 */
+export interface EntityLabelCountsInput extends EntityLabelFilterInput {
+  readonly entity: LabelEntity;
+  readonly projectId: string;
+  readonly phaseId?: string;
+  readonly featureId?: string;
+  readonly batchId?: string;
+}
+
 /** P03-8 / F-009 git.operations.list 父级选择（Feature 或 Run 二选一）。 */
 export type GitOperationListParentInput =
   | { readonly featureId: string }
@@ -393,6 +438,17 @@ export interface UpdateTaskStrategyInput {
   readonly expectedRevision: number;
   readonly commandId?: string;
 }
+export interface TaskStrategyReapplicationInput {
+  readonly confirmed: true;
+  readonly projectId: string;
+  readonly previewDigest: string;
+  readonly globalSettingsRevision: number | null;
+  readonly projectSettingsRevision: number | null;
+  readonly selectedTaskIds: readonly string[];
+  readonly expectedTaskRevisions: readonly { readonly taskId: string; readonly revision: number }[];
+  readonly commandId?: string;
+}
+
 
 /**
  * task.approval.block 输入（F-007/F-014：添加阻塞/必需审批事项）。
@@ -533,7 +589,23 @@ export interface DecidePlanningCandidateInput {
   readonly commandId?: string;
 }
 
-/** P05-1 / F-012 planning.contexts.list 分页输入（可选 Feature 过滤）。 */
+export interface UpdateProjectProfileInput {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly profile?: unknown;
+  readonly commandId?: string;
+}
+
+export interface MatchProjectProfileInput {
+  readonly directory?: string;
+  readonly requiredModuleIds?: readonly string[];
+  readonly languages?: readonly string[];
+  readonly frameworks?: readonly string[];
+  readonly scope?: readonly string[];
+}
+
+
+
 export interface ListPlanningContextsInput {
   readonly featureId?: string;
   readonly limit?: number;
@@ -591,6 +663,37 @@ export interface BudgetRevisionListInput {
 /* ------------------------------------------------------------------ *
  * P03-5 / F-012 工作区状态查询与人工丢弃预览/确认输入类型
  * ------------------------------------------------------------------ */
+
+export interface ProjectResourceMutationInput {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface ImportProjectResourceInput extends ProjectResourceMutationInput {
+  readonly sourceId: string;
+  readonly sourceDigest: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+}
+export interface ProjectResourceTargetInput extends ProjectResourceMutationInput {
+  readonly resourceId: string;
+}
+
+export interface RepositoryMovePreviewInput {
+  readonly projectId: string;
+  readonly repositoryPath: string;
+}
+
+export interface RepositoryMoveConfirmationInput {
+  readonly projectId: string;
+  readonly preview: BrownfieldMovePreview;
+  readonly decision: 'confirm' | 'cancel';
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+  readonly expiresAt?: string | null;
+}
+
+
 
 /** workspaces.list 分页/筛选输入（limit 1..500；cursor 为 wscur_v1_ 不透明游标）。 */
 export interface ListWorkspacesInput {
@@ -678,6 +781,9 @@ export interface ApprovePhaseDeliveryInput extends FinalizeBatchInput {
 
 /** HostClient 应用面方法集（connectToHost 返回对象的一部分）。 */
 export interface HostClientApplication {
+  searchKnowledge(projectId: string, input: KnowledgeSearchInput): Promise<KnowledgeSearchResultSet>;
+  readKnowledge(projectId: string, input: Omit<KnowledgeReadInput, 'projectId'>): Promise<KnowledgeReadResult>;
+  searchMemories(projectId: string, input: MemorySearchInput): Promise<MemorySearchResultSet>;
   finalizeBatch(input: FinalizeBatchInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   approvePhaseDelivery(input: ApprovePhaseDeliveryInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getBatchDelivery(projectId: string, batchId: string, input?: PlanListPageInput): Promise<PublicBatchDeliveryResult>;
@@ -735,6 +841,12 @@ export interface HostClientApplication {
   inspectRepository(path: string): Promise<ProjectInspectionResult>;
   /** P02-3 / F-006（§7.3）：注册状态与健康状态分开的项目概览。 */
   getProjectOverview(projectId: string): Promise<ProjectOverviewResult>;
+  getProjectProfile(projectId: string): Promise<ProjectProfileQueryResult>;
+  detectProjectProfile(input: { readonly projectId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  confirmProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  modifyProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  rejectProjectProfile(input: Omit<UpdateProjectProfileInput, 'profile'>, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  matchProjectProfile(projectId: string, input?: MatchProjectProfileInput): Promise<ProjectProfileMatchQueryResult>;
   getRepositoryBinding(projectId: string): Promise<ProjectBindingResult>;
   countProjectLabels(): Promise<ProjectLabelCountsResult>;
   getGlobalSettings(): Promise<PublicSettingsState>;
@@ -771,6 +883,8 @@ export interface HostClientApplication {
   listBaselines(projectId: string, input?: ListBaselinesInput): Promise<BaselineListResult>;
   /** P02-3 / F-014（§7.5）：单次基线操作详情（授权摘要 + 逐项检查）。 */
   getBaseline(operationId: string): Promise<BaselineDetailResult>;
+  /** P06-5：同项目两次基线的身份/逐项状态只读比较。 */
+  compareBaselines(previousOperationId: string, currentOperationId: string): Promise<BaselineComparisonResult>;
   /** P02-3 / F-014（§7.6）：正式基线证据制品正文（有界、已授权、已脱敏）。 */
   readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult>;
   /* ------------------------------------------------------------ *
@@ -800,26 +914,36 @@ export interface HostClientApplication {
     input: ReviseFeaturePlanInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
-  /** phases.list：项目内 Phase 层级列表（稳定排序、受控游标）。 */
-  listPhases(projectId: string, input?: PlanListPageInput): Promise<PhaseListResult>;
+  /** phases.list：项目内 Phase 层级列表（稳定排序、受控游标；P06-6 / F-007 扩展标签筛选）。 */
+  listPhases(projectId: string, input?: PlanEntityListInput): Promise<PhaseListResult>;
   /** phases.get：Phase 详情（真实父级/标签/revision）。 */
   getPhase(phaseId: string): Promise<PhaseDetailResult>;
-  /** features.list：Phase 内 Feature 层级列表。 */
+  /** features.list：Phase 内 Feature 层级列表（P06-6 / F-007 扩展标签筛选）。 */
   listFeatures(
     projectId: string,
     phaseId: string,
-    input?: PlanListPageInput,
+    input?: PlanEntityListInput,
   ): Promise<FeatureListResult>;
   /** features.get：Feature 详情与完整同 Feature Task DAG（一致读视图）。 */
   getFeature(featureId: string): Promise<FeatureDetailResult>;
-  /** tasks.list：Feature 内 Task 层级列表。 */
+  /** tasks.list：Feature 内 Task 层级列表（P06-6 / F-007 扩展标签筛选）。 */
   listTasks(
     projectId: string,
     featureId: string,
-    input?: PlanListPageInput,
+    input?: PlanEntityListInput,
   ): Promise<TaskListResult>;
   /** tasks.get：Task 详情（验收/引用/策略副本与来源）。 */
   getTask(taskId: string): Promise<TaskDetailResult>;
+  /**
+   * P06-6 / F-007 runs.list：项目内 Run 持久元数据列表（GET /v1/runs；
+   * 可选 featureId/batchId 父级 + 标签筛选；只读，不触达执行/配置快照）。
+   */
+  listRuns(projectId: string, input?: RunListInput): Promise<RunListResult>;
+  /**
+   * P06-6 / F-007 labels.counts：四层实体标签去重计数（GET /v1/label-counts；
+   * 与列表同一标签匹配语义，不接受分页参数）。
+   */
+  getLabelCounts(input: EntityLabelCountsInput): Promise<EntityLabelCountsResult>;
   /* ------------------------------------------------------------ *
    * P03-2 / F-007 决策/策略/输入准备命令与授权查询
    * ------------------------------------------------------------ */
@@ -836,6 +960,10 @@ export interface HostClientApplication {
     input: UpdateTaskStrategyInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
+  /** task.strategy.reapply.preview：默认策略重应用的只读预览。 */
+  previewTaskStrategyReapplication(projectId: string, taskIds: readonly string[]): Promise<TaskStrategyReapplicationPreviewWire>;
+  /** task.strategy.reapply：显式确认后批量 CAS 重应用默认策略。 */
+  reapplyTaskStrategy(input: TaskStrategyReapplicationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /**
    * task.approval.block：添加阻塞/必需审批事项（F-007/F-014）。只写事项事实，
    * 不创建执行实体、不调用 Runtime；completed 回执 result 经线校验器复核。
@@ -960,6 +1088,16 @@ export interface HostClientApplication {
     projectId: string,
     input?: ResourceListInput,
   ): Promise<ResourceListResult>;
+  listProjectResources(projectId: string): Promise<ProjectResourceConfiguration>;
+  previewRepositoryMove(input: RepositoryMovePreviewInput): Promise<BrownfieldMovePreview>;
+  confirmRepositoryMove(input: RepositoryMoveConfirmationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  configureProjectResourceSource(input: ProjectResourceSourceInput): Promise<ProjectResourceSourceResult>;
+  discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult>;
+  previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds?: readonly string[]): Promise<ProjectResourceCandidatePreview>;
+  importProjectResource(input: ImportProjectResourceInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  enableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  disableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  revokeProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /* ------------------------------------------------------------ *
    * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
    * ------------------------------------------------------------ */
@@ -1594,6 +1732,13 @@ function requireExpectedRevisionInput(operation: HostOperation, value: unknown):
   return value;
 }
 
+function requireResourceRevisionInput(operation: HostOperation, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER) {
+    throw invalidInput(operation, 'invalid_expected_revision', 'expectedRevision');
+  }
+  return value;
+}
+
 function optionalCommandIdInput(operation: HostOperation, value: unknown): { readonly commandId?: string } {
   if (value === undefined) {
     return {};
@@ -1648,6 +1793,95 @@ function planListPath(
   }
   const paging = buildPlanListQuery(input, operation);
   const query = `${params.toString()}${paging.length === 0 ? '' : `&${paging}`}`;
+  return `${base}?${query}`;
+}
+
+/**
+ * P06-6 / F-007：四层标签列表查询串（分页 + 可重复 label + match；与
+ * buildProjectListQuery 同一形态纪律：标签为非空字符串且逐条不超上限，
+ * trim/NFC/小写/去重等规范化与 match 语义由 Core 单一权威复核）。
+ */
+const ENTITY_LABEL_LIST_INPUT_KEYS = ['limit', 'cursor', 'labels', 'match'] as const;
+const RUN_LIST_INPUT_KEYS = ['featureId', 'batchId', 'limit', 'cursor', 'labels', 'match'] as const;
+const LABEL_COUNTS_INPUT_KEYS = ['entity', 'projectId', 'phaseId', 'featureId', 'batchId', 'labels', 'match'] as const;
+
+/** labels/match 参数段（列表与计数共用；仅形态校验，规范化由 Core 复核）。 */
+function buildEntityLabelFilterQuery(
+  input: EntityLabelFilterInput,
+  operation: HostOperation,
+): string {
+  const params = new URLSearchParams();
+  if (input.labels !== undefined) {
+    if (
+      !Array.isArray(input.labels) ||
+      input.labels.length > 50 ||
+      !input.labels.every(
+        (label) => typeof label === 'string' && label.length > 0 && label.length <= 64,
+      )
+    ) {
+      throw invalidInput(operation, 'invalid_labels', 'labels');
+    }
+    for (const label of input.labels) {
+      params.append('label', label);
+    }
+  }
+  if (input.match !== undefined) {
+    if (input.match !== 'any' && input.match !== 'all') {
+      throw invalidInput(operation, 'invalid_match', 'match');
+    }
+    params.append('match', input.match);
+  }
+  return params.toString();
+}
+
+function buildEntityLabelListQuery(
+  input: PlanEntityListInput | undefined,
+  operation: HostOperation,
+): string {
+  if (input === undefined) {
+    return '';
+  }
+  const object = rejectUnknownInputKeys(operation, input, ENTITY_LABEL_LIST_INPUT_KEYS);
+  const params = new URLSearchParams();
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > PLAN_LIST_MAX_LIMIT
+    ) {
+      throw invalidInput(operation, 'invalid_limit', 'limit');
+    }
+    params.append('limit', String(object.limit));
+  }
+  if (object.cursor !== undefined) {
+    if (
+      typeof object.cursor !== 'string' ||
+      !object.cursor.startsWith(PLAN_LIST_CURSOR_PREFIX) ||
+      !/^[A-Za-z0-9_-]+$/.test(object.cursor.slice(PLAN_LIST_CURSOR_PREFIX.length))
+    ) {
+      throw invalidInput(operation, 'invalid_cursor', 'cursor');
+    }
+    params.append('cursor', object.cursor);
+  }
+  const filter = buildEntityLabelFilterQuery(object, operation);
+  const query = `${params.toString()}${filter.length === 0 ? '' : `&${filter}`}`;
+  return query;
+}
+
+/** 四层标签列表查询串（父级身份 + 分页 + 标签筛选；键序冻结）。 */
+function entityLabelListPath(
+  base: string,
+  parents: readonly [string, string][],
+  input: PlanEntityListInput | undefined,
+  operation: HostOperation,
+): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of parents) {
+    params.append(key, value);
+  }
+  const suffix = buildEntityLabelListQuery(input, operation);
+  const query = `${params.toString()}${suffix.length === 0 ? '' : `&${suffix}`}`;
   return `${base}?${query}`;
 }
 
@@ -1924,7 +2158,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       token,
       connectTimeoutMs: context.connectMs,
       overallTimeoutMs: requestBudget(),
-      maxResponseBytes: operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+      maxResponseBytes: operation === 'knowledge.read' ? MAX_KNOWLEDGE_READ_RESPONSE_BYTES
+        : operation === 'knowledge.search' || operation === 'memory.search' ? MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES
+        : operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
         : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES,
     });
     if (response.statusCode !== 200) {
@@ -2088,9 +2324,69 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     }
   }
 
-  /* ---------------------------------------------------------------- *
-   * SSE
-   * ---------------------------------------------------------------- */
+  async function submitRepositoryMoveConfirmation(
+    input: RepositoryMoveConfirmationInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt> {
+    const operation = 'repository.move.confirm' as const;
+    const submitOptions = extractAbortSignal(options, operation);
+    const commandId = input.commandId ?? submitOptions.commandId ?? randomUUID();
+    const issuedAt = input.issuedAt ?? submitOptions.issuedAt ?? new Date().toISOString();
+    if (!isUuidV4(commandId)) throw invalidInput(operation, 'invalid_command_id', 'commandId');
+    const body = {
+      projectId: requireProjectId(operation, input.projectId),
+      preview: input.preview,
+      decision: input.decision,
+      commandId,
+      issuedAt,
+      ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    };
+    const frozen: FrozenEnvelope = {
+      scope: { kind: 'project', projectId: body.projectId },
+      commandId,
+      operation: 'project.repository.rebind',
+      wire: body,
+      requestDigest: '',
+    };
+    const deadlineMs = Date.now() + context.submitBudgetMs;
+    let attempt = 0;
+    for (;;) {
+      if (submitOptions.signal?.aborted === true) throw abortedError(operation);
+      if (attempt >= SUBMIT_MAX_ATTEMPTS || Date.now() >= deadlineMs) {
+        throw new HostProtocolError('outcome_unknown', operation, undefined, { details: { reason: 'submit_budget_exhausted', commandId } });
+      }
+      attempt += 1;
+      try {
+        const response = await requestLoopbackJson({
+          port, method: 'POST', path: `${PROJECTS_ROUTE}/${body.projectId}/${PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX}`,
+          operation, token, body, connectTimeoutMs: context.connectMs,
+          overallTimeoutMs: requestBudget(deadlineMs), maxResponseBytes: MAX_APP_BODY_BYTES,
+          ...(submitOptions.signal === undefined ? {} : { signal: submitOptions.signal }),
+        });
+        const receipt = validateCommandReceiptWire(response.json, {
+          expectedCommandId: commandId,
+          expectedOperation: 'project.repository.rebind',
+          expectedProjectId: body.projectId,
+        }, operation);
+        if (receipt.status === 'completed') {
+          validateRepositoryMoveConfirmResultWire(receipt.result, operation);
+        }
+        return receipt;
+      } catch (error) {
+        if (isAbortError(error, submitOptions.signal)) throw abortedError(operation);
+        if (!isHostProtocolError(error, 'unreachable')) throw error;
+      }
+      await boundedDelay(SUBMIT_RECEIPT_GRACE_MS, submitOptions.signal, deadlineMs, operation);
+      const receipt = await lookupReceipt(frozen, submitOptions.signal, deadlineMs, 'server_anchored');
+      if (receipt !== undefined) {
+        if (receipt.status === 'completed') validateRepositoryMoveConfirmResultWire(receipt.result, operation);
+        return receipt;
+      }
+      await boundedDelay(SUBMIT_RETRY_DELAY_MS, submitOptions.signal, deadlineMs, operation);
+    }
+  }
+
+
 
   function buildEventsQuery(scope: SettingsScope, cursor: string | undefined): string {
     const params = new URLSearchParams();
@@ -2534,7 +2830,80 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return receipt;
   }
 
+  function knowledgeInput(operation: 'knowledge.search', input: unknown): ReturnType<typeof validateKnowledgeSearchInput>;
+  function knowledgeInput(operation: 'knowledge.read', input: unknown): ReturnType<typeof validateKnowledgeReadInput>;
+  function knowledgeInput(operation: 'memory.search', input: unknown): ReturnType<typeof validateMemorySearchInput>;
+  function knowledgeInput(operation: 'knowledge.search' | 'knowledge.read' | 'memory.search', input: unknown) {
+    try {
+      return operation === 'knowledge.search' ? validateKnowledgeSearchInput(input)
+        : operation === 'knowledge.read' ? validateKnowledgeReadInput(input) : validateMemorySearchInput(input);
+    } catch { throw invalidInput(operation, 'invalid_knowledge_query'); }
+  }
+
+  function assertKnowledgeBinding(operation: 'knowledge.search' | 'knowledge.read' | 'memory.search', expected: object, result: { query: object; budget: object }) {
+    const input = expected as Record<string, unknown>;
+    for (const [key, value] of Object.entries(result.query)) {
+      if (operation === 'knowledge.read' && key === 'version' && input.version === undefined) continue;
+      if (value !== (input[key] ?? null)) throw new HostProtocolError('response_malformed', operation, '知识查询条件不一致');
+    }
+    for (const [key, value] of Object.entries(result.budget)) {
+      if (Object.hasOwn(input, key) && value !== input[key]) throw new HostProtocolError('response_malformed', operation, '知识查询预算不一致');
+    }
+  }
+
+  async function submitProjectResourceTarget(
+    operation: 'project.resource.enable' | 'project.resource.disable' | 'project.resource.revoke',
+    input: ProjectResourceTargetInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt> {
+    const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'resourceId', 'commandId']);
+    const projectId = requireProjectId('commands.submit', object.projectId as string);
+    return submitCommand({
+      ...optionalCommandIdInput('commands.submit', object.commandId), operation,
+      scope: { kind: 'project', projectId },
+      expectedRevision: requireResourceRevisionInput('commands.submit', object.expectedRevision),
+      payload: { resourceId: requireStableIdInput('commands.submit', object.resourceId, 'resourceId') },
+    }, options);
+  }
+
+  function knowledgePath(projectId: string, route: string, input: object) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(input)) if (value !== undefined) query.set(key, String(value));
+    return `${PROJECTS_ROUTE}/${projectId}/${route}?${query}`;
+  }
+
   return {
+    async searchKnowledge(projectId, input) {
+      const op = 'knowledge.search';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const parsed = knowledgeInput(op, input);
+      const result = validateAppQueryResponse(op, await getJson(op, knowledgePath(id, 'knowledge/search', parsed)));
+      assertKnowledgeBinding(op, parsed, result);
+      if (result.projectId !== id || (parsed.documentId !== undefined && result.results.some(r => r.documentId !== parsed.documentId || (parsed.version !== undefined && r.version !== parsed.version)))) throw new HostProtocolError('response_malformed', op, '知识查询归属不一致');
+      return result;
+    },
+    async readKnowledge(projectId, input) {
+      const op = 'knowledge.read';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const parsed = knowledgeInput(op, input);
+      const result = validateAppQueryResponse(op, await getJson(op, knowledgePath(id, 'knowledge/read', parsed)));
+      assertKnowledgeBinding(op, parsed, result);
+      if (result.projectId !== id || result.documentId !== parsed.documentId || (parsed.version !== undefined && result.version !== parsed.version)) throw new HostProtocolError('response_malformed', op, '知识查询归属不一致');
+      if (createHash('sha256').update(result.contentText).digest('hex') !== result.contentHash) throw new HostProtocolError('response_malformed', op, '知识正文摘要不一致');
+      return result;
+    },
+    async searchMemories(projectId, input) {
+      const op = 'memory.search';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const parsed = knowledgeInput(op, input);
+      const result = validateAppQueryResponse(op, await getJson(op, knowledgePath(id, 'memory/search', parsed)));
+      assertKnowledgeBinding(op, parsed, result);
+      if (result.projectId !== id || (parsed.recordKey !== undefined && result.results.some(r => r.recordKey !== parsed.recordKey || (parsed.version !== undefined && r.version !== parsed.version)))) throw new HostProtocolError('response_malformed', op, '记忆查询归属不一致');
+      return result;
+    },
     submitCommand,
     updatePhaseMetadata: (input, options) => mutatePhase('phase.metadata.update', input, options),
     closePhase: (input, options) => mutatePhase('phase.close', input, options),
@@ -2632,6 +3001,74 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const json = await getJson('projects.overview', `${PROJECTS_ROUTE}/${id}/overview`);
       return validateAppQueryResponse('projects.overview', json);
     },
+
+    async detectProjectProfile(input: { readonly projectId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.detect',
+        scope: { kind: 'project', projectId }, payload: {},
+      }, options);
+    },
+    async confirmProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'profile', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.confirm',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: { profile: object.profile },
+      }, options);
+    },
+    async modifyProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'profile', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.modify',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: { profile: object.profile },
+      }, options);
+    },
+    async rejectProjectProfile(input: Omit<UpdateProjectProfileInput, 'profile'>, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.reject',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: {},
+      }, options);
+    },
+
+    async getProjectProfile(projectId: string): Promise<ProjectProfileQueryResult> {
+      context.assertOpen('projects.profile.get');
+      const id = requireProjectId('projects.profile.get', projectId);
+      const json = await getJson('projects.profile.get', `${PROJECTS_ROUTE}/${id}/profile`);
+      return validateAppQueryResponse('projects.profile.get', json);
+    },
+
+    async matchProjectProfile(projectId: string, input?: MatchProjectProfileInput): Promise<ProjectProfileMatchQueryResult> {
+      context.assertOpen('projects.profile.match');
+      const id = requireProjectId('projects.profile.match', projectId);
+      if (input !== undefined && !isPlainObject(input)) throw invalidInput('projects.profile.match', 'invalid_options');
+      const value = input as Record<string, unknown> | undefined;
+      const params = new URLSearchParams();
+      const append = (key: string, raw: unknown): void => {
+        if (raw === undefined) return;
+        if (!Array.isArray(raw) || raw.some(item => typeof item !== 'string' || item.length === 0)) throw invalidInput('projects.profile.match', 'invalid_match_input', key);
+        for (const item of raw) params.append(key, item);
+      };
+      if (value?.directory !== undefined) {
+        if (typeof value.directory !== 'string' || value.directory.length === 0) throw invalidInput('projects.profile.match', 'invalid_directory', 'directory');
+        params.set('directory', value.directory);
+      }
+      append('requiredModuleId', value?.requiredModuleIds);
+      append('language', value?.languages);
+      append('framework', value?.frameworks);
+      append('scope', value?.scope);
+      const suffix = params.toString().length === 0 ? '' : `?${params.toString()}`;
+      const json = await getJson('projects.profile.match', `${PROJECTS_ROUTE}/${id}/profile/match${suffix}`);
+      return validateAppQueryResponse('projects.profile.match', json);
+    },
+
 
     async getRepositoryBinding(projectId: string): Promise<ProjectBindingResult> {
       const id = requireProjectId('projects.binding.get', projectId);
@@ -2776,6 +3213,17 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const json = await getJson('baselines.get', `${BASELINES_ROUTE_PREFIX}${id}`);
       return validateAppQueryResponse('baselines.get', json);
     },
+
+    async compareBaselines(previousOperationId: string, currentOperationId: string): Promise<BaselineComparisonResult> {
+      const operation = 'baselines.compare';
+      context.assertOpen(operation);
+      const previous = requireOperationIdInput(operation, previousOperationId);
+      const current = requireOperationIdInput(operation, currentOperationId);
+      const query = `previousOperationId=${encodeURIComponent(previous)}&currentOperationId=${encodeURIComponent(current)}`;
+      const json = await getJson(operation, `${BASELINE_COMPARE_ROUTE}?${query}`);
+      return validateAppQueryResponse(operation, json);
+    },
+
 
     async readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult> {
       context.assertOpen('artifacts.get');
@@ -2925,12 +3373,12 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return receipt;
     },
 
-    async listPhases(projectId: string, input?: PlanListPageInput): Promise<PhaseListResult> {
+    async listPhases(projectId: string, input?: PlanEntityListInput): Promise<PhaseListResult> {
       context.assertOpen('phases.list');
       const id = requireProjectId('phases.list', projectId);
       const json = await getJson(
         'phases.list',
-        planListPath(PHASES_ROUTE, [['projectId', id]], input, 'phases.list'),
+        entityLabelListPath(PHASES_ROUTE, [['projectId', id]], input, 'phases.list'),
       );
       return validateAppQueryResponse('phases.list', json);
     },
@@ -2945,14 +3393,14 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     async listFeatures(
       projectId: string,
       phaseId: string,
-      input?: PlanListPageInput,
+      input?: PlanEntityListInput,
     ): Promise<FeatureListResult> {
       context.assertOpen('features.list');
       const id = requireProjectId('features.list', projectId);
       const parent = requireStableIdInput('features.list', phaseId, 'phaseId');
       const json = await getJson(
         'features.list',
-        planListPath(FEATURES_ROUTE, [['projectId', id], ['phaseId', parent]], input, 'features.list'),
+        entityLabelListPath(FEATURES_ROUTE, [['projectId', id], ['phaseId', parent]], input, 'features.list'),
       );
       return validateAppQueryResponse('features.list', json);
     },
@@ -2967,16 +3415,68 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     async listTasks(
       projectId: string,
       featureId: string,
-      input?: PlanListPageInput,
+      input?: PlanEntityListInput,
     ): Promise<TaskListResult> {
       context.assertOpen('tasks.list');
       const id = requireProjectId('tasks.list', projectId);
       const parent = requireStableIdInput('tasks.list', featureId, 'featureId');
       const json = await getJson(
         'tasks.list',
-        planListPath(TASKS_ROUTE, [['projectId', id], ['featureId', parent]], input, 'tasks.list'),
+        entityLabelListPath(TASKS_ROUTE, [['projectId', id], ['featureId', parent]], input, 'tasks.list'),
       );
       return validateAppQueryResponse('tasks.list', json);
+    },
+
+    async listRuns(projectId: string, input?: RunListInput): Promise<RunListResult> {
+      context.assertOpen('runs.list');
+      const id = requireProjectId('runs.list', projectId);
+      const object = input === undefined
+        ? {}
+        : rejectUnknownInputKeys('runs.list', input, RUN_LIST_INPUT_KEYS);
+      const parents: [string, string][] = [['projectId', id]];
+      if (object.featureId !== undefined) {
+        parents.push(['featureId', requireStableIdInput('runs.list', object.featureId, 'featureId')]);
+      }
+      if (object.batchId !== undefined) {
+        parents.push(['batchId', requireStableIdInput('runs.list', object.batchId, 'batchId')]);
+      }
+      // 父级已进查询参数；余下仅分页/标签筛选（键集已由 RUN_LIST_INPUT_KEYS 校验）。
+      const { featureId: _featureId, batchId: _batchId, ...filterInput } = object;
+      const json = await getJson(
+        'runs.list',
+        entityLabelListPath(RUNS_ROUTE, parents, filterInput as PlanEntityListInput, 'runs.list'),
+      );
+      return validateAppQueryResponse('runs.list', json);
+    },
+
+    async getLabelCounts(input: EntityLabelCountsInput): Promise<EntityLabelCountsResult> {
+      context.assertOpen('labels.counts');
+      const object = rejectUnknownInputKeys('labels.counts', input, LABEL_COUNTS_INPUT_KEYS);
+      if (
+        object.entity !== 'phase' &&
+        object.entity !== 'feature' &&
+        object.entity !== 'task' &&
+        object.entity !== 'run'
+      ) {
+        throw invalidInput('labels.counts', 'invalid_entity', 'entity');
+      }
+      const projectId = requireProjectId('labels.counts', object.projectId as string);
+      const params = new URLSearchParams();
+      params.append('entity', object.entity);
+      params.append('projectId', projectId);
+      if (object.phaseId !== undefined) {
+        params.append('phaseId', requireStableIdInput('labels.counts', object.phaseId, 'phaseId'));
+      }
+      if (object.featureId !== undefined) {
+        params.append('featureId', requireStableIdInput('labels.counts', object.featureId, 'featureId'));
+      }
+      if (object.batchId !== undefined) {
+        params.append('batchId', requireStableIdInput('labels.counts', object.batchId, 'batchId'));
+      }
+      const filter = buildEntityLabelFilterQuery(object, 'labels.counts');
+      const query = `${params.toString()}${filter.length === 0 ? '' : `&${filter}`}`;
+      const json = await getJson('labels.counts', `${LABEL_COUNTS_ROUTE}?${query}`);
+      return validateAppQueryResponse('labels.counts', json);
     },
 
     async getTask(taskId: string): Promise<TaskDetailResult> {
@@ -3279,6 +3779,48 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       }
       return receipt;
     },
+
+    async previewTaskStrategyReapplication(projectId: string, taskIds: readonly string[]): Promise<TaskStrategyReapplicationPreviewWire> {
+      context.assertOpen('task.strategy.reapply.preview');
+      const id = requireProjectId('task.strategy.reapply.preview', projectId);
+      if (!Array.isArray(taskIds) || taskIds.length === 0 || taskIds.some(taskId => typeof taskId !== 'string')) {
+        throw invalidInput('task.strategy.reapply.preview', 'invalid_task_ids', 'taskIds');
+      }
+      const params = new URLSearchParams([['projectId', id], ...taskIds.map(taskId => ['taskId', requireStableIdInput('task.strategy.reapply.preview', taskId, 'taskId')] as [string, string])]);
+      const json = await getJson('task.strategy.reapply.preview', `${TASK_STRATEGY_REAPPLICATION_ROUTE}?${params.toString()}`);
+      const result = validateTaskStrategyReapplicationPreviewWire(json, 'task.strategy.reapply.preview');
+      const selected = [...taskIds].sort();
+      if (result.identity.projectId !== id || result.identity.selectedTaskIds.length !== selected.length
+        || selected.some((taskId, index) => result.identity.selectedTaskIds[index] !== taskId)) {
+        throw new HostProtocolError('response_malformed', 'task.strategy.reapply.preview', '预览响应归属与请求不一致');
+      }
+      return result;
+    },
+
+    async reapplyTaskStrategy(
+      input: TaskStrategyReapplicationInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'confirmed', 'previewDigest', 'globalSettingsRevision', 'projectSettingsRevision', 'selectedTaskIds', 'expectedTaskRevisions', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      // 保留深层字段和未知键，由 Core 信封校验器单一权威拒绝；不投影丢弃错误输入。
+      const receipt = await submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId),
+        operation: 'task.strategy.reapply',
+        scope: { kind: 'project', projectId },
+        payload: Object.fromEntries(Object.entries(object).filter(([key]) => key !== 'projectId' && key !== 'commandId')),
+      }, options);
+      if (receipt.status === 'completed') {
+        const result = validateTaskStrategyReapplicationResultWire(receipt.result, 'commands.submit');
+        const expected = [...input.expectedTaskRevisions].sort((a, b) => a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0);
+        if (result.taskRevisions.length !== expected.length || result.taskRevisions.some((entry, index) =>
+          entry.taskId !== expected[index]?.taskId || entry.revision !== expected[index]!.revision + 1)) {
+          throw new HostProtocolError('response_malformed', 'commands.submit', '策略更新回执目标与请求不一致');
+        }
+      }
+      return receipt;
+    },
+
 
     async prepareExecutionInput(
       input: PrepareExecutionInputInput,
@@ -3966,9 +4508,96 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return result;
     },
 
-    /* ------------------------------------------------------------ *
-     * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
-     * ------------------------------------------------------------ */
+    async configureProjectResourceSource(input: ProjectResourceSourceInput): Promise<ProjectResourceSourceResult> {
+      const op = 'project.resources.sources.configure';
+      context.assertOpen(op);
+      const id = requireProjectId(op, input.projectId);
+      const response = await requestLoopbackJson({ port, token, method: 'POST',
+        path: `${PROJECTS_ROUTE}/${id}/resources/sources`, operation: op, body: input,
+        connectTimeoutMs: context.connectMs, overallTimeoutMs: requestBudget(), maxResponseBytes: MAX_APP_BODY_BYTES });
+      if (response.statusCode !== 200) throw mapErrorResponse(response.statusCode, response.json, op);
+      const result = response.json as ProjectResourceSourceResult;
+      if (result === null || typeof result !== 'object' || Array.isArray(result)
+        || Object.keys(result).sort().join() !== 'projectId,registered,revision,schemaVersion,sourceId'
+        || result.schemaVersion !== 1 || result.projectId !== id || result.sourceId !== input.sourceId
+        || !Number.isSafeInteger(result.revision) || result.revision < 1 || typeof result.registered !== 'boolean'
+        || result.registered !== (input.action === 'register')) throw new HostProtocolError('response_malformed', op);
+      return result;
+    },
+
+    async previewRepositoryMove(input: RepositoryMovePreviewInput): Promise<BrownfieldMovePreview> {
+      const op = 'repository.move.preview';
+      context.assertOpen(op);
+      const projectId = requireProjectId(op, input.projectId);
+      if (typeof input.repositoryPath !== 'string' || input.repositoryPath.length === 0) throw invalidInput(op, 'invalid_repository_path', 'repositoryPath');
+      const query = `path=${encodeURIComponent(input.repositoryPath)}`;
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${projectId}/${PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX}?${query}`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '移动预览项目归属不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
+
+    async confirmRepositoryMove(input: RepositoryMoveConfirmationInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      if (input.decision !== 'confirm' && input.decision !== 'cancel') throw invalidInput('repository.move.confirm', 'invalid_decision', 'decision');
+      return submitRepositoryMoveConfirmation(input, options);
+    },
+
+    async listProjectResources(projectId: string): Promise<ProjectResourceConfiguration> {
+      const op = 'project.resources.list';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '资源响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
+
+    async discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult> {
+      const op = 'project.resources.candidates';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      if (!Array.isArray(sourceIds) || sourceIds.length === 0) throw invalidInput(op, 'invalid_source_ids');
+      const query = sourceIds.map(sourceId => `sourceId=${encodeURIComponent(requireStableIdInput(op, sourceId, 'sourceId'))}`).join('&');
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/candidates?${query}`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '资源响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
+
+    async previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds: readonly string[] = []): Promise<ProjectResourceCandidatePreview> {
+      const op = 'project.resources.preview';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      if (!Array.isArray(sourceIds) || sourceIds.length === 0) throw invalidInput(op, 'invalid_source_ids');
+      const params = [
+        ...sourceIds.map(sourceId => `sourceId=${encodeURIComponent(requireStableIdInput(op, sourceId, 'sourceId'))}`),
+        ...selectedResourceIds.map(resourceId => `selectedResourceId=${encodeURIComponent(requireStableIdInput(op, resourceId, 'selectedResourceId'))}`),
+      ].join('&');
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/preview?${params}`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '资源响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
+
+    async importProjectResource(input: ImportProjectResourceInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'sourceId', 'sourceDigest', 'candidateId', 'candidateDigest', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const payload = {
+        sourceId: requireStableIdInput('commands.submit', object.sourceId, 'sourceId'),
+        sourceDigest: object.sourceDigest,
+        candidateId: requireStableIdInput('commands.submit', object.candidateId, 'candidateId'),
+        candidateDigest: object.candidateDigest,
+      };
+      return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.resource.import',
+        scope: { kind: 'project', projectId }, expectedRevision: requireResourceRevisionInput('commands.submit', object.expectedRevision), payload }, options);
+    },
+
+    async enableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      return submitProjectResourceTarget('project.resource.enable', input, options);
+    },
+    async disableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      return submitProjectResourceTarget('project.resource.disable', input, options);
+    },
+    async revokeProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      return submitProjectResourceTarget('project.resource.revoke', input, options);
+    },
+
 
     async getTaskVerification(projectId, taskId) {
       const op = 'execution.task.verification.get';

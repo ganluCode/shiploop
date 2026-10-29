@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "phase": "P06",
+  "stepOrder": [
+    "p06-prerequisites",
+    "p06-scenario-close-loop",
+    "p06-trusted-index",
+    "p06-manual-gate"
+  ],
+  "trustedIndexRoot": "test/index/phases/P06/features",
+  "requiredFeatures": [
+    "P06-1",
+    "P06-2",
+    "P06-3",
+    "P06-4",
+    "P06-5",
+    "P06-6"
+  ],
+  "prerequisites": {
+    "missingBehavior": "blocked-not-run",
+    "placeholderAllowed": false
+  },
+  "defaultExecution": {
+    "mode": "offline",
+    "network": "denied",
+    "llmCalls": false,
+    "fullRegression": false
+  },
+  "mcp": {
+    "transport": "stdio",
+    "server": "local-no-credential-fake",
+    "otherTransports": [
+      "http",
+      "sse"
+    ],
+    "otherTransportsStatus": "unsupported"
+  },
+  "explicitOptions": {
+    "fullRegression": "--full-regression",
+    "live": "--live-authorized",
+    "manual": "--manual-record"
+  },
+  "evidence": {
+    "requiredFields": [
+      "scenarioId",
+      "inputDigest",
+      "testedCommit",
+      "command",
+      "exitCode",
+      "status",
+      "evidenceRefs",
+      "usageSource",
+      "cleanup"
+    ],
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "notRunCountsAsPassed": false
+  }
+}

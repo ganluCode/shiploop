@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/storage/sqlite/p06-5-f003-repository-rebind.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/commands/command-register.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

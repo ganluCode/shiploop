@@ -5,7 +5,7 @@ import { mintHostCredential, publishLoopbackDiscovery } from '../host/discovery-
 import type { BudgetFixture } from '../p03-3/budget-fixture.ts';
 
 /** Real Core SQLite and existing loopback transport; no scheduler or model. */
-export async function openReportHost(f: BudgetFixture, options: {
+export async function openReportHost(f: Pick<BudgetFixture, 'box' | 'owner'>, options: {
   principal?: TrustedPrincipal;
   queries?: (query: QueryService) => QueryService;
 } = {}) {
@@ -19,7 +19,7 @@ export async function openReportHost(f: BudgetFixture, options: {
     startedAt: new Date().toISOString(), pid: process.pid, authToken: credential.token,
     getLifecycleState: () => 'ready', getActivities: () => stop.getActivities(), stop,
     application: { principal: options.principal ?? f.owner, commandService: app.commandService,
-      queryService: query, commandReceiptsService: app.commandReceiptsService,
+      queryService: query, knowledgeQueryService: app.knowledgeQueryService, commandReceiptsService: app.commandReceiptsService,
       onboardingService: app.onboardingService, baselineQueryService: app.baselineQueryService,
       baselineExecutionService: app.baselineExecutionService, planningQueryService: app.planningQueryService,
       getLifecycleState: () => 'ready' },

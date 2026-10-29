@@ -5,7 +5,9 @@
  * 读取器都由可信 Host/Runner 装配注入；本模块不访问 Core 存储、不解析模块
  * 路径、不发现全局插件，也不把凭据传入 prompt、argv 或事件正文。
  */
-import type { RuntimeRecoveryRecording } from 'shiploop-core';
+import { createPiMcpScope } from './pi-mcp-session.js';
+import type { PiMcpAssembly } from './pi-mcp-session.js';
+import type { RuntimeRecoveryRecording, RuntimeEventPayload } from 'shiploop-core';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -16,6 +18,7 @@ import { PI_SDK_VERSION, PI_NATIVE_SESSION_FORMAT, PI_NATIVE_SESSION_FORMAT_VERS
 export { PI_SDK_VERSION, PI_NATIVE_SESSION_FORMAT, PI_NATIVE_SESSION_FORMAT_VERSION } from './pi-sdk-contract.js';
 import type { PiPreparedRecovery } from './pi-native-session.js';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
+import { piEventToken as token } from './pi-event-identity.js';
 import type {
   CreateAgentSessionOptions,
 } from '@earendil-works/pi-coding-agent';
@@ -44,6 +47,7 @@ import {
   DEFAULT_RUNTIME_REQUEST_RETRY_POLICY,
   decideRuntimeRecovery,
   validateRuntimeRecoveryCapabilities,
+  validateProjectResourceLoadManifest,
 } from 'shiploop-core';
 
 export const PI_RUNTIME_ID = 'pi';
@@ -132,6 +136,13 @@ export interface PiTrustedAssembly {
   readonly resolveSessionDirectory?: (request: RuntimeExecutionRequest, cwd: string) => string;
   /** F-004：按请求执行认证预检和显式资源装配；返回值只含受限快照和可信引用。 */
   readonly prepareAccess?: (request: RuntimeExecutionRequest) => Promise<PiTrustedWorkAccess>;
+  /** Explicit invocation-owned stdio resources; absent never falls back to SDK MCP discovery. */
+  readonly mcp?: PiMcpAssembly;
+  readonly modelRuntime?: CreateAgentSessionOptions['modelRuntime'];
+  readonly settingsManager?: CreateAgentSessionOptions['settingsManager'];
+  /** Trusted permission mapping, evaluated per Attempt; default keeps built-in tools disabled. */
+  readonly resolveBuiltInTools?: (request: RuntimeExecutionRequest) => readonly string[];
+
   /** Core-approved immutable Artifact access and exclusive writer authority. */
   readonly recoverySourceManager?: PiRecoverySourceManager;
   /** Current authorized reasoning configuration; omission resets inherited reasoning to off. */
@@ -145,11 +156,23 @@ export interface PiTrustedAssembly {
   ) => readonly PiSubmissionToolDefinition[] | Promise<readonly PiSubmissionToolDefinition[]>;
 }
 
+export interface PiResourceLoadPolicy {
+  readonly selectedResourceIds: readonly string[];
+  readonly allowGlobalScan: false;
+  readonly allowProjectDirectoryScan: false;
+  readonly allowSdkDefaultScan: false;
+}
+
 export interface PiTrustedWorkAccess {
   readonly snapshot: RuntimeWorkAccessSnapshot;
   readonly credentialRef: { readonly kind: 'trusted-resolution'; readonly id: string };
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
+  /** F-004: the actual, identity-checked project resource load manifest. */
+  readonly resourceManifest?: import('shiploop-core').ProjectResourceLoadManifest;
+  /** F-004: explicit loader policy; all implicit SDK scans must remain disabled. */
+  readonly resourceLoadPolicy?: PiResourceLoadPolicy;
 }
+
 
 /**
  * A Core-approved immutable source. It deliberately contains Artifact
@@ -230,7 +253,9 @@ export interface PiSessionFactoryOptions {
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
   readonly thinkingLevel?: NonNullable<CreateAgentSessionOptions['thinkingLevel']>;
   readonly recovery?: PiPreparedRecovery;
-  /** P05-1 / F-006：本次执行的受限提交工具（可信装配注入；空缺省 = 无自定义工具）。 */
+  /** Explicit built-in names supplied by trusted permission policy; omitted means none. */
+  readonly builtInTools?: readonly string[];
+  /** Submission and filtered MCP definitions, validated together before SDK registration. */
   readonly customTools?: readonly PiSubmissionToolDefinition[];
 }
 
@@ -273,6 +298,16 @@ export function validatePiSubmissionTools(tools: readonly PiSubmissionToolDefini
   });
 }
 
+const PI_BUILT_IN_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'powershell'] as const;
+
+function validateBuiltInTools(names: readonly string[]): readonly string[] {
+  if (!Array.isArray(names) || new Set(names).size !== names.length
+    || names.some(name => !(PI_BUILT_IN_TOOL_NAMES as readonly string[]).includes(name))) {
+    throw startupError('builtin_tool_invalid', 'builtInTools');
+  }
+  return [...names];
+}
+
 /** Shared lazy SDK boundary for construction and native-session identity checks. */
 async function loadPiSdk() {
   return await import('@earendil-works/pi-coding-agent');
@@ -280,7 +315,7 @@ async function loadPiSdk() {
 
 /** 标准 SDK 的实际初始化入口：受管 SessionManager + 受控 resourceLoader。 */
 export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessionFactory {
-  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader, thinkingLevel, recovery, customTools }) => {
+  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader, thinkingLevel, recovery, customTools, builtInTools }) => {
     const resolvedModel = assembly.resolveModel?.(provider, model);
     if (resolvedModel === undefined) {
       throw new RuntimeError('configuration', 'model_resolution_unavailable', { field: 'strategy.model' });
@@ -294,24 +329,31 @@ export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessio
       throw new RuntimeError('configuration', 'sdk_version_incompatible');
     }
     const sessionManager = await createPiManagedSessionManager(sdk, cwd, sessionDir, recovery);
-    // P05-1 / F-006：受限提交工具只以显式白名单激活（内置工具保持全部禁用，
-    // 与 noTools:'all' 同一排除面）；结构化定义在 SDK 边界受控转换。
+    // Always provide an exact tool list, including on native conversation recovery.
     const submissionTools = customTools === undefined ? [] : validatePiSubmissionTools(customTools);
+    if (submissionTools.some(tool => (PI_BUILT_IN_TOOL_NAMES as readonly string[]).includes(tool.name))) {
+      throw startupError('custom_tool_builtin_collision', 'customTools');
+    }
+    const activeTools = [...validateBuiltInTools(builtInTools ?? []), ...submissionTools.map(tool => tool.name)];
     const result = await createAgentSession({
       cwd,
       agentDir,
       model: resolvedModel,
       resourceLoader,
       sessionManager,
+      modelRuntime: assembly.modelRuntime,
+      settingsManager: assembly.settingsManager,
       thinkingLevel: thinkingLevel ?? 'off',
-      ...(submissionTools.length > 0
-        ? {
-            customTools: submissionTools as unknown as NonNullable<CreateAgentSessionOptions['customTools']>,
-            tools: submissionTools.map(tool => tool.name),
-          }
-        : { noTools: 'all' as const }),
+      customTools: submissionTools as unknown as NonNullable<CreateAgentSessionOptions['customTools']>,
+      tools: activeTools,
+      ...(activeTools.length === 0 ? { noTools: 'all' as const } : {}),
     });
     try {
+      // A native transcript can remember old declarations, never current execution authority.
+      result.session.setActiveToolsByName([...activeTools]);
+      if (JSON.stringify(result.session.getActiveToolNames().sort()) !== JSON.stringify([...activeTools].sort())) {
+        throw startupError('actual_tool_configuration_mismatch', 'customTools');
+      }
       if (result.session.model?.provider !== provider || result.session.model.id !== model ||
           result.session.thinkingLevel !== (thinkingLevel ?? 'off')) {
         throw new RuntimeError('configuration', 'actual_model_configuration_mismatch');
@@ -334,11 +376,15 @@ export interface PiRuntimeAdapterOptions {
   readonly requestRetryPolicy?: RuntimeRetryPolicy;
 }
 
+export interface PiStartupCancellableAdapter extends RuntimeAdapter {
+  start(request: RuntimeExecutionRequest, signal?: AbortSignal): Promise<RuntimeHandle>;
+}
+
 export interface PiRuntimeRegistration {
   readonly descriptor: PiRuntimeDescriptor;
   readonly capabilities: PiRuntimeCapabilities;
   readonly recoveryCapabilities: RuntimeRecoveryCapabilities;
-  readonly adapter: RuntimeAdapter;
+  readonly adapter: PiStartupCancellableAdapter;
 }
 
 export function createPiRuntimeDescriptor(options: Pick<PiRuntimeAdapterOptions, 'providers' | 'permissionGrants' | 'isolationModes'>): PiRuntimeDescriptor {
@@ -391,6 +437,39 @@ async function resolveSubmissionTools(
   return validatePiSubmissionTools(tools);
 }
 
+function verifyActualResourceManifest(
+  snapshot: RuntimeWorkAccessSnapshot,
+  actual: PiTrustedWorkAccess,
+): void {
+  const expectedDigest = snapshot.resources.loadManifestDigest;
+  if (expectedDigest === undefined) return;
+  if (actual.resourceManifest === undefined || actual.resourceManifest.digest !== expectedDigest) {
+    throw new RuntimeError('permission', 'work_resource_manifest_mismatch');
+  }
+  const policy = actual.resourceLoadPolicy;
+  const expectedIds = snapshot.resources.entries.map(entry => entry.id).sort();
+  if (policy === undefined || policy.allowGlobalScan !== false || policy.allowProjectDirectoryScan !== false
+    || policy.allowSdkDefaultScan !== false || JSON.stringify([...policy.selectedResourceIds].sort()) !== JSON.stringify(expectedIds)) {
+    throw new RuntimeError('permission', 'work_resource_loader_policy_mismatch');
+  }
+  try {
+    const manifest = validateProjectResourceLoadManifest(actual.resourceManifest);
+    if (manifest.projectId !== snapshot.projectId || manifest.selectionRevision !== snapshot.resources.selectionRevision) {
+      throw new RuntimeError('permission', 'work_resource_manifest_mismatch');
+    }
+    const entries = manifest.resources.map(resource => ({
+      id: resource.id, kind: resource.kind, name: resource.name, sourceRef: resource.sourceRef,
+      sourceRevision: resource.sourceRevision, version: resource.version, contentDigest: resource.contentDigest,
+      required: resource.required, onUnavailable: resource.onUnavailable, status: resource.status,
+      capabilities: [...resource.loadedCapabilities], transport: resource.transport,
+    }));
+    if (!isDeepStrictEqual(entries, snapshot.resources.entries)) {
+      throw new RuntimeError('permission', 'work_resource_manifest_mismatch');
+    }
+  } catch (error) {
+    throw new RuntimeError('permission', 'work_resource_manifest_invalid', { cause: error });
+  }
+}
 function resolveTrustedAccess(assembly: PiTrustedAssembly, request: RuntimeExecutionRequest): Promise<PiTrustedWorkAccess | undefined> {
   if (request.workAccess === undefined) {
     if (assembly.prepareAccess !== undefined) {
@@ -405,12 +484,14 @@ function resolveTrustedAccess(assembly: PiTrustedAssembly, request: RuntimeExecu
     if (actual.snapshot.authentication.status !== 'ready') {
       throw new RuntimeError('authentication', 'work_authentication_not_ready');
     }
-    if (actual.snapshot.resources.entries.some(entry => entry.status !== 'available')) {
+    if (actual.snapshot.resources.entries.some(entry => entry.status !== 'available'
+      && (entry.required !== false || entry.onUnavailable !== 'omit'))) {
       throw new RuntimeError('permission', 'resource_not_authorized');
     }
     if (!isDeepStrictEqual(actual.snapshot, request.workAccess)) {
       throw new RuntimeError('authentication', 'work_access_snapshot_mismatch');
     }
+    verifyActualResourceManifest(request.workAccess!, actual);
     return actual;
   }).catch(error => {
     if (error instanceof RuntimeError) throw error;
@@ -465,10 +546,6 @@ export function assertPiStartupCompatible(
   if (piRecoveryDecision(request, capabilities).mode === 'rejected') {
     throw startupError('execution_recovery_unsupported', 'recovery.mode');
   }
-}
-
-function token(value: string): string {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) ? value : `pi-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
 }
 
 function identityToken(value: unknown, fallback: string): string {
@@ -592,32 +669,56 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       recoveryCapabilities.capabilities.executionRecovery.status === 'verified') {
     throw startupError('recovery_evidence_incompatible', 'recoveryCapabilities');
   }
-  const adapter: RuntimeAdapter = {
-    async start(request): Promise<RuntimeHandle> {
+  const adapter: PiStartupCancellableAdapter = {
+    async start(request, signal): Promise<RuntimeHandle> {
       assertPiStartupCompatible(request, descriptor, recoveryCapabilities);
-      const access = await resolveTrustedAccess(options.assembly, request);
-      const credentialRef = preflightCredential(access?.credentialRef ?? options.assembly.credentialRef);
-      const resourceLoader = access?.resourceLoader ?? options.assembly.resourceLoader;
-      if (request.workAccess !== undefined && request.workAccess.authentication.status !== 'ready') {
-        throw new RuntimeError('authentication', 'work_authentication_not_ready');
-      }
+      // Pin caller-owned arrays for the entire invocation, including asynchronous startup.
+      request = structuredClone(request);
+      const assertActive = () => {
+        if (signal?.aborted) throw new RuntimeError('process', 'pi_start_cancelled');
+      };
+      assertActive();
+      const startupMcpEvents: RuntimeEventPayload[] = [];
+      const mcpToolNames = new Set<string>();
+      const dispatchedMcpCalls = new Set<string>();
+      let emitMcp = (payload: RuntimeEventPayload) => { startupMcpEvents.push(payload); };
+      let requestMcpStop = () => {};
+      const mcp = createPiMcpScope({ request, assembly: options.assembly.mcp, signal,
+        publish: payload => emitMcp(payload), requestStop: () => requestMcpStop() });
       let prompt: string;
-      try {
-        prompt = await options.assembly.inputReader.read(request.prompt);
-        await options.assembly.inputReader.read(request.inputManifest);
-      } catch (error) {
-        throw classifyPiFailure(error, 'input_binding_failed', 'configuration');
-      }
-      const cwd = options.assembly.resolveWorkingDirectory(request.cwd);
-      const sessionDir = managedSessionDirectory(options.assembly, request, cwd);
-      const thinkingLevel = options.assembly.resolveThinkingLevel?.(request) ?? 'off';
-      // P05-1 / F-006：受限提交工具由可信装配按请求解析（不可用时不注入工具）。
-      const submissionTools = await resolveSubmissionTools(options.assembly, request);
+      let thinkingLevel: NonNullable<CreateAgentSessionOptions['thinkingLevel']>;
       let lease: PiRecoveryWriterLease | undefined;
       let prepared: PiPreparedRecovery | undefined;
       let decision: RuntimeRecoveryDecision;
       let session: PiSession;
       try {
+        const access = await resolveTrustedAccess(options.assembly, request);
+        assertActive();
+        const credentialRef = preflightCredential(access?.credentialRef ?? options.assembly.credentialRef);
+        const resourceLoader = access?.resourceLoader ?? options.assembly.resourceLoader;
+        if (request.workAccess !== undefined && request.workAccess.authentication.status !== 'ready') {
+          throw new RuntimeError('authentication', 'work_authentication_not_ready');
+        }
+        const submissionTools = await resolveSubmissionTools(options.assembly, request);
+        if (submissionTools.some(tool => (PI_BUILT_IN_TOOL_NAMES as readonly string[]).includes(tool.name))) {
+          throw startupError('custom_tool_builtin_collision', 'customTools');
+        }
+        const builtInTools = validateBuiltInTools(options.assembly.resolveBuiltInTools?.(request) ?? []);
+        const mcpTools = (await mcp.prepare(access?.resourceManifest, submissionTools.map(tool => tool.name), PI_BUILT_IN_TOOL_NAMES))
+          .map(tool => ({ ...tool, execute: (id: string, params: unknown, toolSignal?: AbortSignal) => {
+            dispatchedMcpCalls.add(id);
+            return tool.execute(id, params, toolSignal);
+          } }));
+        for (const tool of mcpTools) mcpToolNames.add(tool.name);
+        const customTools = validatePiSubmissionTools([...submissionTools, ...mcpTools]);
+        try {
+          prompt = await options.assembly.inputReader.read(request.prompt);
+          await options.assembly.inputReader.read(request.inputManifest);
+        } catch (error) { throw classifyPiFailure(error, 'input_binding_failed', 'configuration'); }
+        assertActive();
+        const cwd = options.assembly.resolveWorkingDirectory(request.cwd);
+        const sessionDir = managedSessionDirectory(options.assembly, request, cwd);
+        thinkingLevel = options.assembly.resolveThinkingLevel?.(request) ?? 'off';
         if (request.recovery.mode !== 'new' && request.recovery.source !== undefined) {
           if (options.assembly.recoverySourceManager === undefined) throw startupError('recovery_source_manager_unavailable', 'recovery');
           lease = await options.assembly.recoverySourceManager.acquire(request, request.recovery.source);
@@ -635,8 +736,13 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           resourceLoader,
           thinkingLevel,
           ...(decision.mode === 'resume' ? { recovery: prepared } : {}),
-          ...(submissionTools.length > 0 ? { customTools: submissionTools } : {}),
+          builtInTools,
+          ...(customTools.length > 0 ? { customTools } : {}),
         });
+        if (signal?.aborted) {
+          session.dispose();
+          assertActive();
+        }
         if (decision.mode === 'resume') {
           try {
             if (session.model?.provider !== request.strategy.provider || session.model.id !== request.strategy.model ||
@@ -648,7 +754,9 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           } catch (error) { session.dispose(); throw error; }
         }
       } catch (error) {
-        await lease?.release();
+        const confirmed = await mcp.close();
+        try { if (confirmed) await lease?.release(); } catch { /* Preserve the startup failure. */ }
+        if (!confirmed) throw new RuntimeError('process', 'mcp_cleanup_unconfirmed');
         throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
       }
       let nativeSdkMessageUsage = false;
@@ -678,6 +786,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         if (finalized) return Promise.resolve({ accepted: false, reason: 'already_settled' });
         cancelRequested = true;
         retryAbort.abort();
+        void mcp.close();
         stopReason = reason;
         stopTimer = setTimeout(resolveStop, PI_ABORT_WAIT_MS + PI_STOP_WAIT_MS);
         cancelPromise = observePiWithin(Promise.resolve().then(() => session.abort()), PI_ABORT_WAIT_MS).then(outcome => {
@@ -688,6 +797,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         });
         return cancelPromise;
       };
+      requestMcpStop = () => { void cancel(); };
       let messageOrdinal = 0;
       let identityGapReported = false;
       let snapshotGapReported = false;
@@ -697,6 +807,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const emittedUsage = new Set<string>();
       const emittedToolStarts = new Set<string>();
       const emittedToolEnds = new Set<string>();
+      const sdkMcpStarts = new Map<string, string>();
       const diagnosticRefs: string[] = [];
       const startedAt = Date.now();
       const publish = (kind: RuntimeEvent['kind'], payload: RuntimeEvent['payload']): RuntimeEvent => {
@@ -755,6 +866,18 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const diagnostic = (code: string, message: string): void => {
         publish('diagnostic', { kind: 'diagnostic', code: token(code), message: message.slice(0, 200) || 'diagnostic' });
       };
+      emitMcp = payload => {
+        if (payload.kind === 'tool_started') {
+          if (emittedToolStarts.has(payload.toolCallId)) return;
+          emittedToolStarts.add(payload.toolCallId);
+        } else if (payload.kind === 'tool_finished') {
+          if (emittedToolEnds.has(payload.toolCallId)) return;
+          emittedToolEnds.add(payload.toolCallId);
+        }
+        publish(payload.kind, payload);
+      };
+      for (const payload of startupMcpEvents) emitMcp(payload);
+      startupMcpEvents.length = 0;
       let unsubscribe: () => void = () => undefined;
       let restoreRequestStream = () => {};
       try {
@@ -828,14 +951,27 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
               }
             }
           } else if (type === 'tool_execution_start' && typeof event.toolCallId === 'string' && typeof event.toolName === 'string') {
+            if (mcpToolNames.has(event.toolName)) {
+              // MCP audit owns the richer start/end pair. Keep a fallback for SDK argument rejection.
+              sdkMcpStarts.set(event.toolCallId, event.toolName);
+              return;
+            }
             const toolCallId = identityToken(event.toolCallId, `${request.invocationId}-tool`);
             if (!emittedToolStarts.has(toolCallId)) {
               emittedToolStarts.add(toolCallId);
               publish('tool_started', { kind: 'tool_started', toolCallId, toolName: identityToken(event.toolName, 'pi-tool') });
             }
           } else if (type === 'tool_execution_end' && typeof event.toolCallId === 'string') {
+            // Audit may redact/hash the raw SDK identity; use private correlation, not output tokens.
+            if (sdkMcpStarts.has(event.toolCallId) && dispatchedMcpCalls.has(event.toolCallId)) return;
             const toolCallId = identityToken(event.toolCallId, `${request.invocationId}-tool`);
             if (!emittedToolEnds.has(toolCallId)) {
+              const mcpName = sdkMcpStarts.get(event.toolCallId);
+              if (mcpName !== undefined && !emittedToolStarts.has(toolCallId)) {
+                emittedToolStarts.add(toolCallId);
+                publish('tool_started', { kind: 'tool_started', toolCallId, toolName: mcpName });
+                diagnostic('pi.mcp.sdk_rejected', 'SDK rejected the MCP tool before bridge dispatch');
+              }
               emittedToolEnds.add(toolCallId);
               const result = event.result !== null && typeof event.result === 'object' ? event.result as Record<string, unknown> : {};
               const details = result.details !== null && typeof result.details === 'object' ? result.details as Record<string, unknown> : result;
@@ -861,19 +997,24 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           }
         });
       } catch (error) {
-        try {
-          restoreRequestStream();
-          session.dispose();
-          await lease?.release();
-        } catch {
-          // 保持初始化失败诊断，不让清理异常覆盖它。
+        let disposed = true;
+        try { restoreRequestStream(); } catch { disposed = false; }
+        try { session.dispose(); } catch { disposed = false; }
+        const mcpConfirmed = await mcp.close();
+        if (disposed && mcpConfirmed) {
+          try { await lease?.release(); } catch { /* Preserve the initialization failure. */ }
         }
+        if (!mcpConfirmed) throw new RuntimeError('process', 'mcp_cleanup_unconfirmed');
         throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
       }
 
+      const onStartupSignal = () => { void cancel(); };
+      signal?.addEventListener('abort', onStartupSignal, { once: true });
+      if (signal?.aborted) onStartupSignal();
       const executionTimer = setTimeout(() => { void cancel('timed_out'); }, request.limits.timeoutMs);
       const work = (async () => {
         await lease?.assertCurrent();
+        if (cancelRequested) return;
         await session.prompt(prompt);
         if (session.waitForIdle !== undefined) {
           await session.waitForIdle();
@@ -908,6 +1049,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
             diagnostic(`pi.${failure.reason}`, failure.reason);
           }
         } finally {
+          signal?.removeEventListener('abort', onStartupSignal);
           clearTimeout(executionTimer);
           clearTimeout(stopTimer);
           // Preserve the last partial response and reported usage before closing the stream.
@@ -918,6 +1060,12 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           // request; restoring the raw transport would bypass its retry budget.
           if (idleObserved) restoreRequestStream();
           try { unsubscribe(); } catch { cleanupSucceeded = false; }
+          if (!(await mcp.close())) {
+            cleanupSucceeded = false;
+            terminal = 'failed';
+            terminalReason = 'mcp_cleanup_unconfirmed';
+            diagnostic('pi.mcp.cleanup_unconfirmed', 'MCP process stop remains unconfirmed');
+          }
           events.close();
           try { session.dispose(); } catch { cleanupSucceeded = false; }
           // Unknown SDK stop retains adapter ownership; Core occupancy remains Core-owned.

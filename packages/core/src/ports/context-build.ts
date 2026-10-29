@@ -57,10 +57,13 @@ import {
   requireNonEmptyString,
   requirePlainObject,
   validateNonNegativeInteger,
+  validatePositiveInteger,
   validateSha256Digest,
   validateStableId,
 } from './validation.js';
 import { isStorageError } from './errors.js';
+import { validateProfileExecutionSnapshot } from './project-profile.js';
+import type { ProfileExecutionSnapshot } from './project-profile.js';
 import { validateExecutionInputRef } from './execution-input.js';
 import type { ExecutionInputRef } from './execution-input.js';
 import type { PlanArtifactRef } from './feature-plan.js';
@@ -82,14 +85,17 @@ import type { WorkRecoveryContinuationRecord } from './work-recovery-continuatio
  *     来源类别；未提供该键的旧输入仍按原形态构建（不携带该字段）。
  * P03-9 / F-007 以 v3 兼容的可选 `recovery` 字段追加同 Task 续接记录
  * （auto/new/required 决策与来源快照）；未提供该键的旧输入逐字节不变。
+ * v4：固定已确认 ProjectProfile 与选中能力模块的版本/选择理由摘要；不携带正文、路径或凭据。
+ * v5：追加已授权文档/记忆选择结果；来源只接受同项目版本化受管 Artifact 引用，
+ *     选择理由、片段范围和截断状态进入业务快照与 Manifest。
  */
-export const CONTEXT_INPUT_SCHEMA_VERSION = 3;
+export const CONTEXT_INPUT_SCHEMA_VERSION = 5;
 
 /**
  * 可读回的历史输入快照 schema 版本（含当前版本）：历史快照不随
  * ContextBuilder 升版失效，未知版本拒绝（attempt-store 读回校验使用）。
  */
-export const CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS = [1, 2, CONTEXT_INPUT_SCHEMA_VERSION] as const;
+export const CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, CONTEXT_INPUT_SCHEMA_VERSION] as const;
 
 /** snapshot 业务内容摘要域（与其他摘要域分隔，防跨域拼接碰撞）。 */
 export const CONTEXT_SNAPSHOT_DIGEST_DOMAIN = 'shiploop:context-input-snapshot:v1';
@@ -223,7 +229,49 @@ export interface ContextDeliveryPolicyInput {
   readonly copy?: Readonly<Record<string, unknown>>;
 }
 
-/** 权限清单：有界授予条目（数据，不是提权指令）。 */
+export const CONTEXT_KNOWLEDGE_SOURCE_MAX_COUNT = 256;
+export const CONTEXT_KNOWLEDGE_PURPOSE_MAX_LENGTH = 128;
+export const CONTEXT_KNOWLEDGE_REASON_MAX_LENGTH = 1_024;
+export const CONTEXT_KNOWLEDGE_SNIPPET_MAX_CHARS = 100_000;
+
+/** 已授权知识命中的受管制品片段范围（正文不以范围以外的路径身份表达）。 */
+export interface ContextKnowledgeRange {
+  readonly start: number;
+  readonly end: number;
+  readonly line?: number;
+  readonly column?: number;
+}
+
+/** 文档/记忆正文的不可变身份；正文读取由后续受管制品端口完成。 */
+export interface ContextKnowledgeContentRef {
+  readonly projectId: string;
+  readonly artifactId: string;
+  readonly version: number;
+  readonly contentHash: string;
+  readonly sizeBytes: number;
+}
+
+/** 已授权的文档或 accepted memory 选择结果；不接受可变路径或脱离制品的正文。 */
+export interface ContextKnowledgeSelection {
+  readonly kind: 'document' | 'memory';
+  readonly sourceId: string;
+  readonly documentId?: string;
+  readonly memoryId?: string;
+  readonly projectId: string;
+  readonly version: number;
+  readonly contentRef: ContextKnowledgeContentRef;
+  readonly contentHash: string;
+  readonly range: ContextKnowledgeRange;
+  readonly purpose: string;
+  readonly required: boolean;
+  readonly reason: string;
+  readonly snippet?: string;
+  readonly truncated: boolean;
+}
+
+export interface ContextKnowledgeInput {
+  readonly selections: readonly ContextKnowledgeSelection[];
+}
 export interface ContextPermissionsInput {
   readonly grants: readonly string[];
 }
@@ -289,6 +337,14 @@ export interface ContextBuildInput {
   /** 可选适用交付政策（P03-8 / F-001；缺省即不固定进本次快照）。 */
   readonly deliveryPolicy?: ContextDeliveryPolicyInput;
   readonly permissions: ContextPermissionsInput;
+  /** P06-1：执行前固定的已确认画像与能力模块身份摘要。 */
+  readonly profile?: ProfileExecutionSnapshot;
+  /** P06-2：Core 已解析的知识选择预算身份，随 Manifest 固定。 */
+  readonly knowledgeBudget?: ContextKnowledgeBudget;
+  /** P06-2：已授权的文档/记忆选择；正文必须绑定同项目版本化受管制品。 */
+  readonly knowledge?: ContextKnowledgeInput | null;
+  /** P06-2 兼容受信装配的字段别名；与 knowledge 不能同时提供。 */
+  readonly knowledgeSources?: ContextKnowledgeInput | null;
   /** 必需输入引用（F-004 ExecutionInputRef；每条都必须读取并核对 hash）。 */
   readonly requiredInputs: readonly ExecutionInputRef[];
   /** 可选历史索引（缺省即不含历史；不是必需输入）。 */
@@ -357,6 +413,8 @@ export const CONTEXT_MANIFEST_SOURCE_KINDS = [
   'check-policy',
   'delivery-policy',
   'permissions',
+  'profile',
+  'knowledge',
   'required-input',
   'history-index',
   'rework-guidance',
@@ -395,8 +453,20 @@ export interface ContextManifestSource {
 /** 可选内容省略/截断标注（manifest 级；必需内容不会出现在此）。 */
 export interface ContextOmission {
   readonly sourceId: string;
-  readonly kind: 'history-entry-truncated' | 'history-entry-omitted';
+  readonly kind: 'history-entry-truncated' | 'history-entry-omitted' | 'knowledge-entry-truncated' | 'knowledge-entry-omitted';
   readonly note: string;
+}
+
+export interface ContextKnowledgeBudget {
+  readonly maxSources: number;
+  readonly maxSnippetChars: number;
+  readonly maxTotalBytes: number;
+  readonly maxReadBytes: number;
+  readonly maxCandidates: number;
+  readonly candidatesInspected: number;
+  readonly bytesRead: number;
+  readonly selectedSources: number;
+  readonly omittedSources: number;
 }
 
 /** 输入 manifest：逐来源记录选取证据，关联最终 prompt（经 promptDigest）。 */
@@ -407,6 +477,8 @@ export interface ContextInputManifest {
   readonly taskId: string;
   readonly sources: readonly ContextManifestSource[];
   readonly omissions: readonly ContextOmission[];
+  /** P06-2：知识检索预算及实际消耗；缺席表示本次没有知识选择。 */
+  readonly knowledgeBudget?: ContextKnowledgeBudget;
   /** 最终 prompt 内容摘要（64hex；manifest 与实际交付 prompt 绑定）。 */
   readonly promptDigest: string;
 }
@@ -444,7 +516,14 @@ export interface ContextInputSnapshot {
   /** 适用交付政策（P03-8 / F-001；未提供即缺省，旧输入形态不携带该键）。 */
   readonly deliveryPolicy?: ContextDeliveryPolicyInput;
   readonly permissions: ContextPermissionsInput;
+  /** P06-1：已确认画像与选中模块的不可变身份摘要；正文/路径不进入快照。 */
+  readonly profile?: ProfileExecutionSnapshot;
+  /** P06-2：Core 已解析的知识选择预算身份，随 Manifest 固定。 */
+  readonly knowledgeBudget?: ContextKnowledgeBudget;
+  /** P06-2：已授权选择的有效知识片段（普通构建无知识选择时缺省）。 */
+  readonly knowledge?: readonly ContextKnowledgeSelection[];
   readonly requiredInputs: readonly ExecutionInputRef[];
+  /** 实际选入的有界历史索引；缺省输入构建为 null。 */
   readonly historyIndex: ContextSelectedHistoryIndex | null;
   /** 同 Task 返工输入（普通构建为 null；返工构建为已校验的完整返工身份）。 */
   readonly rework: ContextReworkInput | null;
@@ -482,6 +561,15 @@ export interface ContextBuildResult {
  * ------------------------------------------------------------------ */
 
 const DEPENDENCY_KEYS = ['taskId', 'evidenceRefs'] as const;
+const KNOWLEDGE_KEYS = ['selections', 'sources'] as const;
+const KNOWLEDGE_SELECTION_KEYS = [
+  'kind', 'sourceId', 'id', 'documentId', 'memoryId', 'projectId', 'version',
+  'contentRef', 'artifactRef', 'artifactId', 'contentHash', 'sizeBytes',
+  'range', 'position', 'purpose', 'required', 'reason', 'selectionReason',
+  'snippet', 'excerpt', 'truncated',
+] as const;
+const KNOWLEDGE_CONTENT_REF_KEYS = ['projectId', 'artifactId', 'version', 'contentHash', 'sizeBytes'] as const;
+const KNOWLEDGE_RANGE_KEYS = ['start', 'end', 'line', 'column'] as const;;
 const HISTORY_ENTRY_KEYS = ['id', 'summary'] as const;
 const HISTORY_INDEX_KEYS = ['entries', 'totalAvailable'] as const;
 const CHECK_POLICY_KEYS = ['digest', 'copy'] as const;
@@ -506,7 +594,11 @@ const BUILD_INPUT_KEYS = [
   'checkPolicy',
   'deliveryPolicy',
   'permissions',
+  'profile',
   'requiredInputs',
+  'knowledge',
+  'knowledgeSources',
+  'knowledgeBudget',
   'historyIndex',
   'rework',
   'recovery',
@@ -747,6 +839,176 @@ function validatePermissions(value: unknown, field: string): ContextPermissionsI
     }
   }
   return { grants };
+}
+
+function validateKnowledgeRange(value: unknown, field: string): ContextKnowledgeRange {
+  const rangeObject = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  rejectUnknownKeys(rangeObject, KNOWLEDGE_RANGE_KEYS, { operation: CONTEXT_OPERATION }, field);
+  const start = validateNonNegativeInteger(rangeObject.start, { operation: CONTEXT_OPERATION }, `${field}.start`);
+  const end = validateNonNegativeInteger(rangeObject.end, { operation: CONTEXT_OPERATION }, `${field}.end`);
+  if (end < start) {
+    throw contextError('validation', field, '片段范围 end 不能小于 start');
+  }
+  const line = rangeObject.line === undefined
+    ? undefined
+    : validateNonNegativeInteger(rangeObject.line, { operation: CONTEXT_OPERATION }, `${field}.line`);
+  const column = rangeObject.column === undefined
+    ? undefined
+    : validateNonNegativeInteger(rangeObject.column, { operation: CONTEXT_OPERATION }, `${field}.column`);
+  return {
+    start,
+    end,
+    ...(line === undefined ? {} : { line }),
+    ...(column === undefined ? {} : { column }),
+  };
+}
+
+function validateKnowledgeContentRef(value: unknown, field: string): ContextKnowledgeContentRef {
+  const object = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  rejectUnknownKeys(object, KNOWLEDGE_CONTENT_REF_KEYS, { operation: CONTEXT_OPERATION }, field);
+  return {
+    projectId: validateStableId(object.projectId, { operation: CONTEXT_OPERATION }, `${field}.projectId`),
+    artifactId: validateStableId(object.artifactId, { operation: CONTEXT_OPERATION }, `${field}.artifactId`),
+    version: validatePositiveInteger(object.version, { operation: CONTEXT_OPERATION }, `${field}.version`),
+    contentHash: validateSha256Digest(object.contentHash, { operation: CONTEXT_OPERATION }, `${field}.contentHash`),
+    sizeBytes: validateNonNegativeInteger(object.sizeBytes, { operation: CONTEXT_OPERATION }, `${field}.sizeBytes`),
+  };
+}
+
+function rejectKnowledgeSecret(value: string, field: string): void {
+  if (
+    /(?:api[_-]?key|secret|password|authorization|bearer)\\s*[:=]\\s*\\S+/iu.test(value) ||
+    /\\bsk-[A-Za-z0-9_-]{12,}/u.test(value) ||
+    /-----BEGIN [^-]+ KEY-----/u.test(value)
+  ) {
+    throw contextError('validation', field, '片段疑似包含凭据，拒绝内联');
+  }
+}
+
+function validateKnowledgeSelection(value: unknown, field: string, projectId: string): ContextKnowledgeSelection {
+  const object = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  rejectUnknownKeys(object, KNOWLEDGE_SELECTION_KEYS, { operation: CONTEXT_OPERATION }, field);
+  if (object.kind !== 'document' && object.kind !== 'memory') {
+    throw contextError('validation', `${field}.kind`, '必须是 document 或 memory（未知来源类别 fail-closed）');
+  }
+  const kind = object.kind;
+  const documentId = object.documentId === undefined ? undefined : validateStableId(object.documentId, { operation: CONTEXT_OPERATION }, `${field}.documentId`);
+  const memoryId = object.memoryId === undefined ? undefined : validateStableId(object.memoryId, { operation: CONTEXT_OPERATION }, `${field}.memoryId`);
+  const genericId = object.sourceId === undefined
+    ? object.id === undefined ? undefined : validateStableId(object.id, { operation: CONTEXT_OPERATION }, `${field}.id`)
+    : validateStableId(object.sourceId, { operation: CONTEXT_OPERATION }, `${field}.sourceId`);
+  if (kind === 'document' && memoryId !== undefined) throw contextError('validation', field, 'document 来源不能携带 memoryId');
+  if (kind === 'memory' && documentId !== undefined) throw contextError('validation', field, 'memory 来源不能携带 documentId');
+  const sourceId = kind === 'document' ? (documentId ?? genericId) : (memoryId ?? genericId);
+  if (sourceId === undefined) throw contextError('missing_required_input', `${field}.sourceId`, '必须提供文档或记忆 ID');
+  if (documentId !== undefined && genericId !== undefined && documentId !== genericId) throw contextError('validation', field, 'documentId 与 sourceId 不一致');
+  if (memoryId !== undefined && genericId !== undefined && memoryId !== genericId) throw contextError('validation', field, 'memoryId 与 sourceId 不一致');
+
+  const contentCandidate = object.contentRef ?? object.artifactRef;
+  const flatContentPresent = object.artifactId !== undefined || object.sizeBytes !== undefined ||
+    (object.contentHash !== undefined && contentCandidate === undefined);
+  const contentRef = contentCandidate === undefined
+    ? validateKnowledgeContentRef({
+        projectId: object.projectId ?? projectId,
+        artifactId: object.artifactId,
+        version: object.version,
+        contentHash: object.contentHash,
+        sizeBytes: object.sizeBytes,
+      }, `${field}.contentRef`)
+    : validateKnowledgeContentRef(contentCandidate, `${field}.contentRef`);
+  if (object.contentRef !== undefined && object.artifactRef !== undefined) {
+    throw contextError('validation', field, 'contentRef 与 artifactRef 不能同时提供');
+  }
+  if (flatContentPresent && contentCandidate !== undefined) {
+    throw contextError('validation', field, '不能同时使用扁平制品字段和 contentRef');
+  }
+  if (contentRef.projectId !== projectId) throw contextError('validation', `${field}.contentRef.projectId`, '受管制品必须属于当前项目');
+  const sourceProjectId = object.projectId === undefined
+    ? contentRef.projectId
+    : validateStableId(object.projectId, { operation: CONTEXT_OPERATION }, `${field}.projectId`);
+  if (sourceProjectId !== projectId) throw contextError('validation', `${field}.projectId`, '来源必须属于当前项目');
+
+  const version = validatePositiveInteger(object.version, { operation: CONTEXT_OPERATION }, `${field}.version`);
+  const rangeValue = object.range ?? object.position;
+  if (rangeValue === undefined) throw contextError('missing_required_input', `${field}.range`, '必须提供命中片段范围');
+  if (object.range !== undefined && object.position !== undefined) throw contextError('validation', field, 'range 与 position 不能同时提供');
+  const range = validateKnowledgeRange(rangeValue, `${field}.range`);
+  const purpose = boundedString(object.purpose, `${field}.purpose`, CONTEXT_KNOWLEDGE_PURPOSE_MAX_LENGTH);
+  const reasonValue = object.reason ?? object.selectionReason;
+  const reason = boundedString(reasonValue, `${field}.reason`, CONTEXT_KNOWLEDGE_REASON_MAX_LENGTH);
+  if (object.reason !== undefined && object.selectionReason !== undefined) throw contextError('validation', field, 'reason 与 selectionReason 不能同时提供');
+  if (object.required !== true && object.required !== false) throw contextError('validation', `${field}.required`, '必须是布尔值');
+  if (object.truncated !== undefined && typeof object.truncated !== 'boolean') throw contextError('validation', `${field}.truncated`, '必须是布尔值');
+  const snippetValue = object.snippet ?? object.excerpt;
+  if (object.snippet !== undefined && object.excerpt !== undefined) throw contextError('validation', field, 'snippet 与 excerpt 不能同时提供');
+  let snippet: string | undefined;
+  if (snippetValue !== undefined) {
+    if (typeof snippetValue !== 'string' || codePointLength(snippetValue) > CONTEXT_KNOWLEDGE_SNIPPET_MAX_CHARS || snippetValue.includes('\\0')) {
+      throw contextError('validation', `${field}.snippet`, `必须是最多 ${CONTEXT_KNOWLEDGE_SNIPPET_MAX_CHARS} 个字符且不含 NUL 的片段`);
+    }
+    rejectKnowledgeSecret(snippetValue, `${field}.snippet`);
+    snippet = snippetValue;
+  }
+  return {
+    kind,
+    sourceId,
+    ...(kind === 'document' ? { documentId: sourceId } : { memoryId: sourceId }),
+    projectId: sourceProjectId,
+    version,
+    contentRef,
+    contentHash: contentRef.contentHash,
+    range,
+    purpose,
+    required: object.required as boolean,
+    reason,
+    ...(snippet === undefined ? {} : { snippet }),
+    truncated: object.truncated === true,
+  };
+}
+
+function validateKnowledge(value: unknown, field: string, projectId: string): ContextKnowledgeInput {
+  const object = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  rejectUnknownKeys(object, KNOWLEDGE_KEYS, { operation: CONTEXT_OPERATION }, field);
+  if (object.selections !== undefined && object.sources !== undefined) throw contextError('validation', field, 'selections 与 sources 不能同时提供');
+  const rawSelections = object.selections ?? object.sources;
+  if (!Array.isArray(rawSelections)) throw contextError('missing_required_input', `${field}.selections`, '必须提供已授权知识选择数组');
+  if (rawSelections.length > CONTEXT_KNOWLEDGE_SOURCE_MAX_COUNT) throw contextError('validation', `${field}.selections`, `条数不得超过 ${CONTEXT_KNOWLEDGE_SOURCE_MAX_COUNT}`);
+  const seen = new Set<string>();
+  const selections = rawSelections.map((item, index) => {
+    const selection = validateKnowledgeSelection(item, `${field}.selections[${index}]`, projectId);
+    const key = `${selection.kind}:${selection.sourceId}@${selection.version}`;
+    if (seen.has(key)) throw contextError('validation', `${field}.selections[${index}]`, '同一版本来源不能重复选择');
+    seen.add(key);
+    return selection;
+  });
+  return { selections };
+}
+
+function validateKnowledgeBudget(value: unknown, field: string): ContextKnowledgeBudget {
+  const object = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  const keys = ['maxSources', 'maxSnippetChars', 'maxTotalBytes', 'maxReadBytes', 'maxCandidates', 'candidatesInspected', 'bytesRead', 'selectedSources', 'omittedSources'];
+  rejectUnknownKeys(object, keys, { operation: CONTEXT_OPERATION }, field);
+  return {
+    maxSources: validatePositiveInteger(object.maxSources, { operation: CONTEXT_OPERATION }, `${field}.maxSources`),
+    maxSnippetChars: validatePositiveInteger(object.maxSnippetChars, { operation: CONTEXT_OPERATION }, `${field}.maxSnippetChars`),
+    maxTotalBytes: validatePositiveInteger(object.maxTotalBytes, { operation: CONTEXT_OPERATION }, `${field}.maxTotalBytes`),
+    maxReadBytes: validatePositiveInteger(object.maxReadBytes, { operation: CONTEXT_OPERATION }, `${field}.maxReadBytes`),
+    maxCandidates: validatePositiveInteger(object.maxCandidates, { operation: CONTEXT_OPERATION }, `${field}.maxCandidates`),
+    candidatesInspected: validateNonNegativeInteger(object.candidatesInspected, { operation: CONTEXT_OPERATION }, `${field}.candidatesInspected`),
+    bytesRead: validateNonNegativeInteger(object.bytesRead, { operation: CONTEXT_OPERATION }, `${field}.bytesRead`),
+    selectedSources: validateNonNegativeInteger(object.selectedSources, { operation: CONTEXT_OPERATION }, `${field}.selectedSources`),
+    omittedSources: validateNonNegativeInteger(object.omittedSources, { operation: CONTEXT_OPERATION }, `${field}.omittedSources`),
+  };
+}
+
+/** Reuse the ContextBuilder knowledge contract when persisting an Attempt. */
+export function validateContextKnowledgeInput(value: unknown, projectId: string): ContextKnowledgeInput {
+  return validateKnowledge(value, 'knowledge', projectId);
+}
+
+/** Validate the frozen knowledge budget at storage boundaries. */
+export function validateContextKnowledgeBudget(value: unknown): ContextKnowledgeBudget {
+  return validateKnowledgeBudget(value, 'knowledgeBudget');
 }
 
 function validateTask(value: unknown, field: string): ContextTaskInput {
@@ -1044,6 +1306,19 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
       ? undefined
       : validateDeliveryPolicy(object.deliveryPolicy, 'input.deliveryPolicy');
   const permissions = validatePermissions(object.permissions, 'input.permissions');
+  const profile = object.profile === undefined || object.profile === null
+    ? undefined
+    : validateProfileExecutionSnapshot(object.profile);
+  if (object.knowledge !== undefined && object.knowledgeSources !== undefined) {
+    throw contextError('validation', 'input', 'knowledge 与 knowledgeSources 不能同时提供');
+  }
+  const knowledgeValue = object.knowledge ?? object.knowledgeSources;
+  const knowledge = knowledgeValue === undefined || knowledgeValue === null
+    ? undefined
+    : validateKnowledge(knowledgeValue, 'input.knowledge', projectId);
+  const knowledgeBudget = object.knowledgeBudget === undefined || object.knowledgeBudget === null
+    ? undefined
+    : validateKnowledgeBudget(object.knowledgeBudget, 'input.knowledgeBudget');
   if (object.requiredInputs === undefined || object.requiredInputs === null) {
     throw contextError('missing_required_input', 'input.requiredInputs', '必需输入引用清单是必需字段（可为空数组）');
   }
@@ -1095,6 +1370,9 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
     checkPolicy,
     ...(deliveryPolicy === undefined ? {} : { deliveryPolicy }),
     permissions,
+    ...(profile === undefined ? {} : { profile }),
+    ...(knowledge === undefined ? {} : { knowledge }),
+    ...(knowledgeBudget === undefined ? {} : { knowledgeBudget }),
     requiredInputs,
     ...(historyIndex.entries.length > 0 || object.historyIndex !== undefined
       ? { historyIndex }

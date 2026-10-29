@@ -3954,6 +3954,254 @@ CREATE TRIGGER phase_delivery_approvals_retained BEFORE DELETE ON phase_delivery
 BEGIN SELECT RAISE(ABORT, 'phase delivery approval is retained'); END;
 `;
 
+const MIGRATION_048_SQL = `
+-- P06-1 / F-002: immutable project profile and capability module snapshots.
+CREATE TABLE project_profiles (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  profile_revision TEXT,
+  status TEXT NOT NULL,
+  modules TEXT NOT NULL,
+  document_refs TEXT NOT NULL,
+  detection_refs TEXT NOT NULL,
+  detection_evidence TEXT NOT NULL DEFAULT '[]',
+  confirmed_by TEXT,
+  profile_digest TEXT NOT NULL,
+  CONSTRAINT project_profiles_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT project_profiles_schema_version_check CHECK (typeof(schema_version) = 'integer' AND schema_version >= 1),
+  CONSTRAINT project_profiles_version_check CHECK (typeof(version) = 'integer' AND version >= 1),
+  CONSTRAINT project_profiles_profile_revision_check CHECK (profile_revision IS NULL OR length(profile_revision) > 0),
+  CONSTRAINT project_profiles_status_check CHECK (status IN ('candidate', 'confirmed', 'rejected', 'manual_configuration_required')),
+  CONSTRAINT project_profiles_modules_json_check CHECK (json_valid(modules) AND json_type(modules) = 'array'),
+  CONSTRAINT project_profiles_document_refs_json_check CHECK (json_valid(document_refs) AND json_type(document_refs) = 'array'),
+  CONSTRAINT project_profiles_detection_refs_json_check CHECK (json_valid(detection_refs) AND json_type(detection_refs) = 'array'),
+  CONSTRAINT project_profiles_detection_evidence_json_check CHECK (json_valid(detection_evidence) AND json_type(detection_evidence) = 'array'),
+  CONSTRAINT project_profiles_confirmed_by_check CHECK ((status = 'confirmed' AND confirmed_by IS NOT NULL) OR (status <> 'confirmed' AND confirmed_by IS NULL)),
+  CONSTRAINT project_profiles_digest_check CHECK (length(profile_digest) = 64 AND profile_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT project_profiles_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX project_profiles_project_version_unique ON project_profiles (project_id, version);
+CREATE UNIQUE INDEX project_profiles_project_id_unique ON project_profiles (project_id, id);
+CREATE INDEX project_profiles_project_status_index ON project_profiles (project_id, status, version);
+CREATE TRIGGER project_profiles_immutable_update BEFORE UPDATE ON project_profiles
+BEGIN SELECT RAISE(ABORT, 'project profiles are immutable'); END;
+CREATE TRIGGER project_profiles_immutable_delete BEFORE DELETE ON project_profiles
+BEGIN SELECT RAISE(ABORT, 'project profiles are immutable'); END;
+
+CREATE TABLE capability_modules (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  module_key TEXT NOT NULL,
+  version TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  applies_to TEXT NOT NULL,
+  dependencies TEXT NOT NULL,
+  content_ref TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  CONSTRAINT capability_modules_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT capability_modules_schema_version_check CHECK (typeof(schema_version) = 'integer' AND schema_version >= 1),
+  CONSTRAINT capability_modules_key_check CHECK (length(module_key) > 0),
+  CONSTRAINT capability_modules_version_check CHECK (length(version) > 0),
+  CONSTRAINT capability_modules_scope_json_check CHECK (json_valid(scope) AND json_type(scope) = 'array'),
+  CONSTRAINT capability_modules_applies_to_json_check CHECK (json_valid(applies_to) AND json_type(applies_to) = 'array'),
+  CONSTRAINT capability_modules_dependencies_json_check CHECK (json_valid(dependencies) AND json_type(dependencies) = 'array'),
+  CONSTRAINT capability_modules_content_ref_check CHECK (length(content_ref) > 0),
+  CONSTRAINT capability_modules_digest_check CHECK (length(digest) = 64 AND digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT capability_modules_status_check CHECK (status IN ('candidate', 'confirmed', 'rejected', 'manual_configuration_required')),
+  CONSTRAINT capability_modules_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX capability_modules_project_module_version_unique ON capability_modules (project_id, module_key, version);
+CREATE UNIQUE INDEX capability_modules_project_id_unique ON capability_modules (project_id, id);
+CREATE INDEX capability_modules_project_status_index ON capability_modules (project_id, status, module_key, version);
+CREATE TRIGGER capability_modules_immutable_update BEFORE UPDATE ON capability_modules
+BEGIN SELECT RAISE(ABORT, 'capability modules are immutable'); END;
+CREATE TRIGGER capability_modules_immutable_delete BEFORE DELETE ON capability_modules
+BEGIN SELECT RAISE(ABORT, 'capability modules are immutable'); END;
+`;
+
+const MIGRATION_049_SQL = `
+-- P06-2 / F-001: project-isolated document versions and lightweight memory indexes.
+CREATE TABLE documents (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  document_type TEXT NOT NULL,
+  effective_version_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  CONSTRAINT documents_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT documents_title_check CHECK (length(title) > 0),
+  CONSTRAINT documents_type_check CHECK (length(document_type) > 0),
+  CONSTRAINT documents_status_check CHECK (status IN ('active', 'archived')),
+  CONSTRAINT documents_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX documents_project_id_unique ON documents (project_id, id);
+CREATE INDEX documents_project_status_index ON documents (project_id, status, id);
+CREATE TRIGGER documents_effective_version_same_project_insert
+BEFORE INSERT ON documents
+WHEN NEW.effective_version_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM document_versions WHERE project_id = NEW.project_id AND id = NEW.effective_version_id
+)
+BEGIN SELECT RAISE(ABORT, 'document effective version must belong to project'); END;
+CREATE TRIGGER documents_effective_version_same_project_update
+BEFORE UPDATE OF project_id, effective_version_id ON documents
+WHEN NEW.effective_version_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM document_versions WHERE project_id = NEW.project_id AND id = NEW.effective_version_id
+)
+BEGIN SELECT RAISE(ABORT, 'document effective version must belong to project'); END;
+
+CREATE TABLE document_versions (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  document_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  review_status TEXT NOT NULL DEFAULT 'pending',
+  reviewed_against_revision TEXT,
+  CONSTRAINT document_versions_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT document_versions_version_check CHECK (typeof(version) = 'integer' AND version >= 1),
+  CONSTRAINT document_versions_status_check CHECK (status IN ('draft', 'published', 'withdrawn')),
+  CONSTRAINT document_versions_content_ref_check CHECK (length(content_ref) > 0),
+  CONSTRAINT document_versions_content_hash_check CHECK (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT document_versions_source_refs_json_check CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array'),
+  CONSTRAINT document_versions_review_status_check CHECK (review_status IN ('pending', 'approved', 'rejected')),
+  CONSTRAINT document_versions_reviewed_revision_check CHECK (reviewed_against_revision IS NULL OR length(reviewed_against_revision) > 0),
+  CONSTRAINT document_versions_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT document_versions_document_same_project_fk FOREIGN KEY (project_id, document_id) REFERENCES documents (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT document_versions_content_artifact_same_project_fk FOREIGN KEY (project_id, content_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX document_versions_project_id_unique ON document_versions (project_id, id);
+CREATE UNIQUE INDEX document_versions_document_version_unique ON document_versions (document_id, version);
+CREATE INDEX document_versions_project_status_index ON document_versions (project_id, status, version);
+CREATE TRIGGER document_versions_identity_immutable_update BEFORE UPDATE ON document_versions
+WHEN OLD.status = 'published'
+  OR NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.document_id IS NOT OLD.document_id
+  OR NEW.version IS NOT OLD.version OR NEW.content_ref IS NOT OLD.content_ref
+  OR NEW.content_hash IS NOT OLD.content_hash OR NEW.source_refs IS NOT OLD.source_refs
+BEGIN SELECT RAISE(ABORT, 'document version identity is immutable'); END;
+CREATE TRIGGER document_versions_retained BEFORE DELETE ON document_versions
+BEGIN SELECT RAISE(ABORT, 'document version is retained'); END;
+
+CREATE TABLE memory_records (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  record_key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'candidate',
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  retrieval_count INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT memory_records_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT memory_records_key_check CHECK (length(record_key) > 0),
+  CONSTRAINT memory_records_version_check CHECK (typeof(version) = 'integer' AND version >= 1),
+  CONSTRAINT memory_records_scope_check CHECK (length(scope) > 0),
+  CONSTRAINT memory_records_status_check CHECK (status IN ('candidate', 'accepted', 'revoked')),
+  CONSTRAINT memory_records_content_ref_check CHECK (length(content_ref) > 0),
+  CONSTRAINT memory_records_content_hash_check CHECK (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT memory_records_source_refs_json_check CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array'),
+  CONSTRAINT memory_records_retrieval_count_check CHECK (typeof(retrieval_count) = 'integer' AND retrieval_count >= 0),
+  CONSTRAINT memory_records_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT memory_records_content_artifact_same_project_fk FOREIGN KEY (project_id, content_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX memory_records_project_key_version_unique ON memory_records (project_id, record_key, version);
+CREATE UNIQUE INDEX memory_records_project_id_unique ON memory_records (project_id, id);
+CREATE INDEX memory_records_project_status_index ON memory_records (project_id, status, record_key, version);
+`;
+
+/**
+ * v51：P06-5 重新绑定事实。当前项目切换到新 binding 行，旧 binding 外键保持
+ * 可解析；快照与触发器提供不可变、同项目、可核验的路径/身份证据。
+ */
+const MIGRATION_051_SQL = `
+CREATE TABLE repository_binding_snapshots (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  binding_revision INTEGER NOT NULL,
+  canonical_path TEXT NOT NULL,
+  git_common_dir TEXT,
+  repo_identity TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  change_kind TEXT NOT NULL,
+  CONSTRAINT repository_binding_snapshots_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT repository_binding_snapshots_binding_fk FOREIGN KEY (binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  CONSTRAINT repository_binding_snapshots_binding_same_project_fk FOREIGN KEY (project_id, binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT repository_binding_snapshots_revision_check CHECK (revision >= 1),
+  CONSTRAINT repository_binding_snapshots_binding_revision_check CHECK (binding_revision >= 1),
+  CONSTRAINT repository_binding_snapshots_path_check CHECK (length(canonical_path) > 0),
+  CONSTRAINT repository_binding_snapshots_identity_check CHECK (length(repo_identity) > 0),
+  CONSTRAINT repository_binding_snapshots_kind_check CHECK (change_kind IN ('previous', 'current'))
+);
+CREATE UNIQUE INDEX repository_binding_snapshots_binding_revision_unique
+  ON repository_binding_snapshots (binding_id, revision, binding_revision, change_kind);
+CREATE INDEX repository_binding_snapshots_project_captured_index
+  ON repository_binding_snapshots (project_id, captured_at, id);
+CREATE TRIGGER repository_binding_snapshots_immutable_update
+BEFORE UPDATE ON repository_binding_snapshots
+BEGIN SELECT RAISE(ABORT, 'repository binding snapshot is immutable'); END;
+CREATE TRIGGER repository_binding_snapshots_immutable_delete
+BEFORE DELETE ON repository_binding_snapshots
+BEGIN SELECT RAISE(ABORT, 'repository binding snapshot is immutable'); END;
+CREATE TRIGGER repository_bindings_immutable
+BEFORE UPDATE OF project_id, revision, updated_at, canonical_path, git_common_dir, repo_identity, binding_revision ON repository_bindings
+BEGIN SELECT RAISE(ABORT, 'repository binding facts are immutable'); END;
+`;
+/**
+ * v50：ContextBuilder v4/v5 快照兼容修复。v26–v49 未重建 attempts，导致
+ * 当前基线仍拒绝已由 Core 支持的 schemaVersion 4/5。复用 v25 的完整重建与
+ * 外键关闭策略，只放宽快照版本约束；历史迁移 SQL/checksum 保持不变。
+ */
+const MIGRATION_050_SQL = MIGRATION_025_SQL
+  .replaceAll('attempts_v25', 'attempts_v50')
+  .replace('IN (1, 2, 3)', 'IN (1, 2, 3, 4, 5)');
+
+const MIGRATION_052_SQL = `
+-- v52（P06-5 / F-005）：基线授权绑定、脏范围和获准环境身份的不可变快照。
+-- NULL 只表示 v1-v51 历史记录没有该事实；迁移不猜测或回填旧环境。
+ALTER TABLE baseline_authorizations ADD COLUMN repository_binding_revision INTEGER
+  CONSTRAINT baseline_authorizations_binding_revision_check CHECK (repository_binding_revision IS NULL OR repository_binding_revision >= 1);
+ALTER TABLE baseline_authorizations ADD COLUMN dirty_scope_json TEXT
+  CONSTRAINT baseline_authorizations_dirty_scope_json_check CHECK (dirty_scope_json IS NULL OR (json_valid(dirty_scope_json) AND json_type(dirty_scope_json) = 'object'));
+ALTER TABLE baseline_authorizations ADD COLUMN environment_identity_json TEXT
+  CONSTRAINT baseline_authorizations_environment_identity_json_check CHECK (environment_identity_json IS NULL OR (json_valid(environment_identity_json) AND json_type(environment_identity_json) = 'object'));
+CREATE TRIGGER baseline_authorizations_immutable_update
+BEFORE UPDATE ON baseline_authorizations
+BEGIN SELECT RAISE(ABORT, 'baseline authorization is immutable'); END;
+CREATE TRIGGER baseline_authorizations_immutable_delete
+BEFORE DELETE ON baseline_authorizations
+BEGIN SELECT RAISE(ABORT, 'baseline authorization is immutable'); END;
+`;
+const MIGRATION_053_SQL = `
+-- v53（P06-6 / F-004）：Run 独立标签元数据；历史 Run 统一得到空数组。
+-- 标签不进入输入/范围快照或执行预算事实，规范化由受控写入口完成。
+ALTER TABLE runs ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'
+  CONSTRAINT runs_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array');
+`;
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4066,4 +4314,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 45, sql: MIGRATION_045_SQL, checksum: sha256Hex(MIGRATION_045_SQL) },
   { version: 46, sql: MIGRATION_046_SQL, checksum: sha256Hex(MIGRATION_046_SQL) },
   { version: 47, sql: MIGRATION_047_SQL, checksum: sha256Hex(MIGRATION_047_SQL), foreignKeysOff: true },
+  { version: 48, sql: MIGRATION_048_SQL, checksum: sha256Hex(MIGRATION_048_SQL) },
+  { version: 49, sql: MIGRATION_049_SQL, checksum: sha256Hex(MIGRATION_049_SQL) },
+  { version: 50, sql: MIGRATION_050_SQL, checksum: sha256Hex(MIGRATION_050_SQL), foreignKeysOff: true },
+  { version: 51, sql: MIGRATION_051_SQL, checksum: sha256Hex(MIGRATION_051_SQL) },
+  { version: 52, sql: MIGRATION_052_SQL, checksum: sha256Hex(MIGRATION_052_SQL) },
+  { version: 53, sql: MIGRATION_053_SQL, checksum: sha256Hex(MIGRATION_053_SQL) },
 ];

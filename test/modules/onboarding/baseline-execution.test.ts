@@ -125,6 +125,8 @@ describe('Core baseline execution invariants', () => {
     const fake = gatedProcess(); const f = await setup(fake.port);
     const request = await f.request([check('a', ['node', '--version'])]);
     const prepared = await f.app.baselineService.prepareBaselineRun(owner, f.projectId, request.payload);
+    // 夹具通过受控 SQL 模拟外部绑定漂移；生产触发器阻止任意事实篡改。
+    f.session.database.exec('DROP TRIGGER repository_bindings_immutable');
     f.session.database.prepare('UPDATE repository_bindings SET revision = revision + 1, binding_revision = binding_revision + 1 WHERE project_id = ?').run(f.projectId);
     const result = f.atomicStore.transact('baseline.run', tx => f.app.baselineService.submitBaselineRun(tx, {
       principalId: owner.principalId, commandId: request.commandId, scope: { kind: 'project', projectId: f.projectId },
@@ -164,8 +166,8 @@ describe('Core baseline execution invariants', () => {
       { ...check('e', [process.execPath, npmCliPath, 'run', 'shiploop-absent-script']), environmentRef: 'test-home' },
     ]));
     await f.execution.waitForIdle();
-    expect(f.results(receipt.operationId!)).toMatchObject([{ status: 'failed', exitCode: 7 }, { status: 'error', reasonCode: 'missing_command' },
-      { status: 'error', reasonCode: 'unknown_script' }, { status: 'error', reasonCode: 'permission_denied' }, { status: 'error', reasonCode: 'unknown_script' }]);
+    expect(f.results(receipt.operationId!)).toMatchObject([{ status: 'failed', exitCode: 7 }, { status: 'not_run', reasonCode: 'missing_command', exitCode: null },
+      { status: 'not_run', reasonCode: 'unknown_script', exitCode: null }, { status: 'not_run', reasonCode: 'permission_denied', exitCode: null }, { status: 'not_run', reasonCode: 'unknown_script', exitCode: null }]);
     expect((await f.app.stateStore.getProject(f.projectId)).status).toBe('active');
   });
   it('zero exit with empty output or source changes cannot pass; changes are retained', async () => {

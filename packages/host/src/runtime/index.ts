@@ -59,8 +59,45 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
-export { createPiInferencePreflightAdapter } from './pi-inference-preflight.js';
+export { createMcpRuntimeAudit, McpAuditError, MCP_AUDIT_BODY_BYTES } from './mcp-runtime-audit.js';
+export type { McpRuntimeAudit, McpStderrAudit } from './mcp-runtime-audit.js';
+export { createMcpStdioConnection, createMcpStdioConnectionManager, startMcpStdioConnections, McpStdioError } from './mcp-stdio.js';
+export type {
+  McpStdioCloseResult, McpStdioConnection, McpStdioConnectionManager, McpStdioConnectionOptions,
+  McpStdioConnectionState, McpStdioErrorCode, McpStdioManagerStartOptions, McpStdioProcessRegistration,
+  McpStdioProcessRegistrar, McpStdioProcessInspector, McpStdioReady, McpStdioStopStatus,
+} from './mcp-stdio.js';
+
+export { createMcpStartupPlanParser, buildMcpStartupPlan, prepareMcpStartupPlan, parseMcpStartupPlan, resolveMcpStartupPlan,
+  MCP_PI_TOOL_NAME_MAX_LENGTH, MCP_STARTUP_MAX_ARGV, MCP_STARTUP_MAX_ENVIRONMENT, MCP_STARTUP_MAX_SERVERS,
+  MCP_STARTUP_MAX_TOOLS_PER_SERVER, MCP_STARTUP_PLAN_REASONS, MCP_STARTUP_PLAN_SCHEMA_VERSION, McpStartupPlanError,
+} from './mcp-startup-plan.js';
+export type {
+  McpApprovedServerDefinition, McpResourceResolutionInput, McpStartupPlan, McpStartupPlanGap,
+  McpStartupPlanInput, McpStartupPlanParserOptions, McpStartupPlanReason, McpStartupServerPlan,
+  McpStartupToolMapping, McpTrustedResourceResolver,
+} from './mcp-startup-plan.js';
+
+export {
+  createMcpToolCatalog,
+  discoverMcpTools,
+  validateMcpDiscoveredTools,
+  MCP_CALL_LIMITS,
+  MCP_DISCOVERY_LIMITS,
+  McpToolCatalogError,
+} from './mcp-tool-catalog.js';
+export type {
+  McpCallLimits,
+  McpToolBinding,
+  McpToolCallContext,
+  McpToolCatalog,
+  McpToolEndpoint,
+  McpToolFailureReason,
+} from './mcp-tool-catalog.js';
+
 export type { PiInferenceSource } from './pi-inference-preflight.js';
+
+
 export { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
 export type { PiGitAgentRuntimeDriver, PiGitAgentRuntimeOptions } from './pi-git-agent-adapter.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
@@ -100,10 +137,12 @@ export type {
   PiSession,
   PiSessionFactory,
   PiSessionFactoryOptions,
+  PiStartupCancellableAdapter,
   PiSubmissionToolDefinition,
   PiTrustedAssembly,
   PiTrustedInputReader,
 } from './pi-adapter.js';
+export type { PiMcpAssembly } from './pi-mcp-session.js';
 export { validatePiSubmissionTools } from './pi-adapter.js';
 
 export type { PiPreparedRecovery } from './pi-native-session.js';

@@ -17,6 +17,7 @@
  * - 不提前实现：配置合并、模型路由、Task 策略复制、凭据解析、
  *   配置历史版本表（设计明确不建）。
  */
+import { computeProjectResourceConfigurationDigest } from './project-resources.js';
 import { listStrategyEntries, validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
 import {
@@ -50,6 +51,9 @@ export const PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated';
  */
 export const PROJECT_REGISTERED_EVENT_TYPE = 'project.registered';
 
+/** P06-5：重新绑定时记录旧/新绑定身份；payload 只含身份与 revision，不含路径正文。 */
+export const PROJECT_REPOSITORY_REBOUND_EVENT_TYPE = 'project.repository_rebound';
+
 /**
  * 当前配置更新事件类型（F-010）：全局/项目当前配置的 CAS 更新在同一短事务内
  * 追加一条对应类型的 state_events 脱敏审计记录（见契约文档 §4.4/§6.3）。
@@ -74,6 +78,7 @@ export const PROJECT_SETTINGS_CREATED_EVENT_TYPE = 'settings.project_created';
  * 无需重建审计表；写入方仍由本契约限定取值。
  */
 export type StateEventAggregateType =
+  | 'project_profile'
   | 'project'
   | 'global_settings'
   | 'project_settings'
@@ -361,6 +366,8 @@ export interface SettingsChangeSummary {
   readonly strategies: readonly string[];
   /** 本次 payload 实际提供的政策段名（白名单内键名）。 */
   readonly policies: readonly string[];
+  /** Core-managed resource summary only; no credential/source references or text. */
+  readonly resources?: { readonly count: number; readonly digest: string };
 }
 
 const STRATEGY_FIELD_PREFIX = 'payload.strategies.';
@@ -372,6 +379,10 @@ export function settingsChangeSummary(payload: SettingsPayload): SettingsChangeS
       entry.field.startsWith(STRATEGY_FIELD_PREFIX) ? entry.field.slice(STRATEGY_FIELD_PREFIX.length) : entry.field,
     ),
     policies: Object.keys(payload.policies ?? {}),
+    ...(payload.projectResources === undefined ? {} : { resources: {
+      count: payload.projectResources.resources.length,
+      digest: computeProjectResourceConfigurationDigest({ ...payload.projectResources, revision: 0 }),
+    } }),
   };
 }
 
@@ -464,6 +475,61 @@ export interface ProjectWithInitialSettingsRecord {
  *   计数（设计 11 §3），两者分开表达；
  * - 仓库检查的瞬时事实（headCommit/脏状态等）不持久化：绑定只保存身份与位置，
  *   运行时状态每次按需重新只读检查。
+ */
+export interface RepositoryBindingSnapshotRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly bindingId: string;
+  readonly revision: number;
+  readonly bindingRevision: number;
+  readonly canonicalPath: string;
+  readonly gitCommonDir: string | null;
+  readonly repoIdentity: string;
+  readonly capturedAtUtcMs: number;
+  readonly changeKind: 'previous' | 'current';
+}
+
+export interface RebindRepositoryInput {
+  readonly expectedRevision: number;
+  readonly expectedBindingRevision?: number;
+  readonly expectedBindingId?: string;
+  readonly canonicalPath: string;
+  readonly gitCommonDir?: string | null;
+  readonly repoIdentity: string;
+}
+
+export interface RepositoryRebindResult {
+  readonly project: ProjectRecord;
+  readonly previousBinding: RepositoryBindingRecord;
+  readonly binding: RepositoryBindingRecord;
+  readonly snapshots: readonly RepositoryBindingSnapshotRecord[];
+}
+
+export function validateRebindRepositoryInput(value: unknown, operation: string): RebindRepositoryInput {
+  const context: ValidationContext = { operation, entity: { type: 'repository_binding' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, ['expectedRevision', 'expectedBindingRevision', 'expectedBindingId', 'canonicalPath', 'gitCommonDir', 'repoIdentity'], context, 'input');
+  const expectedRevision = validateExpectedRevision(object.expectedRevision, context);
+  const expectedBindingRevision = object.expectedBindingRevision === undefined
+    ? expectedRevision
+    : validateExpectedRevision(object.expectedBindingRevision, context);
+  return {
+    expectedRevision,
+    expectedBindingRevision,
+    expectedBindingId: object.expectedBindingId === undefined
+      ? undefined
+      : validateStableId(object.expectedBindingId, context, 'expectedBindingId'),
+    canonicalPath: validateCanonicalAbsolutePath(object.canonicalPath, context, 'canonicalPath'),
+    gitCommonDir: object.gitCommonDir === undefined || object.gitCommonDir === null
+      ? null
+      : validateCanonicalAbsolutePath(object.gitCommonDir, context, 'gitCommonDir'),
+    repoIdentity: requireNonEmptyString(object.repoIdentity, context, 'repoIdentity'),
+  };
+}
+
+/**
+ * 仓库绑定当前记录。重新绑定通过新建 binding id 保留旧身份，避免历史基线/工作区
+ * 的 binding 外键被改写为新路径。
  */
 export interface RepositoryBindingRecord {
   readonly id: string;
@@ -596,6 +662,11 @@ export interface StateStore {
     project: unknown,
     binding: unknown,
   ): Promise<ProjectWithRepositoryBindingResult>;
+
+  /** 绑定 CAS 更新；成功创建新绑定身份并保留旧绑定/快照，历史引用不被改写。 */
+  rebindRepository(projectId: string, input: unknown): Promise<RepositoryRebindResult>;
+  /** 读取项目绑定变更的不可变证据，按 capture 顺序返回。 */
+  listRepositoryBindingSnapshots(projectId: string): Promise<readonly RepositoryBindingSnapshotRecord[]>;
 
   /**
    * 按 projectId 返回完整仓库绑定；未知项目/无绑定返回 not_found。

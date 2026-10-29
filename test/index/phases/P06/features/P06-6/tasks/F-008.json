@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p06-6-f008-strategy-labels-vertical.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p06-6-f008-metadata-migration-compat.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p06-6-f001-task-strategy-preview.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p06-6-f002-task-strategy-reapply.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p06-6-f003-task-strategy-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p06-6-f003-task-strategy-wire.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/p06-6-f003-task-strategy-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-label-edit-command.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p06-6-f004-run-labels.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p06-6-f006-label-queries.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p06-6-f007-label-host-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p06-6-f007-label-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p06-6-f007-label-cli-vertical.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-task-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

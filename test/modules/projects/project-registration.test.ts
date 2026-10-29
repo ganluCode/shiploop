@@ -21,7 +21,7 @@
  */
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -37,7 +37,7 @@ import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sq
 import type { SqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { migrateSqliteStorage } from '../../../packages/core/src/adapters/sqlite/migrator.ts';
 import { createSqliteStateStore } from '../../../packages/core/src/adapters/sqlite/state-store.ts';
-import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
+import { createRepositoryInspector, deriveObservedRepoIdentity } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { createProjectService } from '../../../packages/core/src/application/project-service.ts';
 import type { ProjectService } from '../../../packages/core/src/application/project-service.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
@@ -140,7 +140,7 @@ describe('F-005 registerRepository persists stable identity, metadata and bindin
         expect(binding.canonicalPath).toBe(realpathSync(repoDir));
         const expectedGitCommonDir = realpathSync(join(repoDir, '.git'));
         expect(binding.gitCommonDir).toBe(expectedGitCommonDir);
-        expect(binding.repoIdentity).toBe(deriveRepoIdentity(expectedGitCommonDir));
+        expect(binding.repoIdentity).toBe(deriveObservedRepoIdentity(expectedGitCommonDir));
         expect(binding.repoIdentity.startsWith(REPO_IDENTITY_PREFIX)).toBe(true);
         expect(binding.revision).toBe(1);
         expect(binding.bindingRevision).toBe(1);
@@ -305,9 +305,52 @@ describe('F-005 idempotent reuse by canonical path (duplicates and symlink alias
       }
     });
   });
-});
 
-describe('F-005 same remote, different clones register separately', () => {
+  it('rejects a different repository that replaces an already-bound canonical path', async () => {
+    assertGitAvailable();
+    await withMigratedDb(async (dbPath, root) => {
+      const originalPath = join(root, 'replace-me');
+      initGitRepo(originalPath);
+      writeFileSync(join(originalPath, 'original.txt'), 'original\n');
+      commitAll(originalPath, 'original');
+
+      const replacementPath = join(root, 'replacement');
+      initGitRepo(replacementPath);
+      writeFileSync(join(replacementPath, 'replacement.txt'), 'replacement\n');
+      commitAll(replacementPath, 'replacement');
+
+      const harness = openHarness(dbPath, createClock());
+      try {
+        const first = await harness.service.registerRepository({
+          repositoryPath: originalPath,
+          displayName: '原仓库身份',
+          description: '保留的描述',
+          labels: ['keep'],
+        });
+        expect(first.status).toBe('registered');
+
+        // 物理路径保持不变，但目录内容已经是另一个真实本地仓库。
+        const movedAside = join(root, 'original-moved-aside');
+        renameSync(originalPath, movedAside);
+        renameSync(replacementPath, originalPath);
+
+        const error = await harness.service.registerRepository({
+          repositoryPath: originalPath,
+          displayName: '不应覆盖',
+          labels: ['overwrite'],
+        }).catch((caught: unknown) => caught);
+        expect(error).toMatchObject({ kind: 'conflict', details: { reason: 'repository_identity_mismatch' } });
+        expect(isStorageError(error, 'conflict')).toBe(true);
+        expect(await harness.store.getProject(first.project.id)).toEqual(first.project);
+        expect(await harness.store.getRepositoryBinding(first.project.id)).toEqual(first.binding);
+        expect(countRows(harness.session, 'projects')).toBe(1);
+        expect(countRows(harness.session, 'repository_bindings')).toBe(1);
+      } finally {
+        harness.close();
+      }
+    });
+  });
+
   it('registers two clones of the same origin as distinct projects with distinct canonical paths', async () => {
     assertGitAvailable();
     await withMigratedDb(async (dbPath, root) => {

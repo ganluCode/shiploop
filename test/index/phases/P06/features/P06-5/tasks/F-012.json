@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-012",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/onboarding/p06-5-f012-baseline-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p06-5-f010-baseline-host-query.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

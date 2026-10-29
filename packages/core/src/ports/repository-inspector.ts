@@ -186,7 +186,8 @@ export interface RepositoryInspection {
   /** 当前 HEAD 提交（无初始 commit 时为 null；不猜 main、不自动 commit）。 */
   readonly headCommit: string | null;
   readonly hasInitialCommit: boolean;
-  /** 工作区是否有未提交变更（含未跟踪文件）；已有脏工作区不自动 stash/reset。 */
+  /** Stable digest of the observed Git working tree, including staged/untracked state. */
+  readonly workingTreeDigest?: string;
   readonly hasUncommittedChanges: boolean;
 }
 

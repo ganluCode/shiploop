@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "task_id": "F-013",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/onboarding/p06-5-f013-brownfield-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/docs-p06-5-f013-report.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/baseline-execution.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/commands/command-register.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p06-3-f007-resource-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/p04-2-work-resource-selection.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p06-5-f010-baseline-host-query.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

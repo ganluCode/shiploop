@@ -29,6 +29,37 @@ function validateMessage(value: unknown): void {
   if (typeof message.role !== 'string' || typeof message.timestamp !== 'number' || !Number.isFinite(message.timestamp)) {
     reject('native_archive_corrupt');
   }
+  if (message.role === 'system') {
+    // Pi 1.0.4 persists prompt patches and tool declarations on real tool turns.
+    // They are history only: the SDK factory reapplies the current executable allowlist.
+    if (Object.keys(message).some(key => !['role', 'content', 'sections', 'toolsAdded', 'toolsRemoved', 'timestamp'].includes(key))) {
+      reject('native_entry_unverified');
+    }
+    if (typeof message.content !== 'string' && (!Array.isArray(message.content)
+      || message.content.some(item => { const block = record(item); return block.type !== 'text' || typeof block.text !== 'string'; }))) {
+      reject('native_archive_corrupt');
+    }
+    if (message.sections !== undefined && Object.values(record(message.sections)).some(value => value !== null && typeof value !== 'string')) {
+      reject('native_archive_corrupt');
+    }
+    for (const key of ['toolsAdded', 'toolsRemoved']) {
+      const tools = message[key];
+      if (tools === undefined) continue;
+      if (!Array.isArray(tools) || tools.length > 128) reject('native_archive_corrupt');
+      for (const value of tools) {
+        const tool = record(value);
+        if (typeof tool.name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/.test(tool.name)
+          || Object.keys(tool).some(field => !(key === 'toolsAdded' ? ['name', 'description', 'parameters'] : ['name']).includes(field))) {
+          reject('native_entry_unverified');
+        }
+        if (key === 'toolsAdded') {
+          if (typeof tool.description !== 'string') reject('native_archive_corrupt');
+          record(tool.parameters);
+        }
+      }
+    }
+    return;
+  }
   if (!['user', 'assistant', 'toolResult'].includes(message.role)) reject('native_entry_unverified');
   const content = message.content;
   if (typeof content === 'string' && message.role === 'user') return;

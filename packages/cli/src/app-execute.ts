@@ -18,7 +18,7 @@
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
 import { randomUUID } from 'node:crypto';
-import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import {
   ensureHostRunning,
   isHostProtocolError,
@@ -196,10 +196,12 @@ import {
   formatBaselineEvidenceResult,
   formatBaselineListResult,
   formatBaselineOperationResult,
+  formatBaselineComparison,
   formatBaselinePreview,
   parseBaselineCheckPlanText,
 } from './app/baseline.js';
 import type {
+  BaselineAuthorizationView,
   BaselineCheckPlanView,
   BaselineOperationResultView,
   BaselineOperationStatusView,
@@ -214,6 +216,9 @@ import type {
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedKnowledgeCommand,
+  ParsedKnowledgeSearch,
+  ParsedKnowledgeRead,
   ParsedPlanningStart,
   ParsedPlanningList,
   ParsedPlanningGet,
@@ -223,6 +228,9 @@ import type {
   ParsedPlanLabels,
   ParsedProjectInit,
   ParsedProjectOverview,
+  ParsedProjectRepositoryMovePreview,
+  ParsedProjectRepositoryMoveConfirm,
+  ParsedProjectProfileCommand,
   ParsedReceiptGet,
   ParsedTaskPrepare,
   ParsedTaskStrategy,
@@ -231,7 +239,13 @@ import type {
 import type {
   WorkspaceDiscardPreview,
 } from 'shiploop-host';
+import { formatTaskStrategyReapplicationPreview, formatTaskStrategyReapplicationResult } from './app/task-strategy-reapplication.js';
+import type { TaskStrategyReapplicationInput, TaskStrategyReapplicationResult } from 'shiploop-host';
 import { getAppCliHelp } from './app/help.js';
+import {
+  formatKnowledgeReadText,
+  formatKnowledgeSearchText,
+} from './app/knowledge.js';
 import {
   buildInitCliResult,
   buildInitConfirmationNotice,
@@ -246,6 +260,13 @@ import type {
   InitRequestView,
   ProjectOverviewView,
 } from './app/onboarding.js';
+import {
+  formatRepositoryMoveConfirmation,
+  formatRepositoryMovePreview,
+  parseRepositoryMovePreviewDocument,
+} from './app/repository-move.js';
+import type { BrownfieldMovePreview } from './app/repository-move.js';
+
 import {
   buildAppCliFailureEnvelope,
   buildAppCliSuccessEnvelope,
@@ -324,6 +345,9 @@ type ProjectListResult = Awaited<ReturnType<HostClient['listProjects']>>;
 type ProjectLabelCountsResult = Awaited<ReturnType<HostClient['countProjectLabels']>>;
 type ProjectInspectionResult = Awaited<ReturnType<HostClient['inspectRepository']>>;
 type ProjectOverviewResult = Awaited<ReturnType<HostClient['getProjectOverview']>>;
+type RepositoryMovePreviewResult = Awaited<ReturnType<HostClient['previewRepositoryMove']>>;
+type ProjectProfileQueryResult = Awaited<ReturnType<HostClient['getProjectProfile']>>;
+type ProjectProfileMatchQueryResult = Awaited<ReturnType<HostClient['matchProjectProfile']>>;
 type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
 type EffectiveSettingsResult = Awaited<ReturnType<HostClient['getEffectiveSettings']>>;
 type ExportedSettingsResult = Awaited<ReturnType<HostClient['exportGlobalSettings']>>;
@@ -333,6 +357,8 @@ type FeatureListResult = Awaited<ReturnType<HostClient['listFeatures']>>;
 type FeatureDetailResult = Awaited<ReturnType<HostClient['getFeature']>>;
 type TaskListResult = Awaited<ReturnType<HostClient['listTasks']>>;
 type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
+type RunListResult = Awaited<ReturnType<HostClient['listRuns']>>;
+type EntityLabelCountsResult = Awaited<ReturnType<HostClient['getLabelCounts']>>;
 
 type ParsedPlanningCommand = Extract<ParsedAppCliCommand, { command: 'planning' }>;
 
@@ -651,6 +677,31 @@ function planListHumanLine(
   return `${lines.join('\n')}\n`;
 }
 
+/** P06-6 / F-007：Run 列表人类可读行（只列持久元数据身份与状态）。 */
+function runListHumanLine(
+  result: { records: readonly { id: string; status: string }[]; nextCursor: string | null },
+): string {
+  const lines = [`shiploop execution runs: ${result.records.length} run(s)`];
+  for (const record of result.records) {
+    lines.push(`  - ${record.id} status=${record.status}`);
+  }
+  if (result.nextCursor !== null) {
+    lines.push(`  nextCursor=${result.nextCursor}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** P06-6 / F-007：四层实体标签计数人类可读行（entity + 去重计数）。 */
+function entityLabelCountsHumanLine(
+  result: { entity: string; labels: readonly { label: string; count: number }[] },
+): string {
+  const summary =
+    result.labels.length === 0
+      ? '（无标签）'
+      : result.labels.map((entry) => `${entry.label}=${entry.count}`).join(' ');
+  return `shiploop project labels (${result.entity}): ${summary}\n`;
+}
+
 function phaseDetailHumanLine(detail: PhaseDetailResult): string {
   return (
     `shiploop phase get: ${detail.phase.id} project=${detail.phase.projectId} ` +
@@ -672,6 +723,44 @@ function taskDetailHumanLine(detail: TaskDetailResult): string {
     `revision=${detail.task.revision} status=${detail.task.status} ` +
     `criteria=${detail.task.acceptance.criteria.length}\n`
   );
+}
+
+function profileQueryHumanLine(result: ProjectProfileQueryResult): string {
+  const lines = [`shiploop project profile get: project=${result.projectId}`];
+  const records = [
+    ['candidate', result.candidate],
+    ['confirmed', result.confirmed],
+  ] as const;
+  for (const [label, record] of records) {
+    if (record === null) {
+      lines.push(`  ${label}: none`);
+      continue;
+    }
+    lines.push(
+      `  ${label}: status=${record.status} confirmed=${String(record.confirmed)} ` +
+        `version=${record.version} storeRevision=${record.storeRevision} digest=${record.profileDigest}`,
+    );
+    lines.push(`    modules: ${record.modules.length === 0 ? 'none' : record.modules.map((module) => `${module.id}(${module.version})`).join(', ')}`);
+    lines.push(`    evidence: ${record.evidence.length === 0 ? 'none' : record.evidence.map((evidence) => `${evidence.id}:${evidence.status}/${evidence.confirmed ? 'confirmed' : 'unconfirmed'} source=${evidence.source} ${evidence.summary}`).join(' | ')}`);
+    const unconfirmed = record.evidence.filter((evidence) => !evidence.confirmed || evidence.status !== 'confirmed');
+    if (unconfirmed.length > 0) {
+      lines.push(`    unconfirmed: ${unconfirmed.map((evidence) => evidence.id).join(', ')}`);
+    }
+  }
+  lines.push(`  capability-modules: ${result.modules.length === 0 ? 'none' : result.modules.map((module) => `${module.id}@${module.version} status=${module.status} digest=${module.digest}`).join(', ')}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function profileMatchHumanLine(result: ProjectProfileMatchQueryResult): string {
+  const match = result.match;
+  const modules = match.modules.length === 0 ? 'none' : match.modules.map((module) => `${module.id}@${module.version} (${module.reason})`).join(', ');
+  const missing = match.missing.length === 0 ? 'none' : match.missing.join(', ');
+  return `shiploop project profile match: project=${result.projectId} status=${match.status} profileVersion=${String(match.profileVersion)} modules=${modules} missing=${missing}${match.reason === undefined ? '' : ` reason=${match.reason}`}\n`;
+}
+
+function profileWriteHumanLine(action: 'confirm' | 'modify' | 'reject', receipt: CompletedReceipt): string {
+  const result = receipt.result as { profile?: { version?: unknown; status?: unknown; projectId?: unknown }; profileDigest?: unknown } | undefined;
+  return `shiploop project profile ${action}: status=${String(result?.profile?.status ?? receipt.status)} project=${String(result?.profile?.projectId)} version=${String(result?.profile?.version)} digest=${String(result?.profileDigest)}${receipt.replayed ? '（replayed）' : ''}\n`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -996,6 +1085,51 @@ async function executeProjectInit(
   );
 }
 
+async function executeProjectRepositoryMovePreview(
+  io: AppCliIo,
+  command: ParsedProjectRepositoryMovePreview,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  const preview: RepositoryMovePreviewResult = await client.previewRepositoryMove({
+    projectId: command.projectId,
+    repositoryPath: command.repositoryPath,
+  });
+  return emitSuccess(io, command, preview, formatRepositoryMovePreview(preview));
+}
+
+async function executeProjectRepositoryMoveConfirm(
+  io: AppCliIo,
+  command: ParsedProjectRepositoryMoveConfirm,
+  client: HostClient,
+  preview: BrownfieldMovePreview,
+): Promise<AppCliRunResult> {
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  const receipt = await client.confirmRepositoryMove({
+    projectId: command.projectId,
+    preview,
+    decision: 'confirm',
+    ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+  }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+  if (receipt.status === 'rejected') {
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'),
+      command: command.commandId,
+      code: receipt.error.code,
+      message: receipt.error.message,
+      commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  if (receipt.status === 'accepted') {
+    throw new Error('unexpected_accepted_repository_move_receipt');
+  }
+  return emitSuccess(io, command, receipt, formatRepositoryMoveConfirmation(receipt));
+}
+
+/* ------------------------------------------------------------------ *
+ * 项目移动接线（显式 projectId + 预览摘要确认；不使用全局当前项目）
+ * ------------------------------------------------------------------ */
+
 async function executeProjectOverview(
   io: AppCliIo,
   command: ParsedProjectOverview,
@@ -1009,7 +1143,13 @@ async function executeProjectOverview(
       description: overview.project.description,
       labels: [...overview.project.labels],
     },
-    binding: overview.binding === null ? null : { canonicalPath: overview.binding.canonicalPath },
+    binding: overview.binding === null ? null : {
+      id: overview.binding.id,
+      canonicalPath: overview.binding.canonicalPath,
+      repoIdentity: overview.binding.repoIdentity,
+      revision: overview.binding.revision,
+      bindingRevision: overview.binding.bindingRevision,
+    },
     registration: overview.registration,
     settings: overview.settings,
     health: overview.health,
@@ -1022,18 +1162,153 @@ async function executeProjectOverview(
  * 命令分发
  * ------------------------------------------------------------------ */
 
+async function executeProjectProfile(
+  io: AppCliIo,
+  command: ParsedProjectProfileCommand,
+  client: HostClient,
+  profilePayload?: Record<string, unknown>,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'project.profile-get': {
+      const result = await client.getProjectProfile(command.projectId);
+      return emitSuccess(io, command, result, profileQueryHumanLine(result));
+    }
+    case 'project.profile-match': {
+      const result = await client.matchProjectProfile(command.projectId, {
+        ...(command.directory !== undefined ? { directory: command.directory } : {}),
+        ...(command.requiredModuleIds.length > 0 ? { requiredModuleIds: command.requiredModuleIds } : {}),
+        ...(command.languages.length > 0 ? { languages: command.languages } : {}),
+        ...(command.frameworks.length > 0 ? { frameworks: command.frameworks } : {}),
+        ...(command.scope.length > 0 ? { scope: command.scope } : {}),
+      });
+      if (result.match.status === 'not_ready') {
+        return emitFailure(io, command.json, {
+          exitCode: 1,
+          command: command.commandId,
+          code: 'not_ready',
+          message: `Profile 尚未满足任务模块要求${result.match.reason === undefined ? '' : `：${result.match.reason}`}`,
+          details: { match: result.match },
+        });
+      }
+      return emitSuccess(io, command, result, profileMatchHumanLine(result));
+    }
+    case 'project.profile-detect': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.detectProjectProfile({ projectId: command.projectId,
+        ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) },
+      envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'project.profile-confirm':
+    case 'project.profile-modify':
+    case 'project.profile-reject': {
+      if (command.commandId !== 'project.profile-reject' && profilePayload === undefined) {
+        throw new TypeError('Profile 写入命令缺少已校验输入');
+      }
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = command.commandId === 'project.profile-confirm'
+        ? await client.confirmProjectProfile({ projectId: command.projectId, expectedRevision: command.revision, profile: profilePayload, ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) }, envelopeIdentityOptions(command.explicitCommandId, issuedAt))
+        : command.commandId === 'project.profile-modify'
+          ? await client.modifyProjectProfile({ projectId: command.projectId, expectedRevision: command.revision, profile: profilePayload, ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) }, envelopeIdentityOptions(command.explicitCommandId, issuedAt))
+          : await client.rejectProjectProfile({ projectId: command.projectId, expectedRevision: command.revision, ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      if (receipt.status === 'rejected') {
+        return emitFailure(io, command.json, {
+          exitCode: exitCodeForReceiptStatus('rejected'),
+          command: command.commandId,
+          code: receipt.error.code,
+          message: receipt.error.message,
+          commandId: receipt.commandId,
+          ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+        });
+      }
+      if (receipt.status === 'accepted') {
+        throw new Error('unexpected_accepted_profile_receipt');
+      }
+      const action = command.commandId === 'project.profile-confirm' ? 'confirm' : command.commandId === 'project.profile-modify' ? 'modify' : 'reject';
+      return emitSuccess(io, command, receipt, profileWriteHumanLine(action, receipt));
+    }
+  }
+}
+
+function resourceConfigurationView(result: Awaited<ReturnType<HostClient['listProjectResources']>>) {
+  return { schemaVersion: result.schemaVersion, projectId: result.projectId, revision: result.revision, digest: result.digest,
+    resources: result.resources.map(resource => ({ id: resource.id, kind: resource.kind, name: resource.name,
+      sourceRef: resource.sourceRef, sourceRevision: resource.sourceRevision, version: resource.version,
+      contentDigest: resource.contentDigest, candidateDigest: resource.candidateDigest, transport: resource.transport,
+      capabilities: resource.capabilities, credentialConfigured: resource.credentialRef !== null,
+      required: resource.required, onUnavailable: resource.onUnavailable, enabled: resource.enabled, status: resource.status })) };
+}
+
 async function executeProjectCommand(
   io: AppCliIo,
   command: ParsedAppCliCommand,
   client: HostClient,
+  profilePayload?: Record<string, unknown>,
+  repositoryMovePreview?: BrownfieldMovePreview,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
+    case 'project.resource-source-register':
+    case 'project.resource-source-remove': {
+      const result = await client.configureProjectResourceSource({ projectId: command.projectId, sourceId: command.sourceId,
+        action: command.commandId === 'project.resource-source-register' ? 'register' : 'remove', expectedRevision: command.revision,
+        ...(command.manifestPath === undefined ? {} : { manifestPath: command.manifestPath }) });
+      return emitSuccess(io, command, result, `${JSON.stringify(result)}\n`);
+    }
+    case 'project.resource-list': {
+      const result = resourceConfigurationView(await client.listProjectResources(command.projectId));
+      return emitSuccess(io, command, result, `${JSON.stringify(result, null, 2)}\n`);
+    }
+    case 'project.resource-discover':
+    case 'project.resource-preview': {
+      const result = command.commandId === 'project.resource-discover'
+        ? await client.discoverProjectResourceCandidates(command.projectId, command.sourceIds)
+        : await client.previewProjectResourceCandidates(command.projectId, command.sourceIds, command.selectedResourceIds);
+      const view = { schemaVersion: result.schemaVersion, projectId: result.projectId, configurationChanged: result.configurationChanged,
+        ...('sources' in result ? { sources: result.sources.map(source => ({ sourceId: source.sourceId, sourceDigest: source.sourceDigest, status: source.status, candidateIds: source.candidateIds, error: source.error === null ? null : { reason: source.error.reason } })) } :
+          { entries: result.entries.map(entry => ({ sourceId: entry.sourceId, candidateId: entry.candidateId, name: entry.name, status: entry.status, reason: entry.reason })) }),
+        candidates: result.candidates.map(candidate => ({ id: candidate.id, sourceRef: candidate.sourceRef, digest: candidate.digest,
+          kind: candidate.kind, name: candidate.name, version: candidate.version, availability: candidate.availability })),
+        rejected: result.rejected.map(item => ({ sourceId: item.sourceId, reason: item.reason })) };
+      return emitSuccess(io, command, view, `${JSON.stringify(view, null, 2)}\n`);
+    }
+    case 'project.resource-import':
+    case 'project.resource-enable':
+    case 'project.resource-disable':
+    case 'project.resource-revoke': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const options = envelopeIdentityOptions(command.explicitCommandId, issuedAt);
+      const base = { projectId: command.projectId, expectedRevision: command.revision, commandId: command.explicitCommandId };
+      const receipt = command.commandId === 'project.resource-import'
+        ? await client.importProjectResource({ ...base, sourceId: command.sourceId, sourceDigest: command.sourceDigest, candidateId: command.candidateId, candidateDigest: command.candidateDigest }, options)
+        : command.commandId === 'project.resource-enable'
+          ? await client.enableProjectResource({ ...base, resourceId: command.resourceId }, options)
+          : command.commandId === 'project.resource-disable'
+            ? await client.disableProjectResource({ ...base, resourceId: command.resourceId }, options)
+            : await client.revokeProjectResource({ ...base, resourceId: command.resourceId }, options);
+      if (receipt.status !== 'completed') return emitCommandReceipt(io, command, receipt);
+      const result = receipt.result as { configuration: Awaited<ReturnType<HostClient['listProjectResources']>>; resourceLoaded: boolean; runtimeExecuted: boolean; appliesTo: string };
+      const view = { ...receipt, result: { configuration: resourceConfigurationView(result.configuration), resourceLoaded: result.resourceLoaded, runtimeExecuted: result.runtimeExecuted, appliesTo: result.appliesTo } };
+      return emitSuccess(io, command, view, `shiploop ${command.commandId}: commandId=${receipt.commandId} status=${receipt.status} revision=${result.configuration.revision}${receipt.replayed ? ' replayed=true' : ''}\n`);
+    }
     case 'project.init': {
       return executeProjectInit(io, command, client);
     }
     case 'project.overview': {
       return executeProjectOverview(io, command, client);
     }
+    case 'project.repository-move-preview': {
+      return executeProjectRepositoryMovePreview(io, command, client);
+    }
+    case 'project.repository-move-confirm': {
+      return executeProjectRepositoryMoveConfirm(io, command, client, repositoryMovePreview as BrownfieldMovePreview);
+    }
+    case 'project.profile-detect':
+    case 'project.profile-get':
+    case 'project.profile-match':
+    case 'project.profile-confirm':
+    case 'project.profile-modify':
+    case 'project.profile-reject':
+      return executeProjectProfile(io, command, client, profilePayload);
     case 'project.register': {
       const payload: Record<string, unknown> = {
         repositoryPath: command.repositoryPath,
@@ -1091,8 +1366,21 @@ async function executeProjectCommand(
       return emitSuccess(io, command, result, projectDetailHumanLine(result));
     }
     case 'project.labels': {
-      const result = await client.countProjectLabels();
-      return emitSuccess(io, command, result, projectLabelsHumanLine(result));
+      // P06-6 / F-007：--entity 进入四层计数模式；无参保持项目层计数旧形态。
+      if (command.entity === undefined) {
+        const result = await client.countProjectLabels();
+        return emitSuccess(io, command, result, projectLabelsHumanLine(result));
+      }
+      const result = await client.getLabelCounts({
+        entity: command.entity,
+        projectId: command.projectId as string,
+        ...(command.phaseId !== undefined ? { phaseId: command.phaseId } : {}),
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
+      });
+      return emitSuccess(io, command, result, entityLabelCountsHumanLine(result));
     }
     default:
       return emitFailure(io, command.json, {
@@ -1125,6 +1413,23 @@ function configScope(
  */
 function readConfigInputPayload(
   command: ParsedConfigCreate | ParsedConfigUpdate,
+): Record<string, unknown> {
+  let text: string;
+  try {
+    text = readFileSync(command.inputFile, 'utf8');
+  } catch {
+    throw new AppCliParseError(
+      'invalid_input',
+      'invalid_input_file',
+      { command: command.command, commandId: command.commandId, json: command.json },
+      'input',
+    );
+  }
+  return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
+}
+
+function readProfileInputPayload(
+  command: Extract<ParsedAppCliCommand, { commandId: 'project.profile-confirm' | 'project.profile-modify' }>,
 ): Record<string, unknown> {
   let text: string;
   try {
@@ -1423,6 +1728,8 @@ async function executePlanCommand(
     }
     case 'phase.list': {
       const result = await client.listPhases(command.projectId, {
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -1434,6 +1741,8 @@ async function executePlanCommand(
     }
     case 'feature.list': {
       const result = await client.listFeatures(command.projectId, command.phaseId, {
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -1445,6 +1754,8 @@ async function executePlanCommand(
     }
     case 'task.list': {
       const result = await client.listTasks(command.projectId, command.featureId, {
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -1547,6 +1858,30 @@ async function executePlanCommand(
           buildFeatureFinalizeView(commandId, replayed, result as FeatureDeliveryCommandResult),
         formatFeatureFinalizeView,
       );
+    }
+    case 'task.strategy-reapply-preview': {
+      const result = await client.previewTaskStrategyReapplication(command.projectId, command.taskIds);
+      return emitSuccess(io, command, result, formatTaskStrategyReapplicationPreview(result));
+    }
+    case 'task.strategy-reapply': {
+      if (inputs.strategyPayload === undefined) throw new TypeError('task.strategy-reapply 缺少已校验输入');
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.reapplyTaskStrategy({
+        ...inputs.strategyPayload,
+        projectId: command.projectId,
+        confirmed: command.confirm,
+      } as TaskStrategyReapplicationInput, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      if (receipt.status === 'rejected') {
+        return emitFailure(io, command.json, {
+          exitCode: exitCodeForReceiptStatus('rejected'), command: command.commandId,
+          code: receipt.error.code, message: receipt.error.message, commandId: receipt.commandId,
+          ...(receipt.error.details === undefined ? {} : { details: receipt.error.details }),
+        });
+      }
+      if (receipt.status !== 'completed') throw new Error('unexpected_accepted_receipt');
+      return emitSuccess(io, command, receipt, formatTaskStrategyReapplicationResult(
+        receipt.commandId, receipt.replayed, receipt.result as unknown as TaskStrategyReapplicationResult,
+      ));
     }
     case 'task.strategy': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
@@ -1952,6 +2287,19 @@ async function executeExecutionCommand(
       });
       const view = buildExecutionAttemptsView(result);
       return emitSuccess(io, command, view, formatExecutionAttemptsView(view));
+    }
+    // P06-6 / F-007：Run 持久元数据标签列表（runs.list 只读查询；不触达
+    // 执行/配置快照，不打开状态库）。
+    case 'execution.runs': {
+      const result = await client.listRuns(command.projectId, {
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.labels.length > 0 ? { labels: [...command.labels] } : {}),
+        match: command.match,
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      return emitSuccess(io, command, result, runListHumanLine(result));
     }
     case 'execution.diagnostics': {
       const result = await client.listAttemptDiagnostics(command.projectId, command.attemptId, {
@@ -2908,11 +3256,39 @@ function baselineReceiptFailure(
   });
 }
 
+function baselineAuthorizationViewOf(
+  authorization: NonNullable<BaselineDetailResult['authorization']>,
+): BaselineAuthorizationView {
+  return {
+    projectId: authorization.projectId,
+    repositoryBindingId: authorization.repositoryBindingId,
+    ...(authorization.repositoryBindingRevision === undefined ? {} : { repositoryBindingRevision: authorization.repositoryBindingRevision }),
+    codeIdentity: authorization.codeIdentity,
+    ...(authorization.dirtyScope === undefined ? {} : { dirtyScope: authorization.dirtyScope }),
+    ...(authorization.environmentIdentity === undefined ? {} : { environmentIdentity: authorization.environmentIdentity }),
+    ...(authorization.missingFields === undefined ? {} : { missingFields: authorization.missingFields }),
+    policyRevision: authorization.policyRevision,
+    planDigest: authorization.planDigest,
+    plan: {
+      checks: authorization.plan.checks.map(check => ({
+        checkKey: check.checkKey,
+        kind: check.kind,
+        argv: [...check.argv],
+        ...(check.cwdRef === null || check.cwdRef === undefined ? {} : { cwdRef: check.cwdRef }),
+        ...(check.environmentRef === null || check.environmentRef === undefined ? {} : { environmentRef: check.environmentRef }),
+        timeoutMs: check.timeoutMs,
+        required: check.required,
+      })),
+    },
+  };
+}
+
 function operationResultOf(detail: BaselineDetailResult): BaselineOperationResultView {
   return buildBaselineOperationResult(
     detail.operation,
     detail.checks,
     detail.authorization === null ? null : detail.authorization.codeIdentity,
+    detail.authorization === null ? null : baselineAuthorizationViewOf(detail.authorization),
   );
 }
 
@@ -3287,6 +3663,17 @@ async function executeBaselineCommand(
         CLI_EXIT_OK,
       );
     }
+    case 'baseline.compare': {
+      const result = await client.compareBaselines(command.previousOperationId, command.currentOperationId);
+      return emitBaselineStreams(
+        io,
+        command,
+        result,
+        formatBaselineComparison(result),
+        [],
+        CLI_EXIT_OK,
+      );
+    }
     case 'baseline.cancel':
       return executeBaselineCancel(io, command, client);
     case 'baseline.evidence': {
@@ -3302,6 +3689,53 @@ async function executeBaselineCommand(
       );
     }
   }
+}
+
+async function executeKnowledgeCommand(
+  io: AppCliIo,
+  command: ParsedKnowledgeCommand,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  if (command.commandId === 'knowledge.read') {
+    const result = await client.readKnowledge(command.projectId, {
+      documentId: command.documentId,
+      ...(command.version !== undefined ? { version: command.version } : {}),
+      ...(command.maxReadBytes !== undefined ? { maxReadBytes: command.maxReadBytes } : {}),
+    });
+    return emitSuccess(io, command, result, formatKnowledgeReadText(result));
+  }
+
+  const result = await client.searchKnowledge(command.projectId, {
+    ...(command.documentId !== undefined ? { documentId: command.documentId } : {}),
+    ...(command.version !== undefined ? { version: command.version } : {}),
+    ...(command.keyword !== undefined ? { keyword: command.keyword } : {}),
+    ...(command.title !== undefined ? { title: command.title } : {}),
+    ...(command.path !== undefined ? { path: command.path } : {}),
+    ...(command.limit !== undefined ? { limit: command.limit } : {}),
+    ...(command.snippetMaxChars !== undefined ? { snippetMaxChars: command.snippetMaxChars } : {}),
+    ...(command.maxReadBytes !== undefined ? { maxReadBytes: command.maxReadBytes } : {}),
+    ...(command.maxCandidates !== undefined ? { maxCandidates: command.maxCandidates } : {}),
+  });
+  const diagnostic = result.diagnostics[0];
+  if (diagnostic !== undefined) {
+    return emitFailure(io, command.json, {
+      exitCode: 1,
+      command: command.commandId,
+      code: diagnostic.code,
+      message: diagnostic.reason,
+      details: { query: result.query, budget: result.budget, diagnostics: result.diagnostics },
+    });
+  }
+  if (result.results.length === 0) {
+    return emitFailure(io, command.json, {
+      exitCode: 1,
+      command: command.commandId,
+      code: 'no_results',
+      message: '知识查询没有结果',
+      details: { query: result.query, budget: result.budget, diagnostics: result.diagnostics },
+    });
+  }
+  return emitSuccess(io, command, result, formatKnowledgeSearchText(result));
 }
 
 /* ------------------------------------------------------------------ *
@@ -3499,14 +3933,21 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
       });
     }
   }
-  if (command.commandId === 'task.strategy') {
+  if (command.commandId === 'task.strategy' || command.commandId === 'task.strategy-reapply') {
     try {
       strategyPayload = readPlanInputPayload(command);
-      scanStrategyInputFields(strategyPayload, {
-        command: command.command,
-        commandId: command.commandId,
-        json: command.json,
-      });
+      if (command.commandId === 'task.strategy') {
+        scanStrategyInputFields(strategyPayload, {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        });
+      } else {
+        const keys = ['previewDigest', 'globalSettingsRevision', 'projectSettingsRevision', 'selectedTaskIds', 'expectedTaskRevisions'];
+        if (Object.keys(strategyPayload).length !== keys.length || keys.some(key => !Object.hasOwn(strategyPayload!, key))) {
+          throw new AppCliParseError('invalid_input', 'invalid_input_file', command, 'input');
+        }
+      }
     } catch (error) {
       if (error instanceof AppCliParseError) {
         return emitParseFailure(io, error, jsonFlag);
@@ -3632,6 +4073,70 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  let repositoryMovePreview: BrownfieldMovePreview | undefined;
+  if (command.commandId === 'project.repository-move-confirm') {
+    try {
+      const payload = readPlanInputPayload({
+        command: command.command,
+        commandId: command.commandId,
+        json: command.json,
+        inputFile: command.previewFile,
+      });
+      repositoryMovePreview = parseRepositoryMovePreviewDocument(payload, {
+        command: command.command,
+        commandId: command.commandId,
+        json: command.json,
+      }, command.projectId);
+      let targetCanonicalPath: string;
+      try {
+        targetCanonicalPath = realpathSync(command.repositoryPath);
+      } catch {
+        throw new AppCliParseError('invalid_input', 'invalid_repository_path', {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        }, 'repositoryPath');
+      }
+      if (targetCanonicalPath !== repositoryMovePreview.newRepository.canonicalPath) {
+        throw new AppCliParseError('invalid_input', 'invalid_preview_file', {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        }, 'preview-file');
+      }
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '移动预览文件读取或校验失败',
+      });
+    }
+  }
+
+  let profilePayload: Record<string, unknown> | undefined;
+  if (command.commandId === 'project.profile-confirm' || command.commandId === 'project.profile-modify') {
+    try {
+      profilePayload = readProfileInputPayload(command);
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: 'Profile 输入文件读取失败',
+      });
+    }
+  }
+
+  // Profile 查询和写入均经 HostClient；CLI 不打开 SQLite、不读取业务文件。
+  // Profile 确认不隐式授权基线、审批、验收或预算变更。
+
   // P03-5 / F-012：workspace.discard 确认在服务端包含 Git 删除与整组停止证明
   //（固有有界等待，实测约 13s），默认 10s 单请求预算会无谓落入响应丢失路径；
   // 本命令使用受界放大预算（仍有限：60s 单请求 / 120s 总预算），显式注入逐字段优先。
@@ -3673,6 +4178,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   }
 
   try {
+    if (command.command === 'knowledge') {
+      return await executeKnowledgeCommand(io, command, client);
+    }
     if (command.command === 'baseline') {
       return await executeBaselineCommand(io, command, client, baselinePlan, baselineBudgets, options.signal);
     }
@@ -3714,7 +4222,7 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     if (command.command === 'git') {
       return await executeGitCommand(io, command, client);
     }
-    return await executeProjectCommand(io, command, client);
+    return await executeProjectCommand(io, command, client, profilePayload, repositoryMovePreview);
   } catch (error) {
     if (isHostProtocolError(error)) {
       return emitFailure(

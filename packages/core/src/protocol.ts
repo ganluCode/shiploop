@@ -4,6 +4,11 @@
  * 服务端仍负责授权和业务语义，客户端校验不能替代服务端校验。
  */
 export * from './ports/batch-delivery-commands.js';
+export * from './ports/task-strategy-reapplication-wire.js';
+export * from './ports/knowledge-query.js';
+export * from './ports/memory-query.js';
+export * from './ports/knowledge-query-wire.js';
+export * from './ports/brownfield.js';
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
   isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,
@@ -93,14 +98,28 @@ export {
   BASELINE_QUERY_OPERATIONS, BASELINE_REASON_CODES, BASELINE_CHECK_STATUSES,
   computeBaselinePlanDigest, computeBaselinePreviewDigest, validateBaselineAuthorizationSummary,
   validateBaselineCapability, validateBaselineCheckPlan, validateBaselineCodeIdentity,
+  validateBaselineDirtyScope, validateBaselineEnvironmentIdentity,
   validateBaselineListQuery, validateBaselinePreviewPayload, validateBaselineRunPayload,
   validateBaselineCancelPayload, validateProjectInitRequest, validateRepositoryRootPath,
   ONBOARDING_QUERY_SCHEMA_VERSION,
 } from './ports/baseline.js';
+export {
+  BASELINE_COMPARISON_SCHEMA_VERSION,
+} from './ports/baseline-comparison.js';
+export type {
+  BaselineComparisonClassification,
+  BaselineComparisonCodeDiff,
+  BaselineComparisonCheck,
+  BaselineComparisonEvidenceRef,
+  BaselineComparisonGap,
+  BaselineComparisonResult,
+  BaselineComparisonSource,
+} from './ports/baseline-comparison.js';
 export type {
   BaselineAuthorizationSummary, BaselineCapability, BaselineCheck, BaselineCheckCounts,
   BaselineCheckOutputRef, BaselineCheckPlan, BaselineCheckResult, BaselineCheckStatus,
-  BaselineDeclinedResult, BaselineDetailResult, BaselineListQuery, BaselineListResult,
+  BaselineDeclinedResult, BaselineDetailResult, BaselineDirtyScope, BaselineEnvironmentIdentity,
+  BaselinePreviewContext, BaselineListQuery, BaselineListResult,
   BaselineOperationStatus, BaselineOperationSummary, BaselinePreviewCheckView,
   BaselinePreviewPayload, BaselinePreviewResult, BaselinePreviewWarning,
   BaselinePreviewWorkspaceView, BaselineRunPayload, BaselineReasonCode,
@@ -114,6 +133,26 @@ export {
   STATE_EVENT_TYPE_SPECS,
 } from './ports/events.js';
 export type { PublicStateEvent, PublicStateEventType } from './ports/events.js';
+export { validateProfileAuditPayload } from './ports/project-profile-store.js';
+export * from './ports/project-resource-sources.js';
+export * from './ports/project-resources.js';
+export * from './ports/project-resource-candidates.js';
+export { validateProjectResourceSettings } from './ports/project-resource-store.js';
+export * from './ports/brownfield.js';
+export {
+  PROJECT_PROFILE_QUERY_SCHEMA_VERSION,
+  createProjectProfileQueryResult,
+  toPublicProfileRecord,
+} from './ports/project-profile-query.js';
+export type {
+  ProjectProfileMatchQueryResult,
+  ProfileModuleMatchResult,
+  ProfileModuleSelection,
+  ProjectProfileQueryResult,
+  PublicProfileEvidence,
+  PublicProfileModule,
+  PublicProfileRecord,
+} from './ports/project-profile-query.js';
 export {
   SETTINGS_SCHEMA_VERSION, SETTINGS_EXPORT_FORMAT_VERSION, validateSettingsPayload,
 } from './ports/settings-schema.js';
@@ -137,6 +176,12 @@ export type {
   PlanListResultBase, PublicTaskDependencyEdge, PublicTaskRecord,
   TaskDetailResult, TaskListResult,
 } from './ports/queries.js';
+// P06-6 / F-006 四层标签查询：Run 列表投影与实体标签计数公开形状（服务端负责
+// 授权；HostClient 线校验器复用同一形状，接线属 F-007）。
+export type {
+  EntityLabelCountsResult, EntityLabelCount, LabelEntity,
+  PublicLabelRunRecord, RunListResult,
+} from './ports/entity-label-query.js';
 // P03-2 / F-007 计划审批查询与决策记录：公开形状（服务端负责授权；HostClient
 // 线校验器复用同一形状与原因词汇）。
 export { PLAN_APPROVAL_QUERY_OPERATION, toPublicPlanApprovalRecord } from './ports/queries.js';

@@ -14,6 +14,8 @@
  * 全部实现共享 createSqliteStateAccess 的行映射/校验/事件原语，不另立第二套
  * 规则；import 本模块无副作用，会话生命周期由调用方管理，返回面不泄漏驱动句柄。
  */
+import { createSqliteEntityLabelQueryStore } from './entity-label-query-store.js';
+import type { EntityLabelQueryReadStore } from '../../ports/entity-label-query.js';
 import type { StateEventReadStore } from '../../ports/events.js';
 import type { PersistedStateEventRow } from '../../ports/events.js';
 import type {
@@ -97,7 +99,19 @@ import type {
   TaskRecord,
 } from '../../ports/plan-store.js';
 import type { ProjectLabelCount, ProjectPage, RepositoryBindingRecord } from '../../ports/state-store.js';
+import type {
+  KnowledgeDocumentQueryFilter,
+  KnowledgeDocumentQueryRow,
+  KnowledgeQueryReadStore,
+} from '../../ports/knowledge-query.js';
+import type { MemoryQueryFilter, MemoryQueryReadStore, MemoryQueryRow } from '../../ports/memory-query.js';
+import type {
+  TaskStrategyReapplicationReadStore,
+  TaskStrategyReapplicationReadView,
+} from '../../ports/task-strategy-preview.js';
 import type { SqliteStorageSession } from './session.js';
+import { createSqliteDocumentQueryStore } from './document-query-store.js';
+import { createSqliteMemoryQueryStore } from './memory-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqliteStateAccess } from './state-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -117,10 +131,12 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P05-9 / F-001 起追加 Batch 收尾聚合查询窄读取（BatchDeliveryQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
+    EntityLabelQueryReadStore,
     ConsistentSnapshotStore,
     StateEventReadStore,
     RepositoryBindingLookupStore,
     PlanQueryReadStore,
+    TaskStrategyReapplicationReadStore,
     ExecutionBudgetQueryReadStore,
     ExecutionScheduleQueryReadStore,
     WorkspaceQueryReadStore,
@@ -132,7 +148,9 @@ export interface SqliteQueryStore
     IntegrationPlanQueryReadStore,
     FeatureExecutionReportReadStore,
     ExecutionControlQueryReadStore,
-    PlanningQueryReadStore {}
+    PlanningQueryReadStore,
+    KnowledgeQueryReadStore,
+    MemoryQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -166,7 +184,11 @@ export function createSqliteQueryStore(
     session,
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
+  const labelQueries = createSqliteEntityLabelQueryStore(session);
+  const knowledgeQueries = createSqliteDocumentQueryStore(session);
+  const memoryQueries = createSqliteMemoryQueryStore(session);
   return {
+    ...labelQueries,
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
     },
@@ -196,6 +218,12 @@ export function createSqliteQueryStore(
     },
     readTaskRecord(taskId: unknown): TaskRecord | undefined {
       return plan.readTaskRecord(taskId);
+    },
+    readTaskStrategyReapplicationView(
+      projectId: unknown,
+      taskIds: readonly unknown[],
+    ): TaskStrategyReapplicationReadView {
+      return plan.readTaskStrategyReapplicationView(projectId, taskIds);
     },
     readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined {
       return plan.readFeaturePlanView(featureId);
@@ -348,5 +376,9 @@ export function createSqliteQueryStore(
       request: PlanListRequest,
     ): PlanRecordPage<PlanningContextListRow> =>
       planningQueries.listPlanningContextRecords(visibility, projectId, featureId, request),
+    listDocumentVersions: (projectId: string, filter: KnowledgeDocumentQueryFilter): readonly KnowledgeDocumentQueryRow[] =>
+      knowledgeQueries.listDocumentVersions(projectId, filter),
+    listAcceptedMemories: (projectId: string, filter: MemoryQueryFilter): readonly MemoryQueryRow[] =>
+      memoryQueries.listAcceptedMemories(projectId, filter),
   };
 }

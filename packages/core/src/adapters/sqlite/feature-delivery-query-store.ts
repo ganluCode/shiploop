@@ -53,6 +53,7 @@ import {
   type TaskApprovalItemSqlRow,
 } from './plan-store.js';
 import { transactSqliteConsistentRead } from './state-store.js';
+import { parseStoredRunLabels } from './run-labels.js';
 import type { SqliteStorageSession } from './session.js';
 
 const OPERATION = 'FeatureDeliveryQueryStore';
@@ -156,6 +157,7 @@ interface TaskSqlRow {
 interface RunSqlRow {
   id: string;
   batch_id: string;
+  labels: string;
   status: string;
   reason: string | null;
   started_at: number | null;
@@ -248,7 +250,7 @@ export function createSqliteFeatureDeliveryQueryStore(
   ): FeatureDeliveryRunRow | null {
     const row = session.database
       .prepare<[string, string], RunSqlRow>(
-        `SELECT id, batch_id, status, reason, started_at, ended_at
+        `SELECT id, batch_id, labels, status, reason, started_at, ended_at
          FROM runs WHERE project_id = ? AND feature_id = ?
          ORDER BY created_at DESC, id DESC LIMIT 1`,
       )
@@ -257,6 +259,7 @@ export function createSqliteFeatureDeliveryQueryStore(
     return {
       id: stableId(operation, row.id, 'runId'),
       batchId: stableId(operation, row.batch_id, 'batchId'),
+      labels: parseStoredRunLabels(row.labels, operation),
       status: memberOf(operation, row.status, EXECUTION_RUN_STATUSES, 'Run 状态', projectId, featureId),
       reason: nullableReason(operation, row.reason, projectId, featureId),
       startedAtUtcMs: nullableTimestamp(operation, row.started_at, 'started_at', projectId, featureId),

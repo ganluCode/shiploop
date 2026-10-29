@@ -27,9 +27,13 @@ import {
   validateBaselineListQuery,
   type BaselineCheckPlan,
   type BaselineCheckStatus,
+  type BaselineEnvironmentDirectory,
+  type BaselineHealthAuthorizationInput,
+  type BaselineHealthCurrentInput,
   type BaselineOperationStatus,
   type BaselineReasonCode,
   type ProjectHealthInput,
+  snapshotBaselineEnvironmentIdentity,
 } from '../../ports/baseline.js';
 import {
   BASELINE_OCCUPANCY_SINGLETON_ID,
@@ -59,6 +63,8 @@ import type { SqliteStorageSession } from './session.js';
 export interface SqliteBaselineStoreOptions {
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性时间。 */
   readonly nowUtcMs?: () => number;
+  /** 当前健康查询复核历史计划对应的获准环境定义；不读取环境值。 */
+  readonly environmentDirectory?: BaselineEnvironmentDirectory;
 }
 
 interface AuthorizationSqlRow {
@@ -66,9 +72,12 @@ interface AuthorizationSqlRow {
   readonly created_at: number;
   readonly project_id: string;
   readonly repository_binding_id: string;
+  readonly repository_binding_revision: number | null;
   readonly head_commit: string | null;
   readonly working_tree_digest: string;
   readonly has_uncommitted_changes: number;
+  readonly dirty_scope_json: string | null;
+  readonly environment_identity_json: string | null;
   readonly policy_revision: string;
   readonly plan_digest: string;
   readonly plan_json: string;
@@ -122,8 +131,8 @@ interface OccupancySqlRow {
 }
 
 const SELECT_AUTHORIZATION =
-  'SELECT id, created_at, project_id, repository_binding_id, head_commit, working_tree_digest, ' +
-  'has_uncommitted_changes, policy_revision, plan_digest, plan_json, authorized_by, authorized_at ' +
+  'SELECT id, created_at, project_id, repository_binding_id, repository_binding_revision, head_commit, working_tree_digest, ' +
+  'has_uncommitted_changes, dirty_scope_json, environment_identity_json, policy_revision, plan_digest, plan_json, authorized_by, authorized_at ' +
   'FROM baseline_authorizations';
 const SELECT_OPERATION =
   'SELECT id, created_at, updated_at, revision, project_id, kind, authorization_id, status, ' +
@@ -242,9 +251,12 @@ export function createSqliteBaselineAccess(
       id: row.id,
       projectId: row.project_id,
       repositoryBindingId: row.repository_binding_id,
+      repositoryBindingRevision: row.repository_binding_revision,
       headCommit: row.head_commit,
       workingTreeDigest: row.working_tree_digest,
       hasUncommittedChanges: row.has_uncommitted_changes,
+      dirtyScope: row.dirty_scope_json === null ? null : parseJsonColumn(row.dirty_scope_json, operation, 'invalid_dirty_scope_json'),
+      environmentIdentity: row.environment_identity_json === null ? null : parseJsonColumn(row.environment_identity_json, operation, 'invalid_environment_identity_json'),
       policyRevision: row.policy_revision,
       planDigest: row.plan_digest,
       plan: parseJsonColumn(row.plan_json, operation, 'invalid_plan_json'),
@@ -352,21 +364,31 @@ export function createSqliteBaselineAccess(
     const db = session.database;
     assertProjectExists(db, operation, valid.projectId, entity);
     assertBindingOwnership(db, operation, valid.projectId, valid.repositoryBindingId);
+    const bindingRow = db
+      .prepare<[string], { binding_revision: number }>('SELECT binding_revision FROM repository_bindings WHERE id = ?')
+      .get(valid.repositoryBindingId) as { binding_revision: number } | undefined;
+    if (bindingRow === undefined) {
+      throw notFound(operation, entity, '仓库绑定不存在');
+    }
+    const bindingRevision = valid.repositoryBindingRevision ?? bindingRow.binding_revision;
     const timestamp = nowUtcMs();
     const id = randomUUID();
     try {
       db.prepare(
-        'INSERT INTO baseline_authorizations (id, created_at, project_id, repository_binding_id, head_commit, ' +
-          'working_tree_digest, has_uncommitted_changes, policy_revision, plan_digest, plan_json, authorized_by, authorized_at) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO baseline_authorizations (id, created_at, project_id, repository_binding_id, repository_binding_revision, head_commit, ' +
+          'working_tree_digest, has_uncommitted_changes, dirty_scope_json, environment_identity_json, policy_revision, plan_digest, plan_json, authorized_by, authorized_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         id,
         timestamp,
         valid.projectId,
         valid.repositoryBindingId,
+        bindingRevision,
         valid.headCommit,
         valid.workingTreeDigest,
         valid.hasUncommittedChanges ? 1 : 0,
+        valid.dirtyScope === null ? null : JSON.stringify(valid.dirtyScope),
+        valid.environmentIdentity === null ? null : JSON.stringify(valid.environmentIdentity),
         valid.policyRevision,
         valid.planDigest,
         JSON.stringify(valid.plan),
@@ -872,7 +894,7 @@ export function createSqliteBaselineAccess(
   }
 
   /** §7.3 overview 健康派生输入：最近一次终态操作 + 其逐项检查（§8.2）。 */
-  function readProjectHealthInput(projectId: unknown): ProjectHealthInput {
+  function readProjectHealthInput(projectId: unknown, current?: BaselineHealthCurrentInput): ProjectHealthInput {
     const operation = 'BaselineStore.readProjectHealthInput';
     assertOpen(operation);
     const entity: StorageEntityRef = { type: 'baseline_operation' };
@@ -890,6 +912,29 @@ export function createSqliteBaselineAccess(
     }
     const record = operationFromRow(row);
     const checkRows = listCheckRows(session.database, record.id);
+    const authorizationRecord = record.authorizationId === null
+      ? undefined
+      : getBaselineAuthorization(record.authorizationId);
+    const authorization: BaselineHealthAuthorizationInput | null | undefined = authorizationRecord === undefined
+      ? (record.authorizationId === null ? null : undefined)
+      : {
+        repositoryBindingId: authorizationRecord.repositoryBindingId,
+        repositoryBindingRevision: authorizationRecord.repositoryBindingRevision,
+        codeIdentity: {
+          headCommit: authorizationRecord.headCommit,
+          workingTreeDigest: authorizationRecord.workingTreeDigest,
+          hasUncommittedChanges: authorizationRecord.hasUncommittedChanges,
+        },
+        dirtyScope: authorizationRecord.dirtyScope,
+        environmentIdentity: authorizationRecord.environmentIdentity,
+        plan: authorizationRecord.plan,
+      };
+    const currentWithEnvironment = current === undefined || authorizationRecord === undefined || options.environmentDirectory === undefined
+      ? current
+      : {
+        ...current,
+        environmentIdentity: snapshotBaselineEnvironmentIdentity(authorizationRecord.plan, options.environmentDirectory),
+      };
     return {
       operation: {
         operationId: record.id,
@@ -901,10 +946,13 @@ export function createSqliteBaselineAccess(
         endedAt: record.endedAtUtcMs === null ? null : new Date(record.endedAtUtcMs).toISOString(),
       },
       checks: checkRows.map((check) => ({
+        checkKey: check.checkKey,
         status: check.status as BaselineCheckStatus,
         required: check.required,
         ...(check.reasonCode !== null ? { reasonCode: check.reasonCode as BaselineReasonCode } : {}),
       })),
+      ...(authorization === undefined ? {} : { authorization }),
+      ...(currentWithEnvironment === undefined ? {} : { current: currentWithEnvironment }),
     };
   }
 

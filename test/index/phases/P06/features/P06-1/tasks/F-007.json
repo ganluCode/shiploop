@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/onboarding/p06-profile-detect-public.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-profile-detect-safety.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-1-profile-cross-layer.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-1-profile-host-protocol.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-1-project-profile-service.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-1-profile-input-snapshot.test.ts", "all": true },
+        { "file": "test/modules/cli/p06-1-profile-cli.test.ts", "all": true }
+      ]
+    }
+  ]
+}

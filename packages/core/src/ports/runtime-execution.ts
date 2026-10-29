@@ -51,7 +51,7 @@ import type { RuntimeStrategyV1 } from './settings-schema.js';
 import { TOOL_TIMEOUT_MS_MAX, TOOL_TIMEOUT_MS_MIN, WORK_TIMEOUT_MS_MAX, WORK_TIMEOUT_MS_MIN } from './settings-schema.js';
 import {
   rejectUnknownKeys, requireNonEmptyString, requirePlainObject,
-  validateArtifactLocator, validatePositiveInteger, validateSha256Digest,
+  validateArtifactLocator, validateNonNegativeInteger, validatePositiveInteger, validateSha256Digest,
   validateStableId, validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
@@ -183,12 +183,20 @@ export interface RuntimeWorkAccessSnapshot {
   };
   readonly resources: {
     readonly digest: string;
+    /** P06-3: immutable project resource configuration identity for this Attempt. */
+    readonly selectionRevision?: number;
+    readonly selectionDigest?: string;
+    readonly loadManifestDigest?: string;
     readonly entries: readonly {
       readonly id: string;
       readonly kind: 'auth_plugin' | 'skill' | 'mcp' | 'extension' | 'tool';
+      readonly name?: string;
       readonly sourceRef: string;
+      readonly sourceRevision?: string;
       readonly version: string | null;
       readonly contentDigest: string | null;
+      readonly required?: boolean;
+      readonly onUnavailable?: 'reject' | 'omit';
       readonly status: 'available' | 'omitted';
       readonly capabilities: readonly string[];
       readonly transport: 'stdio' | 'streamable_http' | null;
@@ -282,13 +290,21 @@ export function validateRuntimeWorkAccessSnapshot(value: unknown, expected: {
     throw validationError(requestContext, `${field}.authentication.kind`, 'invalid_authentication_kind');
   }
   const resourcesRaw = requirePlainObject(raw.resources, requestContext, `${field}.resources`);
-  rejectUnknownKeys(resourcesRaw, ['digest', 'entries'], requestContext, `${field}.resources`);
+  rejectUnknownKeys(resourcesRaw, ['digest', 'selectionRevision', 'selectionDigest', 'loadManifestDigest', 'entries'], requestContext, `${field}.resources`);
+  const selectionRevision = resourcesRaw.selectionRevision === undefined ? undefined
+    : validateNonNegativeInteger(resourcesRaw.selectionRevision, requestContext, `${field}.resources.selectionRevision`);
+  const selectionDigest = resourcesRaw.selectionDigest === undefined ? undefined : digest(resourcesRaw.selectionDigest, 'resources.selectionDigest');
+  const loadManifestDigest = resourcesRaw.loadManifestDigest === undefined ? undefined : digest(resourcesRaw.loadManifestDigest, 'resources.loadManifestDigest');
+  if ((selectionRevision === undefined) !== (selectionDigest === undefined)
+    || (selectionRevision === undefined) !== (loadManifestDigest === undefined)) {
+    throw validationError(requestContext, `${field}.resources`, 'incomplete_resource_snapshot_identity');
+  }
   if (!Array.isArray(resourcesRaw.entries) || resourcesRaw.entries.length > 64) {
     throw validationError(requestContext, `${field}.resources.entries`, 'invalid_resource_entries');
   }
   const entries = resourcesRaw.entries.map((entry, index) => {
     const item = requirePlainObject(entry, requestContext, `${field}.resources.entries[${index}]`);
-    rejectUnknownKeys(item, ['id', 'kind', 'sourceRef', 'version', 'contentDigest', 'status', 'capabilities', 'transport'], requestContext, `${field}.resources.entries[${index}]`);
+    rejectUnknownKeys(item, ['id', 'kind', 'name', 'sourceRef', 'sourceRevision', 'version', 'contentDigest', 'required', 'onUnavailable', 'status', 'capabilities', 'transport'], requestContext, `${field}.resources.entries[${index}]`);
     const kind = item.kind;
     if (!['auth_plugin', 'skill', 'mcp', 'extension', 'tool'].includes(kind as string)) throw validationError(requestContext, `${field}.resources.entries[${index}].kind`, 'invalid_resource_kind');
     const transport = item.transport;
@@ -299,17 +315,27 @@ export function validateRuntimeWorkAccessSnapshot(value: unknown, expected: {
     if (item.version === null && item.contentDigest === null) throw validationError(requestContext, `${field}.resources.entries[${index}]`, 'resource_identity_missing');
     if (item.status !== 'available' && item.status !== 'omitted') throw validationError(requestContext, `${field}.resources.entries[${index}].status`, 'invalid_resource_status');
     if (!Array.isArray(item.capabilities) || item.capabilities.some(capability => typeof capability !== 'string')) throw validationError(requestContext, `${field}.resources.entries[${index}].capabilities`, 'invalid_resource_capabilities');
+    if (item.required !== undefined && typeof item.required !== 'boolean') throw validationError(requestContext, `${field}.resources.entries[${index}].required`, 'invalid_resource_required');
+    if (item.onUnavailable !== undefined && item.onUnavailable !== 'reject' && item.onUnavailable !== 'omit') throw validationError(requestContext, `${field}.resources.entries[${index}].onUnavailable`, 'invalid_resource_unavailable_policy');
+    if (item.required === true && item.onUnavailable !== 'reject') throw validationError(requestContext, `${field}.resources.entries[${index}]`, 'required_resource_must_reject');
+
     return {
       id: validateStableId(item.id, requestContext, `${field}.resources.entries[${index}].id`),
       kind: kind as RuntimeWorkAccessSnapshot['resources']['entries'][number]['kind'],
+      ...(item.name === undefined ? {} : { name: requireNonEmptyString(item.name, requestContext, `${field}.resources.entries[${index}].name`) }),
       sourceRef: validateStableId(item.sourceRef, requestContext, `${field}.resources.entries[${index}].sourceRef`),
+      ...(item.sourceRevision === undefined ? {} : { sourceRevision: requireNonEmptyString(item.sourceRevision, requestContext, `${field}.resources.entries[${index}].sourceRevision`) }),
       version: item.version as string | null, contentDigest: item.contentDigest as string | null,
+      ...(item.required === undefined ? {} : { required: item.required }),
+      ...(item.onUnavailable === undefined ? {} : { onUnavailable: item.onUnavailable as 'reject' | 'omit' }),
       status: item.status as 'available' | 'omitted', capabilities: [...item.capabilities] as string[],
       transport: transport as 'stdio' | 'streamable_http' | null,
     };
   });
   if (new Set(entries.map(entry => entry.id)).size !== entries.length) throw validationError(requestContext, `${field}.resources.entries`, 'duplicate_resource');
-  const resources = { digest: digest(resourcesRaw.digest, 'resources.digest'), entries };
+  const resources = { digest: digest(resourcesRaw.digest, 'resources.digest'),
+    ...(selectionRevision === undefined ? {} : { selectionRevision, selectionDigest: selectionDigest!, loadManifestDigest: loadManifestDigest! }),
+    entries };
   const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
   if (projectId !== expected.projectId || runId !== identity.runId || taskId !== identity.taskId || attemptId !== identity.attemptId
     || invocationId !== expected.invocationId || executionVersion !== expected.executionVersion || !same(snapshotOwner, expected.owner)

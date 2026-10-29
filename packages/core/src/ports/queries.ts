@@ -298,6 +298,8 @@ export interface AuthorizedProjectReadStore {
   countVisibleProjectLabels(visibility: unknown): readonly ProjectLabelCount[];
 }
 
+export type { KnowledgeDocumentQueryFilter, KnowledgeDocumentQueryRow, KnowledgeQueryReadStore } from './knowledge-query.js';
+
 /* ------------------------------------------------------------------ *
  * §8 一致读视图窄端口
  * ------------------------------------------------------------------ */
@@ -689,6 +691,7 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
 export type PlanListScope =
   | { readonly kind: 'work-recording'; readonly projectId: string; readonly parentKind: 'run' | 'attempt' | 'session'; readonly parentId: string; readonly recordType: 'messages' | 'manifests' }
   | { readonly kind: 'phases'; readonly projectId: string }
+  | { readonly kind: 'runs'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string }
   | { readonly kind: 'phase-graph'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'tasks'; readonly projectId: string; readonly featureId: string }
@@ -767,6 +770,14 @@ export function createPlanListCursorBinding(
       projectId: validateStableId(scope.projectId, { operation }, 'scope.projectId'),
       parentId: validateStableId(scope.parentId, { operation }, 'scope.parentId'),
       parentKind: scope.parentKind as 'run' | 'attempt' | 'session', recordType: scope.recordType as 'messages' | 'manifests' } };
+  }
+  if (scope.kind === 'runs') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId', 'batchId'], { operation }, 'scope');
+    return { rootIdentity: input.rootIdentity, scope: {
+      kind: 'runs', projectId: validateStableId(scope.projectId, { operation }, 'scope.projectId'),
+      ...(scope.featureId === undefined ? {} : { featureId: validateStableId(scope.featureId, { operation }, 'scope.featureId') }),
+      ...(scope.batchId === undefined ? {} : { batchId: validateStableId(scope.batchId, { operation }, 'scope.batchId') }),
+    } };
   }
   if (scope.kind === 'phases') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
@@ -1008,6 +1019,7 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
     !PLAN_ROOT_IDENTITY_PATTERN.test(binding.rootIdentity) ||
     !isPlainObject(binding.scope) ||
     (binding.scope.kind !== 'work-recording' &&
+      binding.scope.kind !== 'runs' &&
       binding.scope.kind !== 'phases' &&
       binding.scope.kind !== 'phase-graph' &&
       binding.scope.kind !== 'features' &&
@@ -1044,6 +1056,9 @@ function planRootFingerprint(binding: PlanListCursorBinding): string {
 function planScopeFingerprint(scope: PlanListScope): string {
   let parent: string;
   switch (scope.kind) {
+    case 'runs':
+      parent = JSON.stringify([scope.featureId ?? null, scope.batchId ?? null]);
+      break;
     case 'work-recording':
       parent = `${scope.parentKind}:${scope.parentId}:${scope.recordType}`;
       break;
@@ -1191,6 +1206,8 @@ export function decodePlanListCursor(
 
 /** 列表读取请求：排他键集下界（'' = 从头）与有界页大小（应用层已校验）。 */
 export interface PlanListRequest {
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
   readonly afterId: string | null;
   readonly limit: number;
 }

@@ -136,15 +136,34 @@ function actualPort(server: Server, operation: HostOperation): number {
   return address.port;
 }
 
-function buildHandshakeResponse(context: HostLifecycleContext): HandshakeResponse {
+function buildHandshakeResponse(context: HostLifecycleContext, schemaVersion: number): HandshakeResponse {
+  const capabilities = hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true, context.application?.commandService.batchDeliveryAvailable === true, context.application?.queryService.batchDeliveryAvailable === true && typeof context.application.queryService.getBatchDelivery === 'function', [
+    ...(typeof context.application?.knowledgeQueryService?.search === 'function' ? ['knowledge.search' as const] : []),
+    ...(typeof context.application?.knowledgeQueryService?.read === 'function' ? ['knowledge.read' as const] : []),
+    ...(typeof context.application?.memoryQueryService?.search === 'function' ? ['memory.search' as const] : []),
+  ]);
+  // v5 clients predate P06-5 repository move wiring. Keep the route and
+  // current v6 declaration intact while returning the capability surface that
+  // the v5 client can understand.
+  const versionedCapabilities = schemaVersion === 5
+    ? {
+        ...capabilities,
+        application: {
+          ...capabilities.application,
+          commands: capabilities.application.commands.filter(command =>
+            command !== 'repository.move.confirm' && command !== 'project.repository.rebind'),
+          queries: capabilities.application.queries.filter(query => query !== 'repository.move.preview'),
+        },
+      }
+    : capabilities;
   return {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
+    schemaVersion,
     protocolVersion: CURRENT_PROTOCOL_VERSION,
     hostInstanceId: context.hostInstanceId,
     dataRootIdentity: context.dataRootIdentity,
     lifecycleState: context.getLifecycleState(),
     startedAt: context.startedAt,
-    capabilities: hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true, context.application?.commandService.batchDeliveryAvailable === true, context.application?.queryService.batchDeliveryAvailable === true && typeof context.application.queryService.getBatchDelivery === 'function'),
+    capabilities: versionedCapabilities,
   };
 }
 
@@ -266,7 +285,7 @@ async function handleRequest(
           details: { reason: 'data_root_mismatch' },
         });
       }
-      sendJson(response, 200, buildHandshakeResponse(context));
+      sendJson(response, 200, buildHandshakeResponse(context, shape.schemaVersion));
       return;
     }
 

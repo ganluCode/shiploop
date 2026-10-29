@@ -23,10 +23,21 @@ export interface WorkWorkspaceAuthority {
   verify(binding: RepositoryBindingRecord, path: unknown): Promise<VerifiedWorkWorkspace>;
   inspect(token: unknown): VerifiedWorkWorkspace;
 }
+export interface WorkManagedProcess {
+  readonly kind: 'mcp';
+  readonly projectId: string;
+  readonly sessionId: string;
+  readonly serverId: string;
+  readonly invocationId: string;
+  readonly executionVersion: number;
+  readonly processIdentity: CommandProcessIdentity;
+}
 export interface WorkResourceSnapshot {
   readonly identity: WorkResourceIdentity;
   readonly invocationId: string | null;
   readonly processIdentity: CommandProcessIdentity | null;
+  /** Host managed child processes (for example MCP server groups) recovered with this invocation. */
+  readonly managedProcesses?: readonly WorkManagedProcess[];
   readonly leases: readonly WorkspaceLeaseRecord[];
 }
 export interface WorkResourceAccess {

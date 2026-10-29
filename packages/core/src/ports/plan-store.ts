@@ -361,8 +361,8 @@ const CREATE_TASK_DEPENDENCY_KEYS = ['projectId', 'featureId', 'taskId', 'depend
  * F-007 纯标签 CAS 编辑（Phase/Feature/Task 标签元数据编辑）
  * ------------------------------------------------------------------ */
 
-/** 可编辑标签的计划实体类型（Project 标签走 project.metadata.update，不在本面）。 */
-export const PLAN_ENTITY_TYPES = ['phase', 'feature', 'task'] as const;
+/** 可编辑标签的计划/执行实体类型（Project 标签走 project.metadata.update，不在本面）。 */
+export const PLAN_ENTITY_TYPES = ['phase', 'feature', 'task', 'run'] as const;
 export type PlanEntityType = (typeof PLAN_ENTITY_TYPES)[number];
 
 const PLAN_LABELS_FIELD_KEYS = ['entityType', 'id', 'labels'] as const;

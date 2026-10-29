@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/acceptance/p06-7-f004-knowledge-increment.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts", "cases": ["launch-receipt-binding"] },
+        { "file": "test/modules/planning/p03-2-context-build.test.ts", "all": true },
+        { "file": "test/modules/planning/p06-2-execution-knowledge.test.ts", "all": true },
+        { "file": "test/modules/planning/p06-2-f009-manifest-integration.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-1-profile-input-snapshot.test.ts", "all": true },
+        { "file": "test/modules/storage/artifacts/p06-2-f003-knowledge-query.test.ts", "all": true }
+      ]
+    }
+  ]
+}

@@ -40,17 +40,30 @@ const TASK_APPROVAL_VERIFICATION_BLOCK = [
 ].join('\n');
 
 const PROJECT_HELP = [
-  'usage: shiploop project <init|overview|register|list|get|edit|labels> [options]',
+  'usage: shiploop project <init|overview|move-preview|move|profile|register|list|get|edit|labels> [options]',
   '',
   '项目命令：',
   '  project init <repository-path> [--name <displayName>] [--confirm] [options]',
   '                                                    静态预览并（经确认）注册仓库',
   '  project overview <projectId>                      查看注册状态与健康状态',
+  '  project move-preview <repository-path> --project <id>  预览仓库移动（只读）',
+  '  project move <repository-path> --project <id> --preview-file <file> --confirm  确认移动',
   '  project register <repository-path> --name <displayName> [options]  注册已有仓库',
   '  project list [--label <l> ...] [--match any|all] [--limit <int>] [--cursor <id>]',
   '  project get <projectId>                                            查看项目与绑定',
   '  project edit <projectId> --revision <int> [options]                编辑名称/说明/标签',
-  '  project labels                                                     标签计数',
+  '  project profile get <projectId>                              查看候选/确认画像与证据\n' +
+  '  project profile detect <projectId> --confirm                首次静态检测并保存未确认候选\n' +
+  '  project profile match --project <id> [selectors]             查看任务匹配模块\n' +
+  '  project profile confirm|modify ... --revision <int> --input <file> --confirm\n' +
+  '                                                               确认或修改画像\n' +
+  '  project profile reject ... --revision <int> --confirm       拒绝候选画像',
+  '',
+  '  project resource-list|resource-discover|resource-preview|resource-import|resource-enable|resource-disable|resource-revoke',
+  '  project resource-source-register|resource-source-remove（仅用户管理入口，需 --confirm）',
+  '                                                    项目 Skills/MCP 资源管理',
+  '  资源变更须项目授权、revision、command-id 与确认；仅影响新执行。',
+  '  Skills/MCP 不授予审批、验收、增额或 owner 权限。',
   '',
   '查看各子命令参数：shiploop project register --help',
   '',
@@ -88,7 +101,7 @@ const PROJECT_INIT_HELP = [
 ].join('\n');
 
 const PROJECT_OVERVIEW_HELP = [
-  'usage: shiploop project overview <projectId> [--data-root <abs>] [--json]',
+  'usage: shiploop project overview [<projectId> | --project <id>] [--data-root <abs>] [--json]',
   '',
   '查看项目的注册状态与健康状态（严格分开）：',
   '- 注册成功不代表基线健康：健康只由最近一次终态基线操作派生；',
@@ -184,12 +197,68 @@ const PROJECT_EDIT_HELP = [
 
 const PROJECT_LABELS_HELP = [
   'usage: shiploop project labels [--data-root <abs>] [--json]',
+  '       shiploop project labels --entity <phase|feature|task|run> --project <id>',
+  '                                [--phase <id>] [--feature <id>] [--batch <id>]',
+  '                                [--label <l> ...] [--match any|all] [--json]',
   '',
-  '返回可见项目的标签去重计数（只统计当前身份可见的项目）。',
+  '无参：可见项目的标签去重计数（只统计当前身份可见的项目）。',
+  '--entity：项目内指定实体层的标签去重计数（与列表同一标签匹配语义；',
+  '父级仅适用于对应层级，省略即统计该项目内全部该层实体；不接受分页）。',
   '',
   BOUNDARY_BLOCK,
   EXIT_CODE_BLOCK,
   '',
+].join('\n');
+
+const PROJECT_PROFILE_DETECT_HELP = [
+  'usage: shiploop project profile detect [<projectId> | --project <id>] --confirm',
+  '                                     [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '只读扫描已绑定仓库的静态清单，首次保存未确认候选画像、证据和能力描述符。',
+  '不执行项目脚本、不请求模型、不自动确认；未知语言需要手工配置。',
+  '已有画像时拒绝覆盖；相同命令身份可重放。确认仍使用 project profile confirm。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_GET_HELP = [
+  'usage: shiploop project profile get [<projectId> | --project <id>] [--data-root <abs>] [--json]',
+  '',
+  '读取候选画像、当前确认版本、证据摘要、能力模块版本和确认/未确认状态。',
+  '查询只读；候选、未知语言和 not_run 不会被当作已确认或执行成功。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_MATCH_HELP = [
+  'usage: shiploop project profile match [<projectId> | --project <id>] [selectors] [--json]',
+  '',
+  '按任务范围查询已确认画像可用的能力模块；not_ready 以业务失败退出。',
+  'selectors: --directory <path> --required-module <id> --language <name> --framework <name> --scope <scope>',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_CONFIRM_HELP = [
+  'usage: shiploop project profile confirm [<projectId> | --project <id>] --revision <int> --input <file> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '显式确认候选画像。输入文件是完整 Profile JSON；Host/Core 重新核对项目范围、模块版本、证据和 revision。',
+  '确认画像不会启动基线、审批、验收、Runtime 或增加预算。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_MODIFY_HELP = [
+  'usage: shiploop project profile modify [<projectId> | --project <id>] --revision <int> --input <file> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '以新的不可变版本修改画像；过期 revision、未知模块或无效证据由 Host/Core 拒绝。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_REJECT_HELP = [
+  'usage: shiploop project profile reject [<projectId> | --project <id>] --revision <int> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '显式拒绝候选画像；不删除仓库文件、不修改活动 Attempt 输入、不改变审批或预算。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
 ].join('\n');
 
 const CONFIG_HELP = [
@@ -347,7 +416,7 @@ const EVENTS_HELP = [
 ].join('\n');
 
 const BASELINE_HELP = [
-  'usage: shiploop baseline <preview|run|list|status|cancel|evidence> [options]',
+  'usage: shiploop baseline <preview|run|list|status|compare|cancel|evidence> [options]',
   '',
   '基线命令（获准基线检查；契约 §12.1）：',
   '  baseline preview --project <id> --input <file>         只读预览（不执行检查）',
@@ -454,6 +523,22 @@ const BASELINE_STATUS_HELP = [
   '',
 ].join('\n');
 
+const BASELINE_COMPARE_HELP = [
+  'usage: shiploop baseline compare <previousOperationId> <currentOperationId> [--data-root <abs>] [--json]',
+  '',
+  '只读比较同一项目选定的两次基线：',
+  '- 按检查项保留 fixed、regressed、new_failure、incomparable、not_run 等逐项诊断；',
+  '- 同时展示两侧代码/绑定/脏范围/环境身份、命令和证据引用；',
+  '- 历史身份缺失、命令或环境变化、无法确认相同失败时保留缺口，不提供自动豁免；',
+  '- 查询不会重跑检查，也不会修改基线、项目健康或数据库结果。',
+  '',
+  '位置参数：',
+  '  previousOperationId   历史基线 operationId（UUID v4）',
+  '  currentOperationId    当前基线 operationId（UUID v4）',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
 const BASELINE_CANCEL_HELP = [
   'usage: shiploop baseline cancel <operationId> --confirm [--command-id <uuid>]',
   '                                [--data-root <abs>] [--json]',
@@ -562,15 +647,18 @@ const PHASE_CREATE_HELP = [
 ].join('\n');
 
 const PHASE_LIST_HELP = [
-  'usage: shiploop phase list --project <id> [--limit <int>] [--cursor <c>]',
-  '                             [--data-root <abs>] [--json]',
+  'usage: shiploop phase list --project <id> [--label <l> ...] [--match any|all]',
+  '                             [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]',
   '',
-  '项目内 Phase 层级稳定分页（默认 50、上限 200；游标不透明，只按返回值续读）。',
+  '项目内 Phase 层级稳定分页（默认 50、上限 200；游标不透明，只按返回值续读）；',
+  '可用可重复 --label 与 any/all 匹配做标签筛选（与列表/计数同一标签语义）。',
   '',
   '选项：',
   '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --label <l>      可选标签筛选，可重复（任一/全部由 --match 决定）',
+  '  --match <mode>   any（缺省，命中任一标签）或 all（命中全部标签）',
   '  --limit <int>    每页条数 1..200（默认 50）',
-  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明；绑定当时筛选）',
   '  --json           stdout 只输出结果 JSON；诊断到 stderr',
   '',
   BOUNDARY_BLOCK,
@@ -687,16 +775,19 @@ const FEATURE_IMPORT_HELP = [
 ].join('\n');
 
 const FEATURE_LIST_HELP = [
-  'usage: shiploop feature list --project <id> --phase <id> [--limit <int>] [--cursor <c>]',
-  '                             [--data-root <abs>] [--json]',
+  'usage: shiploop feature list --project <id> --phase <id> [--label <l> ...] [--match any|all]',
+  '                             [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]',
   '',
-  'Phase 内 Feature 层级稳定分页（默认 50、上限 200；游标不透明）。',
+  'Phase 内 Feature 层级稳定分页（默认 50、上限 200；游标不透明）；',
+  '可用可重复 --label 与 any/all 匹配做标签筛选。',
   '',
   '选项：',
   '  --project <id>   项目 ID（必填，UUID v4）',
   '  --phase <id>     目标 Phase 稳定 ID（必填）',
+  '  --label <l>      可选标签筛选，可重复（任一/全部由 --match 决定）',
+  '  --match <mode>   any（缺省，命中任一标签）或 all（命中全部标签）',
   '  --limit <int>    每页条数 1..200（默认 50）',
-  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明；绑定当时筛选）',
   '  --json           stdout 只输出结果 JSON；诊断到 stderr',
   '',
   BOUNDARY_BLOCK,
@@ -774,6 +865,8 @@ const TASK_HELP = [
   '  task get <taskId>                       详情（结构化验收/引用/策略副本/来源）',
   '  task labels <taskId> --project <id> --revision <int> [--label <l> ...]  纯标签 CAS 编辑',
   '  task strategy <taskId> --project <id> --revision <int> --input <file>   完整策略副本 CAS 编辑',
+  '  task strategy-preview --project <id> --task <taskId> [--task <taskId> ...]  默认策略只读预览',
+  '  task strategy-reapply --project <id> --input <file> --confirm              确认预览并更新策略',
   '  task prepare <taskId> --project <id> --feature <id> --input <file>      准备固定输入制品组（未启动执行）',
   '  task inputs <commandId>                 查看已准备的固定输入（经既有回执查询）',
   '  task status <taskId> --project <id>     机器结论/人审待处理/有效 Task 状态三分区',
@@ -793,16 +886,19 @@ const TASK_HELP = [
 ].join('\n');
 
 const TASK_LIST_HELP = [
-  'usage: shiploop task list --project <id> --feature <id> [--limit <int>] [--cursor <c>]',
-  '                           [--data-root <abs>] [--json]',
+  'usage: shiploop task list --project <id> --feature <id> [--label <l> ...] [--match any|all]',
+  '                           [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]',
   '',
-  'Feature 内 Task 层级稳定分页（默认 50、上限 200；游标不透明）。',
+  'Feature 内 Task 层级稳定分页（默认 50、上限 200；游标不透明）；',
+  '可用可重复 --label 与 any/all 匹配做标签筛选（仅业务 coding Task）。',
   '',
   '选项：',
   '  --project <id>   项目 ID（必填，UUID v4）',
   '  --feature <id>   目标 Feature 稳定 ID（必填）',
+  '  --label <l>      可选标签筛选，可重复（任一/全部由 --match 决定）',
+  '  --match <mode>   any（缺省，命中任一标签）或 all（命中全部标签）',
   '  --limit <int>    每页条数 1..200（默认 50）',
-  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明；绑定当时筛选）',
   '  --json           stdout 只输出结果 JSON；诊断到 stderr',
   '',
   BOUNDARY_BLOCK,
@@ -1292,7 +1388,7 @@ const EXECUTION_DIAGNOSTICS_BLOCK = [
 ].join('\n');
 
 const EXECUTION_HELP = [
-  'usage: shiploop execution <preview|start|budget|revise|batch-delivery|batch-observe|finalize|schedule|attempts|diagnostics|dispatch|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
+  'usage: shiploop execution <preview|start|budget|revise|batch-delivery|batch-observe|finalize|schedule|attempts|runs|diagnostics|dispatch|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
   '',
   '执行授权命令（Phase/Feature 固定范围与持久预算）：',
   '  execution preview [<featureId> | --phase <phaseId> | --feature <featureId> ...] --project <id> --input <file>  执行预览（只读，不是授权）',
@@ -1308,6 +1404,8 @@ const EXECUTION_HELP = [
   '  execution schedule <runId> --project <id>                              Run 调度原因/就绪视图/占用审计（只读）',
   '  execution attempts <taskId> --project <id> [--limit <int>] [--cursor <c>]  ',
   '                                                                          Task 的 Attempt 归属与审计（只读）',
+  '  execution runs --project <id> [--feature <id>] [--batch <id>] [--label <l> ...] [--match any|all]',
+  '                                                                          Run 持久元数据标签列表（只读）',
   '  execution diagnostics <attemptId> --project <id> [--limit <int>] [--cursor <c>]',
   '                                                                          Attempt 迟到/越权通知诊断（只读）',
   '  execution dispatch --project <id> [--limit <int>] [--cursor <c>]        ',
@@ -1475,6 +1573,32 @@ const EXECUTION_SCHEDULE_HELP = [
   '  --json           stdout 只输出结果 JSON；诊断到 stderr',
   '',
   EXECUTION_DIAGNOSTICS_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+/** P06-6 / F-007：Run 持久元数据标签列表（runs.list 只读查询）。 */
+const EXECUTION_RUNS_HELP = [
+  'usage: shiploop execution runs --project <id> [--feature <id>] [--batch <id>]',
+  '                                [--label <l> ...] [--match any|all]',
+  '                                [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]',
+  '',
+  '项目内 Run 持久元数据列表（默认 50、上限 200；含排队/终态 Run）：稳定身份、',
+  '父级、持久标签、状态与用途；不暴露执行/配置快照，不触达 Runtime。',
+  '可用可重复 --label 与 any/all 匹配做标签筛选（与计划层级列表同一语义）',
+  '（标签不继承父级，也不改变 Batch 范围或执行事实）。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --feature <id>   可选 Feature 稳定 ID 父级过滤',
+  '  --batch <id>     可选 Batch ID（UUID v4）父级过滤',
+  '  --label <l>      可选标签筛选，可重复（任一/全部由 --match 决定）',
+  '  --match <mode>   any（缺省，命中任一标签）或 all（命中全部标签）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明；绑定当时筛选）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
   EXIT_CODE_BLOCK,
   '',
 ].join('\n');
@@ -1990,6 +2114,23 @@ const WORKSPACE_DISCARD_HELP = [
   '',
 ].join('\n');
 
+const KNOWLEDGE_HELP = [
+  'usage: shiploop knowledge <search|read> [options]',
+  '',
+  '通过 HostClient 查询受控项目知识；CLI 不读取 SQLite、制品文件或项目任意路径。',
+  '  knowledge search --project <id> [--keyword <text>] [--document-id <id>] [--version <int>]',
+  '                   [--title <text>] [--path <logical-path>] [--limit <int>]',
+  '                   [--snippet-max-chars <int>] [--max-read-bytes <int>] [--max-candidates <int>]',
+  '  knowledge read <documentId> --project <id> [--version <int>] [--max-read-bytes <int>]',
+  '',
+  'search 至少需要非空关键词、文档 ID、标题或受控逻辑路径；version 必须绑定 documentId。',
+  '结果包含来源、版本、hash、片段、位置、预算和诊断；正文只经 Host/Core 完整性核验返回。',
+  '无结果、预算耗尽、超时或损坏正文保持结构化失败，不把错误日志解析为成功。',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const PLANNING_HELP = [
   'usage: shiploop planning <start|list|get|candidate|approve|reject> [options]',
   '',
@@ -2068,8 +2209,25 @@ const PLANNING_DECISION_HELP = (decision: 'approve' | 'reject') => [
 
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
+  'project.resource-list': 'usage: shiploop project resource-list --project <id> [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-source-register': 'usage: shiploop project resource-source-register --project <id> --source <uuid> --manifest-file <absolute-path> --revision <int> --confirm [--json]\n仅用户管理入口；来源登记不导入、启用资源，也不授予 Agent 权限。\n' + EXIT_CODE_BLOCK,
+  'project.resource-source-remove': 'usage: shiploop project resource-source-remove --project <id> --source <uuid> --revision <int> --confirm [--json]\n移除来源登记；不删除文件或已有资源。\n' + EXIT_CODE_BLOCK,
+  'project.resource-discover': 'usage: shiploop project resource-discover --project <id> --source <id> [--source <id> ...] [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-preview': 'usage: shiploop project resource-preview --project <id> --source <id> [--selected <id> ...] [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-import': 'usage: shiploop project resource-import --project <id> --source <id> --source-digest <sha256> --candidate <id> --candidate-digest <sha256> --revision <int> --command-id <uuid> --confirm [--json]\n项目授权后导入；仅影响新执行，不授予审批、验收、增额或 owner 权限。\n' + EXIT_CODE_BLOCK,
+  'project.resource-enable': 'usage: shiploop project resource-enable --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
+  'project.resource-disable': 'usage: shiploop project resource-disable --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
+  'project.resource-revoke': 'usage: shiploop project resource-revoke --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
   'project.init': PROJECT_INIT_HELP,
   'project.overview': PROJECT_OVERVIEW_HELP,
+  'project.repository-move-preview': 'usage: shiploop project move-preview <repository-path> --project <id> [--data-root <abs>] [--json]\n只读预览旧/新绑定身份、HEAD、脏状态与 previewDigest；不会修改项目或仓库。\n' + EXIT_CODE_BLOCK,
+  'project.repository-move-confirm': 'usage: shiploop project move <repository-path> --project <id> --preview-file <file> --confirm [--command-id <uuid>] [--data-root <abs>] [--json]\n必须使用同一项目、目标与冻结预览摘要确认；不会按 remote 自动选择项目。\n' + EXIT_CODE_BLOCK,
+  'project.profile-get': PROJECT_PROFILE_GET_HELP,
+  'project.profile-detect': PROJECT_PROFILE_DETECT_HELP,
+  'project.profile-match': PROJECT_PROFILE_MATCH_HELP,
+  'project.profile-confirm': PROJECT_PROFILE_CONFIRM_HELP,
+  'project.profile-modify': PROJECT_PROFILE_MODIFY_HELP,
+  'project.profile-reject': PROJECT_PROFILE_REJECT_HELP,
   'project.register': PROJECT_REGISTER_HELP,
   'project.list': PROJECT_LIST_HELP,
   'project.get': PROJECT_GET_HELP,
@@ -2085,11 +2243,15 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'receipt.get': RECEIPT_GET_HELP,
   events: EVENTS_HELP,
   'events.observe': EVENTS_HELP,
+  knowledge: KNOWLEDGE_HELP,
+  'knowledge.search': KNOWLEDGE_HELP,
+  'knowledge.read': KNOWLEDGE_HELP,
   baseline: BASELINE_HELP,
   'baseline.preview': BASELINE_PREVIEW_HELP,
   'baseline.run': BASELINE_RUN_HELP,
   'baseline.list': BASELINE_LIST_HELP,
   'baseline.status': BASELINE_STATUS_HELP,
+  'baseline.compare': BASELINE_COMPARE_HELP,
   'baseline.cancel': BASELINE_CANCEL_HELP,
   'baseline.evidence': BASELINE_EVIDENCE_HELP,
   phase: PHASE_HELP,
@@ -2135,6 +2297,8 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'task.get': TASK_GET_HELP,
   'task.labels': TASK_LABELS_HELP,
   'task.strategy': TASK_STRATEGY_HELP,
+  'task.strategy-reapply-preview': 'usage: shiploop task strategy-preview [<taskId>] --project <id> [--task <taskId> ...] [--json]\n只读预览默认策略来源、摘要、差异数量与阻塞原因；不写 Task、不批准、不启动执行。\n' + EXIT_CODE_BLOCK,
+  'task.strategy-reapply': 'usage: shiploop task strategy-reapply --project <id> --input <file> --confirm [--command-id <uuid>] [--json]\n显式确认冻结预览摘要与 Task revision；输出更新回执，不表示批准或执行完成。\n输入 JSON 必须含 previewDigest、globalSettingsRevision、projectSettingsRevision、selectedTaskIds 和 expectedTaskRevisions（每项 taskId/revision）；配置不存在时 revision 显式填 null。\n同一 --command-id 重试时保留原输入文件；不同输入复用 ID 返回 conflict。\n' + EXIT_CODE_BLOCK,
   'task.prepare': TASK_PREPARE_HELP,
   'task.inputs': TASK_INPUTS_HELP,
   'task.status': TASK_STATUS_HELP,
@@ -2153,6 +2317,7 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'execution.finalize': 'usage: shiploop execution finalize <batchId> --project <id> --phase <phaseId> --revision <int> --confirm [--command-id <uuid>] [--json]\n显式请求 Batch 收尾；收尾结果仍需候选核对与 Phase 批准，不自动合入 main 或 push。\n' + EXIT_CODE_BLOCK,
   'execution.schedule': EXECUTION_SCHEDULE_HELP,
   'execution.attempts': EXECUTION_ATTEMPTS_HELP,
+  'execution.runs': EXECUTION_RUNS_HELP,
   'execution.diagnostics': EXECUTION_DIAGNOSTICS_HELP,
   'execution.dispatch': EXECUTION_DISPATCH_HELP,
   'execution.resources': EXECUTION_RESOURCES_HELP,

@@ -138,7 +138,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
 
   it('白名单冻结为六类 + 五类基线事件 + 七类计划事件 + 执行域事件且与既有事件常量同源', () => {
     expect([...PUBLIC_STATE_EVENT_TYPES]).toEqual([
+      'project_profile.detected', 'project_profile.confirmed', 'project_profile.modified', 'project_profile.rejected',
       'project.registered',
+      'project.repository_rebound',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
       SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
       SETTINGS_PROJECT_CREATED_EVENT_TYPE,
@@ -181,6 +183,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // P03-3 / F-005：执行 Run 派发事件（聚合为派发创建的 Run；派发不等于
       // Runtime 已启动，不携带预算数值/计划正文/输入正文/启动语义）。
       EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+      'execution.run.labels.updated',
       // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch；payload 恒
       // {revised:true}，不携带预算数值/理由/批准主体——修订不自动启动或恢复 Run）。
       EXECUTION_BUDGET_REVISED_EVENT_TYPE,

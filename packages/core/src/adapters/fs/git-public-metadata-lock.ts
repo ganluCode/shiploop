@@ -13,6 +13,7 @@ import {
   type GitPublicMetadataLock,
   type GitPublicMetadataLockInput,
 } from '../../ports/git-public-metadata-lock.js';
+import { deriveObservedRepoIdentity } from './repository-inspector.js';
 import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 
 const CLAIM_MAX_BYTES = 4096;
@@ -56,8 +57,11 @@ function canonicalize(input: GitPublicMetadataLockInput): Claim {
   try {
     const workspacePath = realpathSync(input.workspacePath);
     const gitCommonDir = realpathSync(input.gitCommonDir);
-    const repoIdentity = deriveRepoIdentity(gitCommonDir);
-    if (input.repoIdentity !== repoIdentity || !lstatSync(workspacePath).isDirectory() || !lstatSync(gitCommonDir).isDirectory()) throw conflict();
+    const observedIdentity = deriveObservedRepoIdentity(gitCommonDir);
+    // Existing pre-P06 bindings retain their path-derived identity; new bindings use inode identity.
+    if ((input.repoIdentity !== observedIdentity && input.repoIdentity !== deriveRepoIdentity(gitCommonDir))
+      || !lstatSync(workspacePath).isDirectory() || !lstatSync(gitCommonDir).isDirectory()) throw conflict();
+    const repoIdentity = input.repoIdentity;
     const claim: Claim = { schemaVersion: 1, operationId: input.operationId, repoIdentity, workspacePath, gitCommonDir };
     if (Buffer.byteLength(JSON.stringify(claim)) > CLAIM_MAX_BYTES) throw conflict();
     return claim;

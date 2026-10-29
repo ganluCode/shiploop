@@ -160,9 +160,12 @@ export function validateStopRequestShape(input: unknown): ValidatedStopRequest {
 
 /** 消息 schema 版本门禁（未知 → unsupported_schema_version，不降级）。 */
 export function ensureStopRequestSupported(request: ValidatedStopRequest): void {
-  if (request.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+  // Accept the immediately previous lifecycle schema for already deployed
+  // clients. Stop has no versioned response body, and all request fields keep
+  // the current validated semantics.
+  if (request.schemaVersion !== CURRENT_SCHEMA_VERSION && request.schemaVersion !== 5) {
     throw new HostProtocolError('unsupported_schema_version', 'host.stop', '不支持的消息 schema 版本', {
-      details: { supportedSchemaVersions: [CURRENT_SCHEMA_VERSION] },
+      details: { supportedSchemaVersions: [CURRENT_SCHEMA_VERSION, 5] },
     });
   }
 }

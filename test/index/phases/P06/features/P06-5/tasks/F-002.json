@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/projects/project-registration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/commands/command-register.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p02-3-init-overview-vertical.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

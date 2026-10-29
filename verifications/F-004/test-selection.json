@@ -5,16 +5,14 @@
     {
       "id": "shiploop",
       "tests": [
-        { "file": "test/modules/execution/control/p04-7-f004-settlement-gate.test.ts", "all": true },
-        { "file": "test/modules/execution/control/p03-9-f003-execution-stop.test.ts", "all": true },
-        { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true }
+        { "file": "test/modules/execution/budget/p06-6-f004-run-labels.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+        { "file": "test/modules/planning/p05-1-f003-planning-start-command.test.ts", "all": true },
+        { "file": "test/modules/execution/budget/p03-3-execution-budget-query.test.ts", "all": true },
+        { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true },
+        { "file": "test/modules/planning/p05-1-f011-planning-query.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-task-claim.test.ts", "all": true }
       ]
     }
-  ],
-  "verification": {
-    "targeted": "verifications/F-004/runtime-logs/targeted-vitest-final.log",
-    "typecheck": "verifications/F-004/runtime-logs/core-typecheck.log",
-    "result": "27/27 targeted tests passed; Core project typecheck passed",
-    "additional": "A wider five-file run reached 45/47; two pre-existing migration assertions expect schema versions 1..30 while the repository currently exposes versions 31 and 32."
-  }
+  ]
 }

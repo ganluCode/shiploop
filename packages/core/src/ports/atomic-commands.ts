@@ -36,6 +36,7 @@ import type {
   TaskApprovalItemDecisionInput,
   TaskRecord,
 } from './plan-store.js';
+import type { TaskStrategyReapplicationReadView } from './task-strategy-preview.js';
 import type {
   IntegrationPlanResultUpdateInput,
   IntegrationPlanFreezeInput,
@@ -43,7 +44,7 @@ import type {
   PersistedIntegrationPlan,
 } from './integration-plan-store.js';
 import type { GlobalSettingsRecord, ProjectRecord, RepositoryBindingRecord,
-  ProjectSettingsRecord, ProjectWithRepositoryBindingResult } from './state-store.js';
+  ProjectSettingsRecord, ProjectWithRepositoryBindingResult, RepositoryRebindResult } from './state-store.js';
 
 export interface CommandTransaction {
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
@@ -59,6 +60,10 @@ export interface CommandTransaction {
    * 仓库检查产出；注册成功不表示基线健康或执行就绪。
    */
   registerProject(project: unknown, binding: unknown): ProjectWithRepositoryBindingResult;
+  /** F-003：项目绑定 CAS 更新及不可变快照在同一事务内生效。 */
+  rebindRepository(projectId: string, input: unknown): RepositoryRebindResult;
+  /** F-003：同事务读取绑定变更证据。 */
+  listRepositoryBindingSnapshots(projectId: string): readonly import('./state-store.js').RepositoryBindingSnapshotRecord[];
   /** F-009：事务内读取全局当前配置（项目配置一致性依赖的权威重核）；未配置返回 null。 */
   getGlobalSettingsOrNull(): GlobalSettingsRecord | null;
   /** F-009：事务内读取项目当前配置；未配置返回 null（项目缺失由 getProject 先行把关）。 */
@@ -135,7 +140,7 @@ export interface CommandTransaction {
    * 跨项目 ownership（抛出零写入）；不改计划内容/策略/planDigest/planStatus，
    * 不向父子实体传播。
    */
-  updatePlanEntityLabels(input: unknown): PhaseRecord | FeatureRecord | TaskRecord;
+  updatePlanEntityLabels(input: unknown): PhaseRecord | FeatureRecord | TaskRecord | RunRecord;
   /** 创建 draft Feature（含最小 plan_status=draft、可选 planDigest 与来源引用）。 */
   insertFeature(input: unknown): FeatureRecord;
   /** 创建 pending Task（保存完整验收/引用/complexity/executionConfig 及来源）。 */
@@ -182,6 +187,11 @@ export interface CommandTransaction {
    * 抛出，零写入），供策略编辑事务内重核归属/revision 与活动保护目标。
    */
   getTask(projectId: string, taskId: string): TaskRecord;
+  /** F-002：在本次写事务内重读默认策略重应用事实。 */
+  readTaskStrategyReapplicationViewInTransaction(
+    projectId: string,
+    taskIds: readonly string[],
+  ): TaskStrategyReapplicationReadView;
   blockTaskApproval(input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }): number;
   /** F-007：运行期人审事项与 Task/Feature/Run 状态在同一事务内追加。 */
   insertTaskApprovalItem(input: unknown): TaskApprovalItemInsertResult;

@@ -45,7 +45,7 @@ import {
   RECEIPT_RESULT_MAX_BYTES,
 } from '../ports/commands.js';
 import type { CommandReceipt, CommandScope } from '../ports/commands.js';
-import { createResultRef } from '../ports/command-receipts.js';
+import { createResultRef, stableCanonicalJson } from '../ports/command-receipts.js';
 import { isStorageError } from '../ports/errors.js';
 import { BASELINE_AUTHORIZED_EVENT_TYPE } from '../ports/events.js';
 import {
@@ -56,7 +56,9 @@ import {
   validateBaselineRunPayload,
   type BaselineCheckPlan,
   type BaselineCodeIdentity,
+  type BaselineDirtyScope,
   type BaselineEnvironmentDirectory,
+  type BaselineEnvironmentIdentity,
   type BaselinePreviewCheckView,
   type BaselinePreviewResult,
   type BaselinePreviewWarning,
@@ -94,6 +96,8 @@ export interface BaselineRunPrepared {
   readonly repositoryBindingId: string;
   readonly bindingRevision: number;
   readonly bindingRecordRevision: number;
+  readonly dirtyScope: BaselineDirtyScope;
+  readonly environmentIdentity: BaselineEnvironmentIdentity;
 }
 
 export interface BaselineService {
@@ -163,6 +167,31 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
   const { repositoryInspector, workspaceReader, environmentDirectory, stateStore } = options;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
+  function dirtyScopeFor(codeIdentity: BaselineCodeIdentity): BaselineDirtyScope {
+    return {
+      status: codeIdentity.hasUncommittedChanges ? 'unknown' : 'clean',
+      explanation: codeIdentity.hasUncommittedChanges
+        ? '工作区摘要确认存在未提交变化；逐路径范围由受管摘要保留，当前接口未暴露原始路径。'
+        : '工作区摘要确认没有未提交变化。',
+    };
+  }
+
+  function previewContext(
+    repositoryBindingId: string,
+    bindingRevision: number,
+    bindingRecordRevision: number,
+    codeIdentity: BaselineCodeIdentity,
+    environmentIdentity: BaselineEnvironmentIdentity,
+  ): import('../ports/baseline.js').BaselinePreviewContext {
+    return {
+      repositoryBindingId,
+      repositoryBindingRevision: bindingRevision,
+      bindingRecordRevision,
+      dirtyScope: dirtyScopeFor(codeIdentity),
+      environmentIdentity,
+    };
+  }
+
   function requireProjectId(projectId: unknown, operation: string): string {
     const context: ValidationContext = { operation, entity: { type: 'project' } };
     return validateStableId(projectId, context, 'projectId');
@@ -228,6 +257,43 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       );
     }
     return ['PATH', ...extra];
+  }
+
+  /** 环境目录只提供获准定义摘要；不读取 Host 环境值或运行项目脚本。 */
+  function snapshotEnvironmentIdentity(plan: BaselineCheckPlan): BaselineEnvironmentIdentity {
+    const refs = [...new Set(plan.checks.map((check) => check.environmentRef).filter((ref): ref is string => ref !== undefined))];
+    const definitions = refs.map((environmentRef) => ({ environmentRef, definition: environmentDirectory.resolveEnvironmentRef(environmentRef) }));
+    const allowedVariables = new Set<string>(['PATH']);
+    const toolchain: Record<string, string | null> = {};
+    const unknownFields: string[] = [];
+    const coverage: string[] = ['PATH'];
+    for (const { environmentRef, definition } of definitions) {
+      if (definition === null || definition === undefined) {
+        unknownFields.push(`environment:${environmentRef}`);
+        continue;
+      }
+      for (const variable of normalizeBaselineAllowedVariables(definition)) allowedVariables.add(variable);
+      coverage.push(`environmentRef:${environmentRef}`);
+      for (const [name, version] of Object.entries(definition.toolchain ?? {})) {
+        if (toolchain[name] !== undefined && toolchain[name] !== version) toolchain[name] = null;
+        else toolchain[name] = version;
+      }
+      if (definition.definitionRevision === undefined) unknownFields.push(`environmentRevision:${environmentRef}`);
+      for (const field of definition.unknownFields ?? []) unknownFields.push(field);
+    }
+    const revisions = definitions.map(({ definition }) => definition?.definitionRevision).filter((value): value is string => value !== undefined);
+    const definitionRevision = refs.length === 1 ? (revisions[0] ?? null) : null;
+    if (refs.length > 1 && new Set(revisions).size > 1) unknownFields.push('environmentRevision:multiple');
+    return {
+      schemaVersion: 1,
+      environmentRef: refs.length === 1 ? refs[0]! : null,
+      definitionRevision,
+      toolchain,
+      platform: { os: process.platform, arch: process.arch },
+      allowedVariables: [...allowedVariables].sort(),
+      coverage: [...new Set(coverage)].sort(),
+      unknownFields: [...new Set(unknownFields)].sort(),
+    };
   }
 
   /** 逐项核验：cwd realpath 范围 + 环境引用（预览视图与授权共用同一核验）。 */
@@ -349,13 +415,24 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       try {
         const plan = validateBaselinePreviewPayload(payload).plan;
         const id = requireProjectId(projectId, operation);
-        const { inspection } = await loadBindingContext(principal, id, operation);
+        const { inspection, repositoryBindingId, bindingRevision, bindingRecordRevision } = await loadBindingContext(principal, id, operation);
         const views = await resolveChecks(operation, plan, inspection.canonicalPath);
         const { codeIdentity, workspace } = await computeCodeIdentity(inspection);
+        const environmentIdentity = snapshotEnvironmentIdentity(plan);
+        const dirtyScope = dirtyScopeFor(codeIdentity);
         const result: BaselinePreviewResult = {
-          previewDigest: computeBaselinePreviewDigest(plan, codeIdentity),
+          previewDigest: computeBaselinePreviewDigest(
+            plan,
+            codeIdentity,
+            previewContext(repositoryBindingId, bindingRevision, bindingRecordRevision, codeIdentity, environmentIdentity),
+          ),
           policyRevision: computeBaselinePlanDigest(plan),
+          repositoryBindingId,
+          repositoryBindingRevision: bindingRevision,
+          bindingRecordRevision,
           codeIdentity,
+          dirtyScope,
+          environmentIdentity,
           workspace: {
             excludedDirNames: [...workspace.excludedDirNames],
             fileCount: workspace.fileCount,
@@ -384,6 +461,7 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
         // 与预览完全相同的核验（cwd realpath 范围 + 环境引用）；失败零副作用。
         await resolveChecks(operation, plan, inspection.canonicalPath);
         const { codeIdentity } = await computeCodeIdentity(inspection);
+        const environmentIdentity = snapshotEnvironmentIdentity(plan);
         return {
           projectId: id,
           decision,
@@ -394,6 +472,8 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
           repositoryBindingId,
           bindingRevision,
           bindingRecordRevision,
+          dirtyScope: dirtyScopeFor(codeIdentity),
+          environmentIdentity,
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });
@@ -419,9 +499,22 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
 
       // 执行前必须重新核验：提交计划与当前代码身份的摘要必须与用户确认的
       // previewDigest 一致（argv/cwd/环境/政策/代码身份任一实质变化 → 失效）。
-      const expectedPreviewDigest = computeBaselinePreviewDigest(prepared.plan, prepared.codeIdentity);
+      const expectedPreviewDigest = computeBaselinePreviewDigest(
+        prepared.plan,
+        prepared.codeIdentity,
+        previewContext(
+          prepared.repositoryBindingId,
+          prepared.bindingRevision,
+          prepared.bindingRecordRevision,
+          prepared.codeIdentity,
+          prepared.environmentIdentity,
+        ),
+      );
+      const currentEnvironmentIdentity = snapshotEnvironmentIdentity(prepared.plan);
+      const environmentChanged = stableCanonicalJson(currentEnvironmentIdentity) !== stableCanonicalJson(prepared.environmentIdentity);
       const binding = transaction.getRepositoryBinding(prepared.projectId);
       if (prepared.claimedPreviewDigest !== expectedPreviewDigest ||
+          environmentChanged ||
           computeBaselinePlanDigest(prepared.plan) !== prepared.planDigest ||
           binding.id !== prepared.repositoryBindingId || binding.bindingRevision !== prepared.bindingRevision ||
           binding.revision !== prepared.bindingRecordRevision) {
@@ -464,11 +557,14 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       const authorization = transaction.insertBaselineAuthorization({
         projectId: prepared.projectId,
         repositoryBindingId: prepared.repositoryBindingId,
+        repositoryBindingRevision: prepared.bindingRevision,
         codeIdentity: {
           headCommit: prepared.codeIdentity.headCommit,
           workingTreeDigest: prepared.codeIdentity.workingTreeDigest,
           hasUncommittedChanges: prepared.codeIdentity.hasUncommittedChanges,
         },
+        dirtyScope: prepared.dirtyScope,
+        environmentIdentity: prepared.environmentIdentity,
         policyRevision: prepared.planDigest,
         planDigest: prepared.planDigest,
         plan: prepared.plan,

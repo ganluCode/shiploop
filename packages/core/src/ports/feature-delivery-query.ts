@@ -179,6 +179,7 @@ export interface FeatureDeliveryTaskRow {
 export interface FeatureDeliveryRunRow {
   readonly id: string;
   readonly batchId: string;
+  readonly labels: readonly string[];
   readonly status: ExecutionRunStatus;
   readonly reason: string | null;
   readonly startedAtUtcMs: number | null;

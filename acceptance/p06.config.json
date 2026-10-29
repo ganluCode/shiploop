@@ -1,0 +1,103 @@
+{
+  "configVersion": 1,
+  "checklist": "acceptance/p06.checklist.json",
+  "reportRoot": "artifacts/acceptance/p06",
+  "requiredChecks": [
+    "P06-FR1-OFFLINE-CLOSURE",
+    "P06-FR2-NEGATIVE-EVIDENCE",
+    "P06-I01-BROWNFIELD-ONBOARDING",
+    "P06-I02-PROFILE-CHECK-BASELINE",
+    "P06-I03-KNOWLEDGE-MANIFEST",
+    "P06-I04-RESTRICTED-INCREMENT",
+    "P06-I05-RESOURCE-ISOLATION",
+    "P06-I06-STDIO-MCP-FAKE",
+    "P06-I07-FAIL-CLOSED-NEGATIVES",
+    "P06-I08-RERUN-EVIDENCE-INTEGRITY",
+    "P06-LIVE-REAL-MODEL-AUTH",
+    "P06-MANUAL-OWNER-GATE"
+  ],
+  "toolchain": {
+    "packageManager": "npm@10.9.3",
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "lockfile": "package-lock.json"
+  },
+  "timeouts": {
+    "stepMs": 900000,
+    "overallMs": 1200000
+  },
+  "maxCommandOutputBytes": 262144,
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "tempResources": {
+    "git": "temp",
+    "sqlite": "temp",
+    "dataRoot": "temp",
+    "home": "temp",
+    "processes": "owned-only",
+    "reusePrevious": false
+  },
+  "mcpPolicy": {
+    "acceptedTransport": "stdio",
+    "server": "local-no-credential-fake",
+    "realCredentials": false,
+    "otherTransports": "unsupported"
+  },
+  "executionPolicy": {
+    "offline": {
+      "runtime": "fake-or-scripted",
+      "network": "denied",
+      "llmCalls": false
+    },
+    "live": {
+      "authorizationRequired": true,
+      "boundedRequestsRequired": true,
+      "credentialsInEvidence": false
+    },
+    "manual": {
+      "ownerConfirmationRequired": true,
+      "machineMaySign": false
+    },
+    "notRun": {
+      "countsAsPassed": false
+    }
+  },
+  "reportScope": {
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "includeEvidenceHash": true,
+    "includeManualChecklist": true,
+    "notRunCountsAsPassed": false,
+    "deferredCountsAsPassed": false
+  },
+  "fullRegression": {
+    "defaultEnabled": false,
+    "optInFlag": "--full-regression",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "reason": "全仓历史回归必须由负责人显式启用，默认阶段门禁只运行可信索引及受影响范围"
+  },
+  "usageSources": [
+    "runtime-usage",
+    "command-output",
+    "manual-record",
+    "not_run"
+  ],
+  "plan": {
+    "phaseId": "2026-10-27-15-09-56_shiploop-p06",
+    "stepId": "p06-acceptance",
+    "title": "P06 阶段验收契约与执行报告",
+    "scope": "FR-1/FR-2 及 P06-1～P06-6 的存量接入、知识、增量、资源隔离、stdio MCP、live、人工和显式全仓回归开关",
+    "version": "0.3",
+    "contractDoc": "docs/p06-acceptance.md"
+  }
+}

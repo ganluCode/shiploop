@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/onboarding/p06-1-project-profile-service.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p06-1-project-profile-store.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p06-1-project-profile.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/events/events-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorization-contract.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

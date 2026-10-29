@@ -32,11 +32,9 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  * 三命令与 features.approvals 查询进入能力集合，同一升版纪律；旧 v4/v3/v2/v1
  * → 400，不猜测降级）。
  */
-// P03-3 / F-011: execution capabilities are an additive v5 wiring change;
-// application envelopes and query results remain on their existing versions.
-// P03-4 / F-008：调度诊断/Attempt 审计三查询进入能力集合，同为 v5 内增量
-// 接线变化（形状集新增不改动既有字段，同一纪律）。
-export const CURRENT_SCHEMA_VERSION = 5 as const;
+// P06-5：仓库移动预览/确认进入应用能力集合，握手线 schema 升为 6；
+// discovery schema、Core 命令信封和其他协议版本独立保持不变。
+export const CURRENT_SCHEMA_VERSION = 6 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
 export const CURRENT_PROTOCOL_VERSION = 1 as const;
@@ -68,6 +66,14 @@ export const RECEIPTS_ROUTE_PREFIX = '/v1/receipts/';
 export const RESULTS_ROUTE_PREFIX = '/v1/results/';
 export const PROJECTS_ROUTE = '/v1/projects';
 export const PROJECT_LABEL_COUNTS_ROUTE = '/v1/projects/label-counts';
+export const PROJECT_PROFILE_ROUTE_SUFFIX = '/profile';
+export const PROJECT_RESOURCE_ROUTE_SUFFIX = 'resources';
+export const PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX = 'resources/candidates';
+export const PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX = 'resources/preview';
+/** P06-5：存量仓库移动预览/确认路由。 */
+export const PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX = 'repository-move/preview';
+export const PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX = 'repository-move/confirm';
+
 /** P02-3 / F-006 §3.2/§7.2：注册前只读仓库检查（字面量优先于 :projectId 形态）。 */
 export const PROJECTS_INSPECT_ROUTE = '/v1/projects/inspect';
 export const SETTINGS_GLOBAL_ROUTE = '/v1/settings/global';
@@ -76,6 +82,8 @@ export const SNAPSHOT_ROUTE = '/v1/snapshot';
 export const EVENTS_ROUTE = '/v1/events';
 /** P02-3 / F-014 §3.2：基线分页/详情/证据正文路由（全部 GET + Bearer）。 */
 export const BASELINES_ROUTE_PREFIX = '/v1/baselines/';
+/** P06-5：同项目两次基线的只读逐项比较查询。 */
+export const BASELINE_COMPARE_ROUTE = '/v1/baselines/compare';
 export const ARTIFACTS_ROUTE_PREFIX = '/v1/artifacts/';
 export const ARTIFACT_CONTENT_ROUTE_SUFFIX = '/content';
 
@@ -98,6 +106,18 @@ export const FEATURE_REPORT_ROUTE_SUFFIX = '/report';
 export const MAX_FEATURE_REPORT_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
+/**
+ * P06-6 / F-007：四层标签查询路由（GET + Bearer；与 Core runs.list /
+ * labels.counts 操作身份一一对应，docs/p06-6-f006-label-queries.md）。
+ * - GET /v1/runs?projectId=&featureId?=&batchId?=&label(可重复)?=&match?=&limit?=&cursor?=
+ *   （Run 集合根；父级可选，取值/标签规范化/游标绑定由 Core 单一权威复核）；
+ * - GET /v1/label-counts?entity=phase|feature|task|run&projectId=&phaseId?=&featureId?=&batchId?=&label(可重复)?=&match?
+ *   （四层去重计数；不接受分页参数）。
+ * 其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const RUNS_ROUTE = '/v1/runs';
+export const LABEL_COUNTS_ROUTE = '/v1/label-counts';
+export const TASK_STRATEGY_REAPPLICATION_ROUTE = '/v1/task-strategy-reapplication';
 /**
  * P03-7 / F-013：Task 机器证据/人审事项/有限返工链唯一冻结子资源形态
  * （GET /v1/tasks/:taskId/verification|approvals|rework-chain）；其他嵌套/

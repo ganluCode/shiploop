@@ -40,7 +40,8 @@
  * 本层不实现任何存储、文件系统或组装行为。Host/CLI 接线属 F-007/F-008。
  */
 import { createHash } from 'node:crypto';
-import type { ContextReworkInput, ContextTokenEstimate } from './context-build.js';
+import type { ProfileExecutionSnapshot } from './project-profile.js';
+import type { ContextReworkInput, ContextTokenEstimate, ContextKnowledgeSelection } from './context-build.js';
 import { CONTEXT_SNAPSHOT_DIGEST_DOMAIN } from './context-build.js';
 import type { ExecutionInputRef } from './execution-input.js';
 import type { PlanApprovalRecord, TaskDependencyRecord, TaskRecord } from './plan-store.js';
@@ -143,6 +144,33 @@ export const TRUSTED_PROJECT_PERMISSIONS_READER: ExecutionPermissionsReader = ()
   grants: [],
 });
 
+export interface ExecutionKnowledgeBudget {
+  readonly maxSources: number;
+  readonly maxSnippetChars: number;
+  readonly maxTotalBytes: number;
+  readonly maxReadBytes: number;
+  readonly maxCandidates: number;
+}
+
+/** Core-only knowledge resolver. It must read project-scoped authoritative rows and verified artifacts. */
+export interface ExecutionKnowledgeReader {
+  resolve(input: {
+    readonly projectId: string;
+    readonly featureId: string;
+    readonly taskId: string;
+    readonly requests: readonly Record<string, unknown>[];
+    readonly budget: ExecutionKnowledgeBudget;
+  }): Promise<{
+    readonly selections: readonly ContextKnowledgeSelection[];
+    readonly budget: ExecutionKnowledgeBudget & {
+      readonly candidatesInspected: number;
+      readonly bytesRead: number;
+      readonly selectedSources: number;
+      readonly omittedSources: number;
+    };
+  }>;
+}
+
 /* ------------------------------------------------------------------ *
  * 一致状态视图（单一读事务内取得；实现者为 SQLite 适配器）
  * ------------------------------------------------------------------ */
@@ -167,6 +195,8 @@ export interface ExecutionInputPreparationView {
     readonly global: PreparationSettingsScopeSnapshot | null;
     readonly project: PreparationSettingsScopeSnapshot | null;
   };
+  /** P06-1：同一读事务捕获的已确认画像快照；缺失画像为 null。 */
+  readonly profile?: ProfileExecutionSnapshot | null;
 }
 
 /**
@@ -231,6 +261,8 @@ export interface TrustedExecutionInputPreparePayload {
   readonly taskId: string;
   /** 必需输入采集清单（可为空数组；逐项深校验在应用层）。 */
   readonly items: readonly Record<string, unknown>[];
+  /** P06-2：受控知识选择描述；正文和身份由 Core 知识读取端口解析。 */
+  readonly knowledge?: readonly Record<string, unknown>[];
   /** 可选同 Task 返工输入（F-011 契约；存在即生成返工快照）。 */
   readonly rework?: ContextReworkInput | null;
   /** P03-9 / F-007：可选同 Task 续接决策与来源快照。 */
@@ -256,12 +288,23 @@ export interface PreparedExecutionInputGroup {
     readonly prompt: ExecutionInputGroupBodyRef;
   };
   readonly requiredInputs: readonly ExecutionInputRef[];
+  /** P06-2：已由 Core 读取端口核验的知识选择身份。 */
+  readonly knowledge?: readonly ContextKnowledgeSelection[];
   readonly digests: ExecutionInputGroupDigests;
   readonly approval: ExecutionInputApprovalIdentity;
+  /** P06-1：与本次 Attempt 一起固定的画像/模块身份摘要。 */
+  readonly profile?: ProfileExecutionSnapshot;
   /** 捕获时 Task revision（记录用途；重核按策略副本内容身份，不按裸 revision）。 */
   readonly taskRevision: number;
   readonly promptBytes: number;
   readonly tokenEstimate: ContextTokenEstimate;
+  /** P06-2：知识读取预算和实际消耗，绑定到不可变 Manifest。 */
+  readonly knowledgeBudget?: ExecutionKnowledgeBudget & {
+    readonly candidatesInspected: number;
+    readonly bytesRead: number;
+    readonly selectedSources: number;
+    readonly omittedSources: number;
+  };
   readonly preparedAtUtcMs: number;
   /** F-012：同 Task 返工身份（仅返工构建携带；普通首次构建不包含该键）。 */
   readonly rework?: ContextReworkInput;
@@ -302,6 +345,9 @@ export const EXECUTION_INPUT_PREPARE_FAILURE_REASONS = [
   'approval_state_inconsistent',
   'limit_exceeded',
   'context_build_failed',
+  'profile_not_confirmed',
+  'profile_module_invalid',
+  'profile_scope_mismatch',
   'source_unavailable',
   'published_body_mismatch',
   'publish_failed',

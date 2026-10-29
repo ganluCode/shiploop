@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-4-f007-mcp-audit.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f007-mcp-audit-recording.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f007-mcp-native-redaction.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f001-mcp-startup-plan.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-stdio.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-fake-server.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f003-mcp-tool-catalog.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f004-mcp-dispatch.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f005-mcp-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f006-mcp-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-work-recording-publisher.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-adapter.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-runner.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-2-access-integration.test.ts", "all": true }
+    ]
+  }]
+}

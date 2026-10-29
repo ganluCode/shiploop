@@ -29,6 +29,7 @@ export const HOST_LIFECYCLE_OPERATIONS = [
  * 的客户端侧错误也使用这些身份；P02-3 / F-006 新增静态接入两项）。
  */
 export const APP_OPERATIONS = [
+  'knowledge.search', 'knowledge.read', 'memory.search',
   'work.tools.invoke',
   'commands.submit',
   'receipts.get',
@@ -39,6 +40,8 @@ export const APP_OPERATIONS = [
   'projects.labelCounts',
   'projects.inspect',
   'projects.overview',
+  'projects.profile.get',
+  'projects.profile.match',
   'settings.global.get',
   'settings.global.export',
   'settings.project.get',
@@ -49,6 +52,7 @@ export const APP_OPERATIONS = [
   // P02-3 / F-014（§3.2/§7.4-§7.6）：基线分页、单次详情与有界证据正文读取。
   'baselines.list',
   'baselines.get',
+  'baselines.compare',
   'artifacts.get',
   // P03-1 / F-009（§6.6）：计划域层级列表/详情/Task DAG 查询。
   'phases.list',
@@ -58,6 +62,11 @@ export const APP_OPERATIONS = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数只读查询（能力位复用
+  // project.read；与 Core runs.list / labels.counts 同步，不漂移）。
+  'runs.list',
+  'labels.counts',
+  'task.strategy.reapply.preview',
   // P03-2 / F-007：Feature 审批决策查询（当前决定 vs 历史 + 有效批准核验）。
   'features.approvals',
   'execution.budget.get',
@@ -112,6 +121,12 @@ export const APP_OPERATIONS = [
   'planning.contexts.list',
   'planning.context.get',
   'planning.candidate.get',
+  'project.resources.list',
+  'project.resources.candidates',
+  'project.resources.preview',
+  'project.resources.sources.configure',
+  'repository.move.confirm',
+  'repository.move.preview',
 ] as const;
 
 export const HOST_OPERATIONS = [

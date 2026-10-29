@@ -29,6 +29,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { isUuidV4, PublicError } from './commands.js';
+import { PROJECT_PROFILE_AUDIT_TYPES, validateProfileAuditPayload } from './project-profile-store.js';
 import {
   BASELINE_CHECK_STATUSES,
   BASELINE_CHECKS_MAX,
@@ -37,7 +38,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_CANCELLING_EVENT_TYPE, EXECUTION_FEATURE_CANCELLED_EVENT_TYPE, EXECUTION_FEATURE_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_CANCELLING_EVENT_TYPE, EXECUTION_FEATURE_CANCELLED_EVENT_TYPE, EXECUTION_FEATURE_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_DAG_UPDATED_EVENT_TYPE,
@@ -58,6 +59,7 @@ import {
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
   PROJECT_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from './state-store.js';
@@ -76,6 +78,8 @@ export const PUBLIC_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** 仅命令路径注册成功写入（F-008）；P01 直接服务首建不写事件（契约 §15.3）。 */
 export { PROJECT_REGISTERED_EVENT_TYPE };
+/** P06-5：重新绑定事件保留旧/新 binding 身份与 revision。 */
+export { PROJECT_REPOSITORY_REBOUND_EVENT_TYPE };
 /** P03-1 / F-004：仅命令路径 Phase 创建成功写入（脱敏 payload 恒为 {created:true}）。 */
 export { PHASE_CREATED_EVENT_TYPE };
 /** P03-1 / F-005：仅命令路径 Feature 计划导入成功写入（脱敏 payload 恒 {imported:true}）。 */
@@ -124,7 +128,9 @@ export const GIT_OPERATION_SETTLED_EVENT_TYPE = 'git.operation.settled';
 
 /** §9.2 P02-2 事件类型白名单（顺序即冻结顺序；白名单外不得出现在公开流中）。 */
 export const PUBLIC_STATE_EVENT_TYPES = [
+  ...PROJECT_PROFILE_AUDIT_TYPES,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
   SETTINGS_PROJECT_CREATED_EVENT_TYPE,
@@ -163,10 +169,12 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // P03-2 / F-006：执行输入制品组准备完成事件（聚合为目标 Task 自身；
   // payload 恒为 {prepared:true}，不携带制品正文/策略副本/执行语义）。
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
-  // P03-3 / F-005：执行 Run 派发事件（聚合为派发创建的 Run 自身；payload 恒为
+  // P03-3 / F-009：执行 Run 派发事件（聚合为派发创建的 Run 自身；payload 恒为
   // {dispatched:true}，不携带预算数值/计划正文/输入正文——派发不等于 Runtime
   // 已启动，不伪造执行进度）。
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+  // F-005：Run 纯标签编辑事件，payload 恒为 {labelsUpdated:true}。
+  EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE,
   // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
   // {revised:true}，不携带预算数值/理由正文/批准主体——审计细节在不可变修订行
   // 与回执；修订不自动启动或恢复 Run）。
@@ -200,7 +208,9 @@ export const PUBLIC_STATE_EVENT_TYPES = [
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
 
 type EventPayloadKind =
+  | 'projectProfile'
   | 'registered'
+  | 'repositoryRebound'
   | 'changedFields'
   | 'settingsSummary'
   | 'baselineAuthorized'
@@ -290,10 +300,19 @@ export interface StateEventTypeSpec {
 export const STATE_EVENT_TYPE_SPECS: Readonly<
   Record<PublicStateEventType, StateEventTypeSpec>
 > = Object.freeze({
+  'project_profile.confirmed': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
+  'project_profile.detected': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
+  'project_profile.modified': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
+  'project_profile.rejected': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
   [PROJECT_REGISTERED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'project',
     scopeKind: 'project',
     payloadKind: 'registered',
+  }),
+  [PROJECT_REPOSITORY_REBOUND_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'repositoryRebound',
   }),
   [PROJECT_METADATA_UPDATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'project',
@@ -432,6 +451,11 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'run',
     scopeKind: 'project',
     payloadKind: 'executionRunDispatched',
+  }),
+  [EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'run',
+    scopeKind: 'project',
+    payloadKind: 'planLabelsUpdated',
   }),
   [TASK_CLAIMED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskClaimed',
@@ -657,6 +681,31 @@ function validateChangedFieldsPayload(
   return { changedFields: [...seen] /* 保持输入顺序 */ };
 }
 
+function validateRepositoryReboundPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['rebound', 'previousBindingId', 'bindingId', 'previousBindingRevision', 'bindingRevision']);
+  if (payload.rebound !== true || typeof payload.previousBindingId !== 'string' || typeof payload.bindingId !== 'string'
+    || !Number.isSafeInteger(payload.previousBindingRevision) || !Number.isSafeInteger(payload.bindingRevision)
+    || (payload.previousBindingRevision as number) < 1 || (payload.bindingRevision as number) < 1) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  try {
+    validateStableId(payload.previousBindingId, { operation }, 'previousBindingId');
+    validateStableId(payload.bindingId, { operation }, 'bindingId');
+  } catch {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return {
+    rebound: true,
+    previousBindingId: payload.previousBindingId,
+    bindingId: payload.bindingId,
+    previousBindingRevision: payload.previousBindingRevision,
+    bindingRevision: payload.bindingRevision,
+  };
+}
+
 function validateRegisteredPayload(
   payload: Record<string, unknown>,
   operation: string,
@@ -827,17 +876,28 @@ function validateSettingsSummaryPayload(
   payload: Record<string, unknown>,
   operation: string,
 ): Record<string, unknown> {
-  exactPayloadKeys(operation, payload, ['schemaVersion', 'strategies', 'policies']);
+  exactPayloadKeys(operation, payload, ['schemaVersion', 'strategies', 'policies', 'resources']);
   if (payload.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
     corrupt(operation, 'event_payload_violation');
   }
   if (!validateSummaryNameList(payload.strategies) || !validateSummaryNameList(payload.policies)) {
     corrupt(operation, 'event_payload_violation');
   }
+  let resources: { count: number; digest: string } | undefined;
+  if (payload.resources !== undefined) {
+    const raw = payload.resources;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) corrupt(operation, 'event_payload_violation');
+    const item = raw as Record<string, unknown>;
+    exactPayloadKeys(operation, item, ['count', 'digest']);
+    if (typeof item.count !== 'number' || !Number.isSafeInteger(item.count) || item.count < 0 || item.count > 64
+      || typeof item.digest !== 'string' || !/^[a-f0-9]{64}$/.test(item.digest)) corrupt(operation, 'event_payload_violation');
+    resources = { count: item.count as number, digest: item.digest as string };
+  }
   return {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     strategies: [...(payload.strategies as string[])],
     policies: [...(payload.policies as string[])],
+    ...(resources === undefined ? {} : { resources }),
   };
 }
 
@@ -1046,6 +1106,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
   let payload: Record<string, unknown>;
   if (spec.payloadKind === 'registered') {
     payload = validateRegisteredPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'repositoryRebound') {
+    payload = validateRepositoryReboundPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseCreated') {
     payload = validatePhaseCreatedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseDelivery') {
@@ -1065,6 +1127,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     exactPayloadKeys(operation, row.payload, [key]);
     if (row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
     payload = { [key]: true };
+  } else if (spec.payloadKind === 'projectProfile') {
+    try { payload = { ...validateProfileAuditPayload(row.payload) }; }
+    catch { corrupt(operation, 'event_payload_violation'); }
+    if (row.eventType !== `project_profile.${payload.action}` || row.aggregateRevision !== payload.version) corrupt(operation, 'event_payload_violation');
   } else if (spec.payloadKind === 'featurePhaseMoved') {
     exactPayloadKeys(operation, row.payload, ['phaseMoved']);
     if (row.payload.phaseMoved !== true) corrupt(operation, 'event_payload_violation');

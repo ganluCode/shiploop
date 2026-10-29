@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-7-f005-resource-isolation.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-7-f005-mcp-faults.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-7-f005-process-recovery.test.ts", "all": true },
+      { "file": "test/modules/host/p06-7-f005-resource-authorization.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-3-f004-resource-binding.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-fake-server.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f006-mcp-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f001-mcp-startup-plan.test.ts", "cases": ["optional-transport-gap", "tool-name-collision", "fail-closed-boundary"] },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-stdio.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f003-mcp-tool-catalog.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f004-mcp-dispatch.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f005-mcp-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f008-pi-mcp-session.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f008-pi-mcp-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f008-pi-mcp-lifecycle.test.ts", "cases": ["runner-real-sigterm", "preflight-and-empty-selection", "tool-collisions", "attempt-input-pinned", "optional-unsupported"] },
+      { "file": "test/modules/host/p04-2-work-tools.test.ts", "cases": ["deny-management-and-owner-routes", "deny-live-authority", "auth-no-fallback", "restart-reissue"] },
+      { "file": "test/modules/authorization/p04-2-work-access.test.ts", "cases": ["bound-identity", "validity", "unknown-nested"] },
+      { "file": "test/modules/authorization/p04-2-work-resource-selection.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-2-access-integration.test.ts", "cases": ["sdk-explicit-resources"] },
+      { "file": "test/modules/onboarding/p02-3-skills.test.ts", "all": true }
+    ]
+  }]
+}

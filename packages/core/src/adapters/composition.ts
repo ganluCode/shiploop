@@ -41,6 +41,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
+import { createProjectResourceService } from '../application/project-resource-service.js';
+import { createLocalProjectResourceSources } from './fs/project-resource-sources.js';
+import type { ProjectResourceService, ProjectResourceCandidateSources } from '../application/project-resource-service.js';
+import { createLocalProjectResourceCandidateSourceReader } from './fs/project-resource-candidates.js';
 import type { ConfigurationService } from '../application/configuration-service.js';
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
@@ -60,18 +64,34 @@ import { createBaselineExecutionService } from '../application/baseline-executio
 import type { BaselineExecutionService } from '../application/baseline-execution.js';
 import { createBaselineQueryService } from '../application/baseline-query-service.js';
 import type { BaselineQueryService } from '../application/baseline-query-service.js';
+import { createBaselineComparisonService } from '../application/baseline-comparison-service.js';
+import type { BaselineComparisonService } from '../application/baseline-comparison-service.js';
 import { createBaselineService } from '../application/baseline-service.js';
 import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
+import { createProjectProfileService } from '../application/project-profile-service.js';
+import { createProjectProfileDetectionService } from '../application/project-profile-detection.js';
+import { createProjectProfileInspector } from './fs/project-profile-inspector.js';
+import type { ProjectProfileService } from '../application/project-profile-service.js';
+import { createRepositoryMoveService } from '../application/repository-move-service.js';
+import type { RepositoryMoveService } from '../application/repository-move-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
+import { createKnowledgeQueryService } from '../application/knowledge-query-service.js';
+import type { KnowledgeQueryService } from '../application/knowledge-query-service.js';
+import { createMemoryService } from '../application/memory-service.js';
+import type { MemoryService } from '../application/memory-service.js';
+import { createMemoryQueryService } from '../application/memory-query-service.js';
+import type { MemoryQueryService } from '../application/memory-query-service.js';
+import { createSqliteMemoryStore } from './sqlite/memory-store.js';
 import { createPlanningQueryService } from '../application/planning-query.js';
 import type { PlanningQueryService } from '../application/planning-query.js';
 import { createExecutionInputService } from '../application/execution-input.js';
+import { createExecutionKnowledgeReader } from '../application/execution-knowledge.js';
 import { createContextBuilder } from '../application/context-build.js';
 import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
@@ -191,6 +211,11 @@ import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
+import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
+import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
+import { createSqliteDocumentStore } from './sqlite/document-store.js';
+import { createDocumentService } from '../application/document-service.js';
+import type { DocumentService } from '../application/document-service.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
 import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
 import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
@@ -209,6 +234,10 @@ import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
 
 // F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
 export { createCommandProcessAdapter } from './process/command-process.js';
+export {
+  createLocalProjectResourceCandidateSourceReader,
+  createProjectResourceCandidateSourceReader,
+} from './fs/project-resource-candidates.js';
 
 const OPERATION = 'CoreApplication.open';
 
@@ -271,6 +300,8 @@ export interface CoreApplicationOptions {
    * （DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS + F-004/F-005 限制契约）。
    */
   readonly inputSourceRoots?: Readonly<Record<string, string>>;
+  /** Trusted project-scoped source directory; absent means no candidate may be imported. */
+  readonly projectResourceSources?: ProjectResourceCandidateSources;
   /** 状态库单次 busy 等待预算（毫秒）；默认沿用适配器有限预算。 */
   readonly busyTimeoutMs?: number;
   /** 状态库 busy 重试次数（含首次）；默认沿用适配器有限预算。 */
@@ -296,6 +327,8 @@ export interface CoreApplication {
   readonly gitPublicMetadataLock: GitPublicMetadataLock;
   readonly projectService: ProjectService;
   readonly configurationService: ConfigurationService;
+  /** P06-3：项目获准 Skills/MCP 资源配置的 CAS 与授权服务。 */
+  readonly projectResourceService: ProjectResourceService;
   /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
   readonly commandReceiptStore: CommandReceiptStore;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
@@ -338,6 +371,13 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /** P06-2：受信项目内文档登记/版本追加/受控读取服务。 */
+  readonly documentService: DocumentService;
+  /** F-003：项目隔离的有界文档关键词/身份检索与受控正文读取。 */
+  readonly knowledgeQueryService: KnowledgeQueryService;
+  /** F-004：受控候选写入、显式 accepted/revoked CAS 与项目内记忆检索。 */
+  readonly memoryService: MemoryService;
+  readonly memoryQueryService: MemoryQueryService;
   /** P05-6: generation is exposed only with trusted Batch/delivery facts. */
   readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
   /** P05-6: control and successor gating use the authoritative plan store. */
@@ -352,6 +392,10 @@ export interface CoreApplication {
   readonly planningQueryService: PlanningQueryService;
   /** P02-3 / F-004：静态 inspect 与注册/健康分离的 overview 用例（§7.2/§7.3）。 */
   readonly onboardingService: OnboardingService;
+  /** P06-1：项目画像确认/版本化/CAS/模块匹配应用服务。 */
+  readonly projectProfileService: ProjectProfileService;
+  /** P06-5：存量仓库移动预览与确认；确认由 Host 转为既有命令事务。 */
+  readonly repositoryMoveService: RepositoryMoveService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
@@ -367,6 +411,8 @@ export interface CoreApplication {
   readonly baselineService: BaselineService;
   /** F-012: explicit execution entry; Host routing is wired in F-014. */
   readonly baselineExecutionService: BaselineExecutionService;
+  /** F-007：历史/当前基线逐项只读诊断比较，不改变验收或基线事实。 */
+  readonly baselineComparisonService: BaselineComparisonService;
   /** P02-3 / F-014：baselines.list / baselines.get / artifacts.get 只读查询（§7.4-§7.6）。 */
   readonly baselineQueryService: BaselineQueryService;
   /** P03-5 / F-011：工作区资源门禁（P03-4 durable 工作资源 + 可信停止核验）。 */
@@ -414,6 +460,7 @@ const ALLOWED_OPTION_KEYS = [
   'repositoryInspectorOptions',
   'baselineEnvironmentDirectory',
   'inputSourceRoots',
+  'projectResourceSources',
   'busyTimeoutMs',
   'busyRetryAttempts',
 ] as const;
@@ -557,6 +604,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     );
   }
 
+  if (object.projectResourceSources !== undefined && (
+    object.projectResourceSources === null || typeof object.projectResourceSources !== 'object'
+    || typeof (object.projectResourceSources as ProjectResourceCandidateSources).getSource !== 'function'
+  )) throw validationError(context, 'projectResourceSources', 'Trusted project source directory required');
+
   const rootCandidate = resolveRootCandidate(object, context);
   ensureDataRootDirectory(rootCandidate);
 
@@ -594,6 +646,41 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // P03-5 / F-001：查询门面提前装配，PathService 的 Feature 归属核验与
     // QueryService 共用同一 PlanStore 读取面（createSqliteQueryStore）。
     const queryStore = createSqliteQueryStore(session);
+    const documentStore = createSqliteDocumentStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const documentService = createDocumentService({
+      documents: documentStore,
+      artifacts: artifactStore,
+      publisher: createArtifactPublisher({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxSizeBytes: 16_000_000, timeoutMs: 60_000 },
+      }),
+      verifier: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 16_000_000 },
+      }),
+      sources: createInputSourceFileReader({
+        roots: { ...(object.inputSourceRoots as Record<string, string> | undefined) },
+      }),
+    });
+    const knowledgeQueryService = createKnowledgeQueryService({
+      documents: documentStore,
+      documentQuery: queryStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+    });
+    const memoryStore = createSqliteMemoryStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const memoryQueryService = createMemoryQueryService({
+      memories: memoryStore,
+      memoryQuery: queryStore,
+      artifacts: artifactStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+    });
+    const memoryService = createMemoryService({
+      memories: memoryStore,
+      artifacts: artifactStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+    });
     const pathService = basePathService
       .withProjectLookup(stateStore)
       .withFeatureLookup(queryStore);
@@ -605,6 +692,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         : (object.repositoryInspector as unknown as RepositoryInspector);
     const projectService = createProjectService({ stateStore, repositoryInspector });
     const configurationService = createConfigurationService({ stateStore, capabilityCatalog });
+    const projectResourceStore = createSqliteProjectResourceStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
+    const projectResourceService = createProjectResourceService({
+      store: projectResourceStore,
+      sources: (object.projectResourceSources as ProjectResourceCandidateSources | undefined)
+        ?? createLocalProjectResourceSources(basePathService.dataRoot()),
+      sourceReader: createLocalProjectResourceCandidateSourceReader(),
+    });
     const commandReceiptStore = createSqliteCommandReceiptStore(
       session,
       nowUtcMs === undefined ? {} : { nowUtcMs },
@@ -615,13 +712,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
 
     // P02-3 / F-008：基线预览与明确授权用例（§6：规范 cwd、最小环境引用与
     // 代码身份绑定不可变检查输入；环境目录缺席 = 空目录 fail-closed）。
+    const baselineEnvironmentDirectory: BaselineEnvironmentDirectory =
+      object.baselineEnvironmentDirectory === undefined
+        ? { resolveEnvironmentRef: () => null }
+        : (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory);
+    const baselineWorkspaceReader = createBaselineWorkspaceReader();
     const baselineService = createBaselineService({
       repositoryInspector,
-      workspaceReader: createBaselineWorkspaceReader(),
-      environmentDirectory:
-        object.baselineEnvironmentDirectory === undefined
-          ? { resolveEnvironmentRef: () => null }
-          : (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory),
+      workspaceReader: baselineWorkspaceReader,
+      environmentDirectory: baselineEnvironmentDirectory,
       stateStore,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
@@ -632,8 +731,31 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // 正文复验；命令服务在同一装配内接线，最终重核/事件/回执在命令短写事务内）。
     // 获准源文件根白名单由可信装配注入（缺省空名单 fail-closed）；预算面使用
     // Core 冻结缺省（F-004 采集限制/F-005 组装预算/发布与复验限制同一契约）。
+    const projectProfileStore = createSqliteProjectProfileStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
+    const projectProfileService = createProjectProfileService({
+      store: projectProfileStore,
+      projectLookup: {
+        projectExists: projectId => session.database.prepare('SELECT 1 AS found FROM projects WHERE id = ?').get(projectId) !== undefined,
+      },
+    });
+    const projectProfileDetection = createProjectProfileDetectionService({
+      store: projectProfileStore,
+      inspector: createProjectProfileInspector(),
+      getBinding: projectId => stateStore.getRepositoryBinding(projectId),
+      bindingIsCurrent: binding => {
+        const row = session.database.prepare(`SELECT b.* FROM repository_bindings b
+          JOIN projects p ON p.repository_binding_id = b.id AND p.id = b.project_id
+          WHERE b.project_id = ?`).get(binding.projectId) as Record<string, unknown> | undefined;
+        return row !== undefined && row.id === binding.id && row.canonical_path === binding.canonicalPath
+          && row.revision === binding.revision && row.binding_revision === binding.bindingRevision
+          && row.repo_identity === binding.repoIdentity;
+      },
+    });
     const executionInputPrepare: ExecutionInputPreparePort = createExecutionInputPrepareService({
-      views: createSqlitePlanAccess(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inputs: createExecutionInputService({
         artifacts: artifactStore,
         publisher: createArtifactPublisher({
@@ -672,6 +794,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         limits: { maxReadBytes: 2_000_000 },
       }),
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      knowledge: createExecutionKnowledgeReader({
+        documents: documentStore,
+        documentQuery: queryStore,
+        memoryQuery: queryStore,
+        verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+      }),
       limits: DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
@@ -684,7 +812,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // 权限面沿用 P03-2 生产缺省空集边界宣告，运行时授权面随后续阶段引入时
     // 替换为真实权威读取并保持同一重核契约）。
     const executionPreview: ExecutionPreviewPort = createExecutionPreviewService({
-      views: createSqlitePlanAccess(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inspector: repositoryInspector,
       workspace: createBaselineWorkspaceReader(),
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
@@ -1057,7 +1185,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
-        configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
+        configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
@@ -1143,6 +1271,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       batchDelivery,
       featureDelivery,
       repositoryInspector,
+      projectProfileService,
+      projectResources: { service: projectResourceService, store: projectResourceStore },
+      projectProfileDetection,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
       baselineService,
@@ -1238,6 +1369,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       snapshots: queryStore,
       eventReads: queryStore,
       planReads: queryStore,
+      labelReads: queryStore,
       executionBudgetReads: queryStore,
       scheduleReads: queryStore,
       workspaceReads: queryStore,
@@ -1251,6 +1383,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionControlReads: queryStore,
       artifacts: artifactStore,
       artifactFiles: artifactFileStore,
+      capabilityCatalog,
       stateStore,
       configurationService,
       dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),
@@ -1273,7 +1406,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // not_run/no_baseline，不以注册成功或配置存在冒充健康通过）。
     const baselineStore = createSqliteBaselineStore(
       session,
-      nowUtcMs === undefined ? {} : { nowUtcMs },
+      {
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+        environmentDirectory: baselineEnvironmentDirectory,
+      },
     );
     const onboardingService = createOnboardingService({
       repositoryInspector,
@@ -1281,17 +1417,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       configurationService,
       bindingReads: queryStore,
       baselineReads: baselineStore,
+      workspaceReader: baselineWorkspaceReader,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
     const gitPublicMetadataLock = createGitPublicMetadataLock();
     const baselineExecutionService = createBaselineExecutionService({
       commands: commandService, atomicStore, baselines: baselineStore, state: stateStore,
-      inspector: repositoryInspector, workspace: createBaselineWorkspaceReader(),
+      inspector: repositoryInspector, workspace: baselineWorkspaceReader,
       processes: createCommandProcessAdapter(), artifacts: artifactStore, files: artifactFileStore,
       repositoryGuard: createBaselineRepositoryGuard({ lock: gitPublicMetadataLock }),
       recoverPartialOutput: createBaselinePartialOutputReader(basePathService.dataRoot()),
-      environmentDirectory: (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory | undefined) ?? { resolveEnvironmentRef: () => null },
+      environmentDirectory: baselineEnvironmentDirectory,
       resolveEnvironment: names => Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]!]])),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
@@ -1305,6 +1442,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       artifacts: artifactStore,
       files: artifactFileStore,
     });
+
+    const baselineComparisonService = createBaselineComparisonService({
+      baselines: baselineStore,
+      getBaseline: baselineQueryService.getBaseline,
+    });
+
+    const repositoryMoveService = createRepositoryMoveService({ stateStore, repositoryInspector });
 
     const application: CoreApplication = {
       createWorkToolChannel(authority) {
@@ -1328,6 +1472,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       gitPublicMetadataLock,
       projectService,
       configurationService,
+      projectResourceService,
       commandReceiptStore,
       commandReceiptsService,
       commandService,
@@ -1344,9 +1489,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       runtimeRecovery,
       runtimeRecoveryCatalog: recoveryCatalog,
       workRecoveryContinuation,
+      documentService,
       queryService,
+      knowledgeQueryService,
+      memoryService,
+      memoryQueryService,
       planningQueryService,
       onboardingService,
+      projectProfileService,
+      repositoryMoveService,
       baselineStore,
       verificationStore,
       verificationStops,
@@ -1355,6 +1506,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineService,
       baselineExecutionService,
       baselineQueryService,
+      baselineComparisonService,
       workResources,
       runtimeFallbackSwitch,
       workWorkspaceAuthority,

@@ -46,7 +46,12 @@ import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
-import { validateStableId } from './validation.js';
+import { validateStableId, validateSha256Digest, normalizeLabels } from './validation.js';
+import {
+  PROJECT_RESOURCE_COMMAND_OPERATIONS,
+  validateProjectResourceCommandPayload,
+  type ProjectResourceCommandOperation,
+} from './project-resource-commands.js';
 
 /* ------------------------------------------------------------------ *
  * 版本与路由级操作身份
@@ -154,7 +159,13 @@ export const COMMAND_OPERATIONS = [
   // 不启动 Runtime/Attempt，不增额或新建授权 Batch）。
   'execution.retryFinal',
   'project.register',
+  'project.repository.rebind',
   'project.metadata.update',
+  // P06-1 / F-005：画像写操作共享 project metadata 授权与 Profile version CAS。
+  'project.profile.confirm',
+  'project.profile.detect',
+  'project.profile.modify',
+  'project.profile.reject',
   'settings.global.create',
   'settings.global.update',
   'settings.project.create',
@@ -192,6 +203,9 @@ export const COMMAND_OPERATIONS = [
   // 信封 expectedRevision 为目标 Task 自身 revision，同一写事务内重核活动
   // 执行输入保护与能力兼容性）。
   'task.strategy.update',
+  // P06-6 / F-002：预览摘要确认的批量策略重应用；CAS 事实在 payload 内
+  // 携带，事务内再次重核，不借用单 Task 的 expectedRevision。
+  'task.strategy.reapply',
   // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；
   // 信封 expectedRevision 为 Feature 聚合 revision，同一写事务内记录决策、
   // 更新 planStatus、事件与回执；批准不是启动授权）。
@@ -249,6 +263,8 @@ export const COMMAND_OPERATIONS = [
   // completed 回执携带预览；复用 workspace.discard 能力位，信封层只要求
   // JSON 对象 payload，{featureId} 深校验在应用层）。
   'workspace.discard.preview',
+  // P06-3 / F-005：项目资源只允许经专用命令边界进行 CAS 变更；不复用 settings 写入。
+  ...PROJECT_RESOURCE_COMMAND_OPERATIONS,
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -272,11 +288,18 @@ export interface CommandOperationSpec {
 export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOperationSpec>> =
   Object.freeze({
     'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
+    'project.repository.rebind': {
+      scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write',
+    },
     'project.metadata.update': {
       scopeKind: 'project',
       mutation: 'update',
       capability: 'project.metadata.write',
     },
+    'project.profile.confirm': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+    'project.profile.detect': { scopeKind: 'project', mutation: 'create', capability: 'project.metadata.write' },
+    'project.profile.modify': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+    'project.profile.reject': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
     'settings.global.create': {
       scopeKind: 'global',
       mutation: 'create',
@@ -345,6 +368,11 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'task.strategy.update': {
       scopeKind: 'project',
       mutation: 'update',
+      capability: 'task.strategy.write',
+    },
+    'task.strategy.reapply': {
+      scopeKind: 'project',
+      mutation: 'create',
       capability: 'task.strategy.write',
     },
     // P03-4 / F-005：只加人工阻塞；expectedRevision 指向 Task 自身。
@@ -432,6 +460,10 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'create',
       capability: 'workspace.discard',
     },
+    'project.resource.import': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    'project.resource.enable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    'project.resource.disable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    'project.resource.revoke': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -674,6 +706,14 @@ function exactKeys(
  * displayName/description/labels 规范化；repositoryPath 在本层只做字符串类型
  * 把关，绝对路径/存在性/仓库形态由 RepositoryInspector 在写事务之外只读检查。
  */
+export interface ValidatedRepositoryRebindPayload {
+  readonly canonicalPath: string;
+  readonly gitCommonDir: string | null;
+  readonly repoIdentity: string;
+  readonly expectedBindingRevision?: number;
+  readonly expectedBindingId?: string;
+}
+
 export interface ValidatedProjectRegisterPayload {
   readonly repositoryPath: string;
   readonly displayName: string;
@@ -746,6 +786,16 @@ export interface ValidatedFeaturePlanRevisePayload {
 export interface ValidatedTaskStrategyUpdatePayload {
   readonly taskId: string;
   readonly executionConfig: Record<string, unknown>;
+}
+
+/** F-002：显式确认绑定的只读预览身份与每个目标 Task 的 CAS revision。 */
+export interface ValidatedTaskStrategyReapplicationPayload {
+  readonly confirmed: true;
+  readonly previewDigest: string;
+  readonly globalSettingsRevision: number | null;
+  readonly projectSettingsRevision: number | null;
+  readonly selectedTaskIds: readonly string[];
+  readonly expectedTaskRevisions: readonly { readonly taskId: string; readonly revision: number }[];
 }
 
 export interface ValidatedTaskApprovalBlockPayload {
@@ -822,6 +872,8 @@ export interface ValidatedExecutionInputPreparePayload {
   readonly taskId: string;
   /** 必需输入采集清单（可为空数组；逐项深校验在应用层）。 */
   readonly items: readonly Record<string, unknown>[];
+  /** P06-2：受控知识选择描述；正文、hash、项目身份由 Core 读取端口解析。 */
+  readonly knowledge?: readonly Record<string, unknown>[];
 }
 
 /**
@@ -854,6 +906,7 @@ export type ValidatedExecutionStartPayload =
       readonly featureIds: readonly string[];
       readonly budget: Record<string, unknown>;
       readonly previewDigest: string;
+      readonly labels?: readonly string[];
       readonly retryBatchId: null;
     }
   | {
@@ -956,10 +1009,28 @@ export type ValidatedCommandEnvelope =
       readonly payload: ValidatedProjectRegisterPayload;
     })
   | (EnvelopeCommon & {
+      readonly operation: 'project.repository.rebind';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedRepositoryRebindPayload;
+    })
+  | (EnvelopeCommon & {
       readonly operation: 'project.metadata.update';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedProjectMetadataPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'project.profile.detect';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: Record<string, never>;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'project.profile.confirm' | 'project.profile.modify' | 'project.profile.reject';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: { readonly profile?: unknown };
     })
   | (EnvelopeCommon & {
       readonly operation: 'settings.global.create';
@@ -1100,6 +1171,12 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskStrategyUpdatePayload;
     })
+  | (EnvelopeCommon & {
+      readonly operation: 'task.strategy.reapply';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedTaskStrategyReapplicationPayload;
+    })
   // P03-4 / F-005：人工阻塞命令（expectedRevision=目标 Task revision）。
   | (EnvelopeCommon & {
       readonly operation: 'task.approval.block';
@@ -1206,6 +1283,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: Readonly<Record<string, unknown>>;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: ProjectResourceCommandOperation;
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: import('./project-resource-commands.js').ProjectResourceCommandPayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -1226,13 +1309,18 @@ const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
 const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
+const TASK_STRATEGY_REAPPLICATION_PAYLOAD_KEYS = [
+  'confirmed', 'previewDigest', 'globalSettingsRevision', 'projectSettingsRevision',
+  'selectedTaskIds', 'expectedTaskRevisions',
+] as const;
+
 const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
 const TASK_APPROVAL_DECISION_PAYLOAD_KEYS = ['taskId', 'itemId', 'planDigest', 'codeDigest', 'artifactRefs', 'reason'] as const;
 const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verificationBatchId', 'codeDigest', 'observationDigest'] as const;
 const INTEGRATION_START_PAYLOAD_KEYS = ['featureId', 'runId', 'batchId', 'operationId', 'inputDigest'] as const;
 
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
-const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
+const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items', 'knowledge'] as const;
 const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'phaseId', 'budget'] as const;
 /** 执行预览范围的形态上限（防无界数组；本阶段业务上限固定单成员）。 */
 export const EXECUTION_PREVIEW_FEATURE_IDS_MAX = 16;
@@ -1327,6 +1415,21 @@ function validateTiming(
   return { issuedAt, expiresAt };
 }
 
+function validateRepositoryRebindPayload(operation: AppOperation, raw: unknown): ValidatedRepositoryRebindPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, ['canonicalPath', 'gitCommonDir', 'repoIdentity', 'expectedBindingRevision', 'expectedBindingId'], 'payload.');
+  if (typeof object.canonicalPath !== 'string' || !object.canonicalPath.startsWith('/')
+    || object.canonicalPath.includes('\0')) fail(operation, 'invalid_input', 'payload.canonicalPath', '必须是绝对规范路径');
+  if (object.gitCommonDir !== null && object.gitCommonDir !== undefined
+    && (typeof object.gitCommonDir !== 'string' || !object.gitCommonDir.startsWith('/'))) fail(operation, 'invalid_input', 'payload.gitCommonDir', '必须是绝对路径或 null');
+  if (typeof object.repoIdentity !== 'string' || object.repoIdentity.length === 0) fail(operation, 'invalid_input', 'payload.repoIdentity', '不能为空');
+  const bindingRevision = object.expectedBindingRevision;
+  if (bindingRevision !== undefined && (typeof bindingRevision !== 'number' || !Number.isSafeInteger(bindingRevision) || bindingRevision < 1)) fail(operation, 'invalid_input', 'payload.expectedBindingRevision', '必须是正整数');
+  if (object.expectedBindingId !== undefined) validateStableId(object.expectedBindingId, { operation }, 'payload.expectedBindingId');
+  return { canonicalPath: object.canonicalPath, gitCommonDir: object.gitCommonDir === undefined ? null : object.gitCommonDir,
+    repoIdentity: object.repoIdentity, ...(object.expectedBindingRevision === undefined ? {} : { expectedBindingRevision: object.expectedBindingRevision as number }),
+    ...(object.expectedBindingId === undefined ? {} : { expectedBindingId: object.expectedBindingId as string }) };
+}
 function validateRegisterPayload(operation: AppOperation, raw: unknown): ValidatedProjectRegisterPayload {
   const object = requireObject(operation, raw, 'payload');
   exactKeys(operation, object, REGISTER_PAYLOAD_KEYS, 'payload.');
@@ -1575,6 +1678,61 @@ function validateTaskVerificationContinuePayload(operation: AppOperation, raw: u
     observationDigest: digest('observationDigest'),
   };
 }
+function validateTaskStrategyReapplicationPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedTaskStrategyReapplicationPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, TASK_STRATEGY_REAPPLICATION_PAYLOAD_KEYS, 'payload.');
+  if (object.confirmed !== true) {
+    fail(operation, 'invalid_input', 'payload.confirmed', '必须明确确认 true');
+  }
+  const previewDigest = validateSha256Digest(object.previewDigest, { operation }, 'payload.previewDigest');
+  const revision = (value: unknown, field: string): number | null => {
+    if (value === null) return null;
+    if (!Number.isSafeInteger(value) || (value as number) < 1) {
+      fail(operation, 'invalid_input', field, '必须是正整数或 null', value);
+    }
+    return value as number;
+  };
+  const globalSettingsRevision = revision(object.globalSettingsRevision, 'payload.globalSettingsRevision');
+  const projectSettingsRevision = revision(object.projectSettingsRevision, 'payload.projectSettingsRevision');
+  if (!Array.isArray(object.selectedTaskIds) || object.selectedTaskIds.length === 0) {
+    fail(operation, 'invalid_input', 'payload.selectedTaskIds', '必须是非空 Task ID 数组');
+  }
+  const selectedTaskIds = (object.selectedTaskIds as unknown[]).map((value, index) =>
+    validateStableId(value, { operation }, `payload.selectedTaskIds[${index}]`));
+  if (new Set(selectedTaskIds).size !== selectedTaskIds.length) {
+    fail(operation, 'invalid_input', 'payload.selectedTaskIds', 'Task ID 不得重复');
+  }
+  if (!Array.isArray(object.expectedTaskRevisions)
+    || object.expectedTaskRevisions.length !== selectedTaskIds.length) {
+    fail(operation, 'invalid_input', 'payload.expectedTaskRevisions', '必须为每个选中 Task 提供 revision');
+  }
+  const expectedTaskRevisions = (object.expectedTaskRevisions as unknown[]).map((value, index) => {
+    const entry = requireObject(operation, value, `payload.expectedTaskRevisions[${index}]`);
+    exactKeys(operation, entry, ['taskId', 'revision'], `payload.expectedTaskRevisions[${index}].`);
+    const taskId = validateStableId(entry.taskId, { operation }, `payload.expectedTaskRevisions[${index}].taskId`);
+    if (!Number.isSafeInteger(entry.revision) || (entry.revision as number) < 1) {
+      fail(operation, 'invalid_input', `payload.expectedTaskRevisions[${index}].revision`, '必须是正整数');
+    }
+    return { taskId, revision: entry.revision as number };
+  });
+  if (new Set(expectedTaskRevisions.map(entry => entry.taskId)).size !== expectedTaskRevisions.length
+    || new Set(expectedTaskRevisions.map(entry => entry.taskId)).size !== new Set(selectedTaskIds).size
+    || expectedTaskRevisions.some(entry => !selectedTaskIds.includes(entry.taskId))) {
+    fail(operation, 'invalid_input', 'payload.expectedTaskRevisions', '必须精确覆盖 selectedTaskIds');
+  }
+  return {
+    confirmed: true,
+    previewDigest,
+    globalSettingsRevision,
+    projectSettingsRevision,
+    selectedTaskIds: [...selectedTaskIds].sort(),
+    expectedTaskRevisions: expectedTaskRevisions.sort((a, b) => a.taskId.localeCompare(b.taskId)),
+  };
+}
+
 function validateTaskStrategyUpdatePayload(
   operation: AppOperation,
   raw: unknown,
@@ -1680,7 +1838,7 @@ function validateExecutionInputPreparePayload(
   raw: unknown,
 ): ValidatedExecutionInputPreparePayload {
   const object = requireObject(operation, raw, 'payload');
-  // 严格未知键拒绝：只接受准备面（featureId/taskId/items）；创建类命令不携带
+  // 严格未知键拒绝：只接受准备面（featureId/taskId/items/knowledge）；创建类命令不携带
   // expectedRevision；snapshot/manifest/prompt/permissions/approval 等服务端
   // 决定字段一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
   exactKeys(operation, object, EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS, 'payload.');
@@ -1693,10 +1851,22 @@ function validateExecutionInputPreparePayload(
     }
   }
   try {
+    const knowledge = object.knowledge;
+    if (knowledge !== undefined) {
+      if (!Array.isArray(knowledge)) {
+        fail(operation, 'invalid_input', 'payload.knowledge', '必须是受控知识选择描述数组', knowledge);
+      }
+      for (const [index, item] of (knowledge as unknown[]).entries()) {
+        if (!isPlainObjectPayload(item)) {
+          fail(operation, 'invalid_input', `payload.knowledge[${index}]`, '必须是 JSON 对象', item);
+        }
+      }
+    }
     return {
       featureId: validateStableId(object.featureId, { operation }, 'payload.featureId'),
       taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'),
       items: object.items as Record<string, unknown>[],
+      ...(knowledge === undefined ? {} : { knowledge: knowledge as Record<string, unknown>[] }),
     };
   } catch (error) {
     if (isStorageError(error, 'validation')) {
@@ -1786,7 +1956,7 @@ function validateExecutionPreviewPayload(
   return { featureIds, phaseId: null, budget: object.budget as Record<string, unknown> };
 }
 
-const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'retryBatchId'] as const;
+const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'labels', 'retryBatchId'] as const;
 const EXECUTION_BUDGET_REVISE_PAYLOAD_KEYS = ['batchId', 'budget', 'reason'] as const;
 
 /** previewDigest 形态：64 位小写十六进制 SHA-256（与预览结果同一摘要形态）。 */
@@ -1847,6 +2017,7 @@ function validateExecutionStartPayload(
     featureIds: scopeIds.featureIds,
     budget: scopeIds.budget,
     previewDigest,
+    labels: normalizeLabels(object.labels, { operation, entity: { type: 'run' } }, 'payload.labels'),
     retryBatchId: null,
   };
 }
@@ -2020,8 +2191,9 @@ export function validateCommandEnvelopeFields(
       fail(operation, 'invalid_input', 'expectedRevision', '更新类命令必须提供 ≥1 的整数 CAS 期望修订号');
     }
     const revision = object.expectedRevision;
-    if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 1) {
-      fail(operation, 'invalid_input', 'expectedRevision', '必须是 ≥1 的整数（CAS 期望修订号）', revision);
+    if (typeof revision !== 'number' || !Number.isInteger(revision)
+      || revision < (PROJECT_RESOURCE_COMMAND_OPERATIONS.includes(operationName as ProjectResourceCommandOperation) ? 0 : 1)) {
+      fail(operation, 'invalid_input', 'expectedRevision', '必须是非负整数（CAS 期望修订号）', revision);
     }
     expectedRevision = revision;
   } else if (hasRevision && object.expectedRevision !== undefined) {
@@ -2053,6 +2225,29 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   const operation = operationName as AppOperation;
   const object = { payload: header.payload };
 
+  if (operation === 'project.profile.detect') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是对象');
+    exactKeys(operation, object.payload, [], 'payload.');
+    return { ...base, operation, scope, expectedRevision: null, payload: {} };
+  }
+
+  if (operation === 'project.profile.confirm' || operation === 'project.profile.modify' || operation === 'project.profile.reject') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是对象');
+    const payload = object.payload as Record<string, unknown>;
+    exactKeys(operation, payload, operation === 'project.profile.reject' ? [] : ['profile'], 'payload.');
+    if (operation !== 'project.profile.reject' && !Object.hasOwn(payload, 'profile')) {
+      fail(operation, 'invalid_input', 'payload.profile', '确认或修改必须提供 Profile');
+    }
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+      payload: operation === 'project.profile.reject' ? {} : { profile: payload.profile } };
+  }
+  if (operation === 'project.repository.rebind') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+      payload: validateRepositoryRebindPayload(operation, object.payload) };
+  }
   if (operation === 'project.register') {
     return {
       ...base,
@@ -2176,6 +2371,20 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: expectedRevision as number,
       payload: validateTaskStrategyUpdatePayload(operation, object.payload),
     };
+  }
+  if (operation === 'task.strategy.reapply') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    try {
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: validateTaskStrategyReapplicationPayload(operation, object.payload),
+      };
+    } catch (error) {
+      throw mapToPublicError(error, { operation });
+    }
   }
   if (operation === 'planning.candidate.decide') {
     if (scope.kind !== 'project') {
@@ -2398,6 +2607,17 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: normalizeBaselinePayload(object.payload) as Record<string, unknown>,
     };
+  }
+  if (operation === 'project.resource.import' || operation === 'project.resource.enable'
+    || operation === 'project.resource.disable' || operation === 'project.resource.revoke') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateProjectResourceCommandPayload(operation as ProjectResourceCommandOperation, object.payload),
+    } as ValidatedCommandEnvelope;
   }
   // settings.project.create / settings.project.update
   if (scope.kind !== 'project') {

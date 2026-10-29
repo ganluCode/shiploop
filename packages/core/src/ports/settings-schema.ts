@@ -11,7 +11,7 @@
  * v1 payload 一律拒绝（读取持久数据时为 corrupt），旧版本不被静默误读。
  *
  * 范围边界（本阶段明确不做）：
- * - 顶层仅允许 schemaVersion/strategies/policies，未知键一律拒绝，
+ * - 顶层仅允许 schemaVersion/strategies/policies/projectResources，未知键一律拒绝，
  *   任意 JSON 不能冒充可执行配置；
  * - 完整策略条目（RuntimeStrategy）必须同时具备 runtime/provider/model，
  *   缺字段即报错，不从其他条目补全（设计 06 §3）；
@@ -24,6 +24,7 @@
  *   ports/runtime-capabilities.ts（可信装配注入的窄能力描述，应用层组合）。
  */
 import { StorageError } from './errors.js';
+import { validateProjectResourceSettings, type ProjectResourceSettings } from './project-resource-store.js';
 import {
   TASK_MAX_CODE_ATTEMPTS_MAX,
   TASK_MAX_CODE_ATTEMPTS_MIN,
@@ -193,6 +194,8 @@ export interface SettingsPayloadV2 {
   readonly schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
   readonly strategies?: ProjectStrategiesV1;
   readonly policies?: SettingsPoliciesV2;
+  /** Project-only, Core-managed resource section. Generic settings writes cannot supply it. */
+  readonly projectResources?: ProjectResourceSettings;
 }
 
 /** 当前唯一支持的 payload 形态；未来版本以判别联合扩展。 */
@@ -206,7 +209,7 @@ export type SettingsScope =
   | { readonly kind: 'global' }
   | { readonly kind: 'project'; readonly projectId: string };
 
-const PAYLOAD_KEYS = ['schemaVersion', 'strategies', 'policies'] as const;
+const PAYLOAD_KEYS = ['schemaVersion', 'strategies', 'policies', 'projectResources'] as const;
 const STRATEGIES_KEYS = ['defaultStrategy', 'modelMap', 'purposeStrategies', 'agentOverrides'] as const;
 const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'endpointRef'] as const;
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
@@ -581,6 +584,7 @@ export function validateSettingsPayload(value: unknown, context: ValidationConte
     schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
     strategies?: ProjectStrategiesV1;
     policies?: SettingsPoliciesV2;
+    projectResources?: ProjectResourceSettings;
   } = {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
   };
@@ -589,6 +593,13 @@ export function validateSettingsPayload(value: unknown, context: ValidationConte
   }
   if (object.policies !== undefined) {
     result.policies = validateSettingsPolicies(object.policies, context, 'payload.policies');
+  }
+  if (object.projectResources !== undefined) {
+    result.projectResources = validateProjectResourceSettings(object.projectResources, context);
+    if (context.entity?.type === 'global_settings'
+      || (context.entity?.projectId !== undefined && context.entity.projectId !== result.projectResources.projectId)) {
+      throw validationError(context, 'payload.projectResources', 'Resources require the same project scope');
+    }
   }
   return result;
 }

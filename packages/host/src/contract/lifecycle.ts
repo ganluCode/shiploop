@@ -57,7 +57,14 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-9 / F-010：finalization-only retryFinal 经同一通用命令路由接线。
   'execution.retryFinal',
   'project.register',
+  // P06-5：确认由 Host 输入转换为 Core 的既有 rebind 命令事务。
+  'repository.move.confirm',
+  'project.repository.rebind',
   'project.metadata.update',
+  'project.profile.confirm',
+  'project.profile.detect',
+  'project.profile.modify',
+  'project.profile.reject',
   'settings.global.create',
   'settings.global.update',
   'settings.project.create',
@@ -91,6 +98,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 POST /v1/commands 通用路由
   // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'task.strategy.update',
+  'task.strategy.reapply',
   // P03-2 / F-002：计划批准/拒绝决策经既有 POST /v1/commands 通用路由接线
   //（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'feature.plan.decide',
@@ -128,6 +136,10 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // 通道；HostClient/CLI 入口属 F-012）。
   'workspace.discard',
   'workspace.discard.preview',
+  'project.resource.import',
+  'project.resource.enable',
+  'project.resource.disable',
+  'project.resource.revoke',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
@@ -144,6 +156,8 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'projects.labelCounts',
   'projects.inspect',
   'projects.overview',
+  'projects.profile.get',
+  'projects.profile.match',
   'settings.global.get',
   'settings.global.export',
   'settings.project.get',
@@ -166,6 +180,11 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数只读查询真实接线（能力位
+  // 复用 project.read；与 Core runs.list / labels.counts 同步，不漂移）。
+  'runs.list',
+  'labels.counts',
+  'task.strategy.reapply.preview',
   // P03-2 / F-007：Feature 审批决策查询（能力位复用 project.read；与 Core
   // PLAN_APPROVAL_QUERY_OPERATION 同步，不漂移）。
   'features.approvals',
@@ -217,6 +236,11 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'planning.contexts.list',
   'planning.context.get',
   'planning.candidate.get',
+  'project.resources.list',
+  'project.resources.candidates',
+  'project.resources.preview',
+  'project.resources.sources.configure',
+  'repository.move.preview',
 ] as const;
 
 /**
@@ -260,11 +284,15 @@ export const FEATURE_DELIVERY_COMMAND_CAPABILITIES = ['feature.verification.cont
 
 /** Additive v5 capability pair: production defaults stay honest without adapters. */
 export const BATCH_DELIVERY_COMMAND_CAPABILITIES = ['execution.batch.finalize', 'phase.delivery.approve'] as const;
-export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false): HostCapabilities {
-  if (!available && !batchDeliveryAvailable && !batchQueryAvailable) return CURRENT_HOST_CAPABILITIES;
+/** Host capability names stay local to the independent lifecycle contract. */
+export const KNOWLEDGE_QUERY_CAPABILITIES = ['knowledge.search', 'knowledge.read', 'memory.search'] as const;
+type KnowledgeQueryCapability = typeof KNOWLEDGE_QUERY_CAPABILITIES[number];
+
+export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false, knowledgeQueries: readonly KnowledgeQueryCapability[] = []): HostCapabilities {
+  if (!available && !batchDeliveryAvailable && !batchQueryAvailable && knowledgeQueries.length === 0) return CURRENT_HOST_CAPABILITIES;
   return deepFreeze({ ...CURRENT_HOST_CAPABILITIES, application: {
     ...CURRENT_HOST_CAPABILITIES.application,
-    queries: APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'),
+    queries: [...APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'), ...KNOWLEDGE_QUERY_CAPABILITIES.filter(query => knowledgeQueries.includes(query))],
     commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
       (available || !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)) &&
       (batchDeliveryAvailable || !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command))),

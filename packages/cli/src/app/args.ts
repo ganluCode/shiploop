@@ -5,7 +5,7 @@
  * - 同步纯函数：不读 process.argv / process.env（env/cwd 必须显式注入）、不读
  *   文件、不发现 Host、不访问网络、不启动进程、不生成 commandId；解析失败
  *   即 AppCliParseError，调用方保证解析成功前不做任何 I/O；
- * - 只识别契约白名单的 project/config/receipt/events/baseline 命令，不新增
+ * - 只识别契约白名单的 project/config/receipt/events/knowledge/baseline 命令，不新增
  *   Run/Work、模型、Profile、Skills 参数（未知即 unknown_argument）；P02-3
  *   （F-005）按契约 §12.1 增补 project init/overview 子命令；F-015 按契约
  *   §12.1/§12.2 增补 baseline preview/run/list/status/cancel/evidence 子命令；
@@ -40,6 +40,7 @@ export const APP_CLI_COMMANDS = [
   'config',
   'receipt',
   'events',
+  'knowledge',
   'baseline',
   'phase',
   'feature',
@@ -54,8 +55,25 @@ export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
 export type AppCliCommandId =
+  | 'project.resource-source-register'
+  | 'project.resource-source-remove'
+  | 'project.resource-list'
+  | 'project.resource-discover'
+  | 'project.resource-preview'
+  | 'project.resource-import'
+  | 'project.resource-enable'
+  | 'project.resource-disable'
+  | 'project.resource-revoke'
   | 'project.init'
   | 'project.overview'
+  | 'project.repository-move-preview'
+  | 'project.repository-move-confirm'
+  | 'project.profile-get'
+  | 'project.profile-detect'
+  | 'project.profile-match'
+  | 'project.profile-confirm'
+  | 'project.profile-modify'
+  | 'project.profile-reject'
   | 'project.register'
   | 'project.list'
   | 'project.get'
@@ -68,10 +86,13 @@ export type AppCliCommandId =
   | 'config.export'
   | 'receipt.get'
   | 'events.observe'
+  | 'knowledge.search'
+  | 'knowledge.read'
   | 'baseline.preview'
   | 'baseline.run'
   | 'baseline.list'
   | 'baseline.status'
+  | 'baseline.compare'
   | 'baseline.cancel'
   | 'baseline.evidence'
   | 'phase.create'
@@ -101,6 +122,8 @@ export type AppCliCommandId =
   | 'task.get'
   | 'task.labels'
   | 'task.strategy'
+  | 'task.strategy-reapply-preview'
+  | 'task.strategy-reapply'
   | 'task.prepare'
   | 'task.inputs'
   | 'task.status'
@@ -124,6 +147,7 @@ export type AppCliCommandId =
   | 'execution.finalize'
   | 'execution.schedule'
   | 'execution.attempts'
+  | 'execution.runs'
   | 'execution.diagnostics'
   | 'execution.dispatch'
   | 'execution.resources'
@@ -152,8 +176,25 @@ export type AppCliCommandId =
   | 'integration.plan';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
+  'project.resource-source-register',
+  'project.resource-source-remove',
+  'project.resource-list',
+  'project.resource-discover',
+  'project.resource-preview',
+  'project.resource-import',
+  'project.resource-enable',
+  'project.resource-disable',
+  'project.resource-revoke',
   'project.init',
   'project.overview',
+  'project.repository-move-preview',
+  'project.repository-move-confirm',
+  'project.profile-get',
+  'project.profile-detect',
+  'project.profile-match',
+  'project.profile-confirm',
+  'project.profile-modify',
+  'project.profile-reject',
   'project.register',
   'project.list',
   'project.get',
@@ -166,10 +207,13 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'config.export',
   'receipt.get',
   'events.observe',
+  'knowledge.search',
+  'knowledge.read',
   'baseline.preview',
   'baseline.run',
   'baseline.list',
   'baseline.status',
+  'baseline.compare',
   'baseline.cancel',
   'baseline.evidence',
   'phase.create',
@@ -199,6 +243,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'task.get',
   'task.labels',
   'task.strategy',
+  'task.strategy-reapply-preview',
+  'task.strategy-reapply',
   'task.prepare',
   'task.inputs',
   'task.status',
@@ -222,6 +268,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.finalize',
   'execution.schedule',
   'execution.attempts',
+  'execution.runs',
   'execution.diagnostics',
   'execution.dispatch',
   'execution.resources',
@@ -299,6 +346,8 @@ export type AppCliParseReason =
   | 'listen_override_argument_rejected'
   | 'listen_override_env_rejected'
   | 'invalid_project_id'
+  | 'invalid_version'
+  | 'invalid_knowledge_query'
   | 'invalid_revision'
   | 'invalid_limit'
   | 'invalid_match'
@@ -355,6 +404,7 @@ export type AppCliParseReason =
   | 'invalid_attempt_id'
   | 'invalid_session_id'
   | 'invalid_record_type'
+  | 'invalid_entity'
   | 'concurrency_not_supported'
   | 'confirmation_required'
   | 'invalid_preview_file'
@@ -367,8 +417,8 @@ export type AppCliParseReason =
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/knowledge/baseline/phase/feature/task/planning/execution',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/knowledge/baseline/phase/feature/task/planning/execution',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -386,9 +436,12 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   listen_override_argument_rejected: '拒绝监听地址覆盖参数：Host 只监听 127.0.0.1',
   listen_override_env_rejected: '拒绝监听地址覆盖环境变量：Host 只监听 127.0.0.1',
   invalid_project_id: 'projectId 必须是 UUID v4',
+  invalid_version: 'version 必须是 ≥ 1 的整数',
+  invalid_knowledge_query: '知识查询条件不能为空，必须提供非空关键词、文档 ID、标题或路径',
   invalid_revision: 'revision 必须是 ≥ 1 的整数',
   invalid_limit: 'limit 必须是 1..200 的整数',
   invalid_match: 'match 只能是 any 或 all',
+  invalid_entity: 'entity 只能是 phase、feature、task 或 run',
   invalid_cursor: 'cursor 必须是非空字符串',
   invalid_command_id: 'commandId 必须是 UUID v4',
   invalid_input_file: 'input 必须是非空文件路径',
@@ -503,6 +556,15 @@ interface AppCommandSpec {
 }
 
 const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
+  'project.resource-list': { command: 'project', commandId: 'project.resource-list', valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-discover': { command: 'project', commandId: 'project.resource-discover', valueFlags: ['--project', '--source'], boolFlags: [], repeatableFlags: ['--source'], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-source-register': { command: 'project', commandId: 'project.resource-source-register', valueFlags: ['--project', '--source', '--manifest-file', '--revision'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-source-remove': { command: 'project', commandId: 'project.resource-source-remove', valueFlags: ['--project', '--source', '--revision'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-preview': { command: 'project', commandId: 'project.resource-preview', valueFlags: ['--project', '--source', '--selected'], boolFlags: [], repeatableFlags: ['--source', '--selected'], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-import': { command: 'project', commandId: 'project.resource-import', valueFlags: ['--project', '--source', '--source-digest', '--candidate', '--candidate-digest', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-enable': { command: 'project', commandId: 'project.resource-enable', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-disable': { command: 'project', commandId: 'project.resource-disable', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-revoke': { command: 'project', commandId: 'project.resource-revoke', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'project.init': {
     command: 'project',
     commandId: 'project.init',
@@ -516,10 +578,90 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.overview': {
     command: 'project',
     commandId: 'project.overview',
-    valueFlags: [],
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.repository-move-preview': {
+    command: 'project',
+    commandId: 'project.repository-move-preview',
+    valueFlags: ['--project'],
     boolFlags: [],
     repeatableFlags: [],
     minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['repositoryPath'],
+  },
+  'project.repository-move-confirm': {
+    command: 'project',
+    commandId: 'project.repository-move-confirm',
+    valueFlags: ['--project', '--preview-file', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['repositoryPath'],
+  },
+  'project.profile-detect': {
+    command: 'project',
+    commandId: 'project.profile-detect',
+    valueFlags: ['--project', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-get': {
+    command: 'project',
+    commandId: 'project.profile-get',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-match': {
+    command: 'project',
+    commandId: 'project.profile-match',
+    valueFlags: ['--project', '--directory', '--required-module', '--language', '--framework', '--scope'],
+    boolFlags: [],
+    repeatableFlags: ['--required-module', '--language', '--framework', '--scope'],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-confirm': {
+    command: 'project',
+    commandId: 'project.profile-confirm',
+    valueFlags: ['--project', '--revision', '--input', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-modify': {
+    command: 'project',
+    commandId: 'project.profile-modify',
+    valueFlags: ['--project', '--revision', '--input', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-reject': {
+    command: 'project',
+    commandId: 'project.profile-reject',
+    valueFlags: ['--project', '--revision', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
     maxPositionals: 1,
     positionalFields: ['projectId'],
   },
@@ -566,9 +708,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.labels': {
     command: 'project',
     commandId: 'project.labels',
-    valueFlags: [],
+    valueFlags: ['--entity', '--project', '--phase', '--feature', '--batch', '--label', '--match'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -643,6 +785,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 0,
     positionalFields: [],
   },
+  'knowledge.search': {
+    command: 'knowledge', commandId: 'knowledge.search',
+    valueFlags: ['--project', '--document-id', '--document', '--version', '--keyword', '--title', '--path', '--limit', '--snippet-max-chars', '--max-read-bytes', '--max-candidates'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [],
+  },
+  'knowledge.read': {
+    command: 'knowledge', commandId: 'knowledge.read',
+    valueFlags: ['--project', '--document-id', '--document', '--version', '--max-read-bytes'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 1, positionalFields: ['documentId'],
+  },
   'baseline.preview': {
     command: 'baseline',
     commandId: 'baseline.preview',
@@ -682,6 +834,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['operationId'],
+  },
+  'baseline.compare': {
+    command: 'baseline',
+    commandId: 'baseline.compare',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalFields: ['previousOperationId', 'currentOperationId'],
   },
   'baseline.cancel': {
     command: 'baseline',
@@ -792,9 +954,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'phase.list': {
     command: 'phase',
     commandId: 'phase.list',
-    valueFlags: ['--project', '--limit', '--cursor'],
+    valueFlags: ['--project', '--label', '--match', '--limit', '--cursor'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -842,9 +1004,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'feature.list': {
     command: 'feature',
     commandId: 'feature.list',
-    valueFlags: ['--project', '--phase', '--limit', '--cursor'],
+    valueFlags: ['--project', '--phase', '--label', '--match', '--limit', '--cursor'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -882,9 +1044,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'task.list': {
     command: 'task',
     commandId: 'task.list',
-    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    valueFlags: ['--project', '--feature', '--label', '--match', '--limit', '--cursor'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -995,6 +1157,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['taskId'],
+  },
+  'task.strategy-reapply-preview': {
+    command: 'task', commandId: 'task.strategy-reapply-preview',
+    valueFlags: ['--project', '--task'], boolFlags: [], repeatableFlags: ['--task'],
+    minPositionals: 0, maxPositionals: 1, positionalFields: ['taskId'],
+  },
+  'task.strategy-reapply': {
+    command: 'task', commandId: 'task.strategy-reapply',
+    valueFlags: ['--project', '--input', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [],
+    minPositionals: 0, maxPositionals: 0, positionalFields: [],
   },
   'task.prepare': {
     command: 'task',
@@ -1175,6 +1347,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['runId'],
+  },
+  'execution.runs': {
+    command: 'execution',
+    commandId: 'execution.runs',
+    valueFlags: ['--project', '--feature', '--batch', '--label', '--match', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: ['--label'],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
   },
   'execution.attempts': {
     command: 'execution',
@@ -1456,8 +1638,22 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
   Object.freeze({
     project: {
+      'resource-list': 'project.resource-list',
+      'resource-discover': 'project.resource-discover',
+      'resource-source-register': 'project.resource-source-register',
+      'resource-source-remove': 'project.resource-source-remove',
+      'resource-preview': 'project.resource-preview',
+      'resource-import': 'project.resource-import',
+      'resource-enable': 'project.resource-enable',
+      'resource-disable': 'project.resource-disable',
+      'resource-revoke': 'project.resource-revoke',
       init: 'project.init',
       overview: 'project.overview',
+      'move-preview': 'project.repository-move-preview',
+      'repository-move-preview': 'project.repository-move-preview',
+      move: 'project.repository-move-confirm',
+      'move-confirm': 'project.repository-move-confirm',
+      'repository-move-confirm': 'project.repository-move-confirm',
       register: 'project.register',
       list: 'project.list',
       get: 'project.get',
@@ -1473,11 +1669,13 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     },
     receipt: { get: 'receipt.get' },
     events: { observe: 'events.observe' },
+    knowledge: { search: 'knowledge.search', read: 'knowledge.read' },
     baseline: {
       preview: 'baseline.preview',
       run: 'baseline.run',
       list: 'baseline.list',
       status: 'baseline.status',
+      compare: 'baseline.compare',
       cancel: 'baseline.cancel',
       evidence: 'baseline.evidence',
     },
@@ -1508,6 +1706,8 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       get: 'task.get',
       labels: 'task.labels',
       strategy: 'task.strategy',
+      'strategy-preview': 'task.strategy-reapply-preview',
+      'strategy-reapply': 'task.strategy-reapply',
       prepare: 'task.prepare',
       inputs: 'task.inputs',
       status: 'task.status',
@@ -1531,6 +1731,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       finalize: 'execution.finalize',
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
+      runs: 'execution.runs',
       diagnostics: 'execution.diagnostics',
       dispatch: 'execution.dispatch',
       resources: 'execution.resources',
@@ -2047,6 +2248,29 @@ function optionalPlanListPage(
   };
 }
 
+const LABEL_ENTITY_VALUES = ['phase', 'feature', 'task', 'run'] as const;
+
+/**
+ * P06-6 / F-007：可重复标签筛选 + any/all 匹配（提供 --label 或 --match 时才
+ * 进入解析结果；与项目列表同一口径，match 非法在解析层拒绝，标签规范化深
+ * 校验由 Core 单一权威复核）。
+ */
+function optionalEntityLabelFilter(
+  scan: ScanResult,
+  state: ParseState,
+): { labels?: readonly string[]; match?: 'any' | 'all' } {
+  const matchRaw = takeOption(scan, '--match');
+  const match = matchRaw ?? 'any';
+  if (match !== 'any' && match !== 'all') {
+    fail(state, 'invalid_match', 'match');
+  }
+  const labelValues = scan.options.get('--label');
+  return {
+    ...(labelValues !== undefined ? { labels: takeLabels(scan, state) } : {}),
+    ...(matchRaw !== undefined || labelValues !== undefined ? { match } : {}),
+  };
+}
+
 function isAbsolutePath(value: string): boolean {
   return value.startsWith('/');
 }
@@ -2186,7 +2410,80 @@ export interface ParsedProjectInit {
   readonly explicitCommandId?: string;
 }
 
-/** `project overview <projectId>`（契约 §12.1）：注册状态与健康状态分开查询。 */
+export interface ParsedProjectProfileDetect {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.profile-detect';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectProfileGet {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.profile-get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+}
+
+export interface ParsedProjectProfileMatch {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.profile-match';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly directory?: string;
+  readonly requiredModuleIds: readonly string[];
+  readonly languages: readonly string[];
+  readonly frameworks: readonly string[];
+  readonly scope: readonly string[];
+}
+
+interface ParsedProjectProfileWriteBase {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly confirm: true;
+  readonly inputFile?: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectProfileConfirm extends ParsedProjectProfileWriteBase {
+  readonly commandId: 'project.profile-confirm';
+  readonly inputFile: string;
+}
+
+export interface ParsedProjectProfileModify extends ParsedProjectProfileWriteBase {
+  readonly commandId: 'project.profile-modify';
+  readonly inputFile: string;
+}
+
+export interface ParsedProjectProfileReject extends ParsedProjectProfileWriteBase {
+  readonly commandId: 'project.profile-reject';
+}
+
+/** `project profile` commands use the Host profile query/command boundary. */
+export type ParsedProjectProfileCommand =
+  | ParsedProjectProfileDetect
+  | ParsedProjectProfileGet
+  | ParsedProjectProfileMatch
+  | ParsedProjectProfileConfirm
+  | ParsedProjectProfileModify
+  | ParsedProjectProfileReject;
+
+/** `project overview` (contract §12.1): registration and health are separate. */
 export interface ParsedProjectOverview {
   readonly kind: 'command';
   readonly command: 'project';
@@ -2195,6 +2492,31 @@ export interface ParsedProjectOverview {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
+}
+
+export interface ParsedProjectRepositoryMovePreview {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.repository-move-preview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly repositoryPath: string;
+}
+
+export interface ParsedProjectRepositoryMoveConfirm {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.repository-move-confirm';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly repositoryPath: string;
+  readonly previewFile: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
 }
 
 export interface ParsedProjectRegister {
@@ -2258,6 +2580,14 @@ export interface ParsedProjectLabels {
   readonly json: boolean;
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
+  /** P06-6 / F-007：四层计数模式（提供 entity 时必填 --project）。 */
+  readonly entity?: 'phase' | 'feature' | 'task' | 'run';
+  readonly projectId?: string;
+  readonly phaseId?: string;
+  readonly featureId?: string;
+  readonly batchId?: string;
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
 }
 
 export interface ParsedConfigCreate {
@@ -2408,7 +2738,18 @@ export interface ParsedBaselineStatus {
   readonly operationId: string;
 }
 
-/** `baseline cancel <operationId> --confirm`（唯一取消途径；必须显式）。 */
+export interface ParsedBaselineCompare {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.compare';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly previousOperationId: string;
+  readonly currentOperationId: string;
+}
+
+/** `baseline cancel <operationId> --confirm`（唯一显式取消途径）。 */
 export interface ParsedBaselineCancel {
   readonly kind: 'command';
   readonly command: 'baseline';
@@ -2491,7 +2832,7 @@ export interface ParsedPhaseCreate {
   readonly explicitCommandId?: string;
 }
 
-/** `phase list --project <id> [--limit <int>] [--cursor <c>]`：层级分页。 */
+/** `phase list --project <id> [--label <l> ...] [--match any|all] [--limit <int>] [--cursor <c>]`：层级分页。 */
 export interface ParsedPhaseList {
   readonly kind: 'command';
   readonly command: 'phase';
@@ -2500,6 +2841,10 @@ export interface ParsedPhaseList {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
+  /** P06-6 / F-007：可重复标签筛选（提供时才存在；匹配语义见 match）。 */
+  readonly labels?: readonly string[];
+  /** P06-6 / F-007：any（缺省）命中任一 / all 命中全部；提供时才存在。 */
+  readonly match?: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -2565,6 +2910,9 @@ export interface ParsedFeatureList {
   readonly dataRoot?: string;
   readonly projectId: string;
   readonly phaseId: string;
+  /** P06-6 / F-007：可重复标签筛选与 any/all 匹配（提供时才存在）。 */
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -2609,6 +2957,9 @@ export interface ParsedTaskList {
   readonly dataRoot?: string;
   readonly projectId: string;
   readonly featureId: string;
+  /** P06-6 / F-007：可重复标签筛选与 any/all 匹配（提供时才存在）。 */
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -2666,6 +3017,19 @@ export interface ParsedTaskStrategy {
   readonly explicitCommandId?: string;
 }
 
+/** 默认策略只读预览：身份、来源、摘要、差异和阻塞原因。 */
+export interface ParsedTaskStrategyReapplyPreview {
+  readonly kind: 'command'; readonly command: 'task'; readonly commandId: 'task.strategy-reapply-preview';
+  readonly json: boolean; readonly startTimeoutMs: number; readonly dataRoot?: string;
+  readonly projectId: string; readonly taskIds: readonly string[];
+}
+
+/** 冻结预览身份的显式确认。 */
+export interface ParsedTaskStrategyReapply {
+  readonly kind: 'command'; readonly command: 'task'; readonly commandId: 'task.strategy-reapply';
+  readonly json: boolean; readonly startTimeoutMs: number; readonly dataRoot?: string;
+  readonly projectId: string; readonly inputFile: string; readonly confirm: true; readonly explicitCommandId?: string;
+}
 /**
  * `task prepare <taskId> --project <id> --feature <id> --input <file>`：
  * 固定输入制品组准备（execution.input.prepare；创建类不携带 expectedRevision）；
@@ -2876,6 +3240,26 @@ export interface ParsedExecutionAttempts {
   readonly dataRoot?: string;
   readonly projectId: string;
   readonly taskId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
+ * P06-6 / F-007：项目内 Run 持久元数据列表（execution.runs；runs.list 只读
+ * 查询，可选 featureId/batchId 父级 + 可重复标签筛选与 any/all 匹配）。
+ */
+export interface ParsedExecutionRuns {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.runs';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly batchId?: string;
+  readonly labels: readonly string[];
+  readonly match: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -3431,6 +3815,40 @@ export interface ParsedGitOperationGet {
   readonly operationId: string;
 }
 
+export interface ParsedKnowledgeSearch {
+  readonly kind: 'command';
+  readonly command: 'knowledge';
+  readonly commandId: 'knowledge.search';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly documentId?: string;
+  readonly version?: number;
+  readonly keyword?: string;
+  readonly title?: string;
+  readonly path?: string;
+  readonly limit?: number;
+  readonly snippetMaxChars?: number;
+  readonly maxReadBytes?: number;
+  readonly maxCandidates?: number;
+}
+
+export interface ParsedKnowledgeRead {
+  readonly kind: 'command';
+  readonly command: 'knowledge';
+  readonly commandId: 'knowledge.read';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly documentId: string;
+  readonly version?: number;
+  readonly maxReadBytes?: number;
+}
+
+export type ParsedKnowledgeCommand = ParsedKnowledgeSearch | ParsedKnowledgeRead;
+
 export interface ParsedPlanningStart {
   readonly kind: 'command';
   readonly command: 'planning';
@@ -3487,13 +3905,28 @@ export interface ParsedPlanningDecision {
   readonly explicitCommandId?: string;
 }
 
+interface ParsedProjectResourceBase {
+  readonly kind: 'command'; readonly command: 'project'; readonly json: boolean;
+  readonly startTimeoutMs: number; readonly dataRoot?: string; readonly projectId: string;
+}
+export type ParsedProjectResource =
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-source-register' | 'project.resource-source-remove'; readonly sourceId: string; readonly revision: number; readonly manifestPath?: string })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-list' })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-discover' | 'project.resource-preview'; readonly sourceIds: readonly string[]; readonly selectedResourceIds: readonly string[] })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-import'; readonly revision: number; readonly explicitCommandId: string; readonly sourceId: string; readonly sourceDigest: string; readonly candidateId: string; readonly candidateDigest: string })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-enable' | 'project.resource-disable' | 'project.resource-revoke'; readonly revision: number; readonly explicitCommandId: string; readonly resourceId: string });
+
 export type ParsedAppCliCommand =
+  | ParsedProjectResource
   | ParsedPlanningStart
   | ParsedPlanningList
   | ParsedPlanningGet
   | ParsedPlanningDecision
   | ParsedProjectInit
   | ParsedProjectOverview
+  | ParsedProjectRepositoryMovePreview
+  | ParsedProjectRepositoryMoveConfirm
+  | ParsedProjectProfileCommand
   | ParsedProjectRegister
   | ParsedProjectList
   | ParsedProjectGet
@@ -3506,10 +3939,12 @@ export type ParsedAppCliCommand =
   | ParsedConfigExport
   | ParsedReceiptGet
   | ParsedEventsObserve
+  | ParsedKnowledgeCommand
   | ParsedBaselinePreview
   | ParsedBaselineRun
   | ParsedBaselineList
   | ParsedBaselineStatus
+  | ParsedBaselineCompare
   | ParsedBaselineCancel
   | ParsedBaselineEvidence
   | ParsedPhaseCreate
@@ -3528,6 +3963,8 @@ export type ParsedAppCliCommand =
   | ParsedTaskList
   | ParsedTaskGet
   | ParsedTaskStrategy
+  | ParsedTaskStrategyReapplyPreview
+  | ParsedTaskStrategyReapply
   | ParsedTaskPrepare
   | ParsedTaskInputs
   | ParsedTaskStatus
@@ -3540,6 +3977,7 @@ export type ParsedAppCliCommand =
   | ParsedExecutionRevise
   | ParsedExecutionSchedule
   | ParsedExecutionAttempts
+  | ParsedExecutionRuns
   | ParsedExecutionDiagnostics
   | ParsedExecutionDispatch
   | ParsedExecutionResources
@@ -3581,10 +4019,136 @@ export interface ParsedAppCliHelp {
 
 export type ParsedAppCli = ParsedAppCliCommand | ParsedAppCliHelp;
 
+function resolveProfileProjectId(scan: ScanResult, state: ParseState): string {
+  const option = takeOption(scan, '--project');
+  if (scan.positionals.length > 1) {
+    fail(state, 'too_many_positionals');
+  }
+  const positional = scan.positionals[0];
+  if (option !== undefined && positional !== undefined) {
+    fail(state, 'scope_conflict', 'project');
+  }
+  if (option === undefined && positional === undefined) {
+    fail(state, 'missing_required_option', 'project');
+  }
+  return requireProjectId(option ?? positional as string, state);
+}
+
+function profileListOption(scan: ScanResult, name: string): readonly string[] {
+  return (scan.options.get(name) ?? []).filter((value): value is string => value !== undefined);
+}
+
+function buildProjectProfile(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
+  const base = baseResult(state, scan);
+  const projectId = resolveProfileProjectId(scan, state);
+  switch (spec.commandId) {
+    case 'project.profile-detect': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'project', commandId: 'project.profile-detect', projectId, confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
+    }
+    case 'project.profile-get':
+      return { ...base, command: 'project', commandId: 'project.profile-get', projectId };
+    case 'project.profile-match': {
+      const directory = takeOption(scan, '--directory');
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.profile-match',
+        projectId,
+        ...(directory !== undefined ? { directory } : {}),
+        requiredModuleIds: profileListOption(scan, '--required-module'),
+        languages: profileListOption(scan, '--language'),
+        frameworks: profileListOption(scan, '--framework'),
+        scope: profileListOption(scan, '--scope'),
+      };
+    }
+    case 'project.profile-confirm':
+    case 'project.profile-modify': {
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const inputFile = requireInputFile(scan, state);
+      const revision = requireRevision(scan, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: spec.commandId,
+        projectId,
+        revision,
+        confirm: true,
+        inputFile,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'project.profile-reject':
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const revision = requireRevision(scan, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.profile-reject',
+        projectId,
+        revision,
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    default:
+      return fail(state, 'unknown_subcommand');
+  }
+}
+
 function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'project.resource-source-register':
+    case 'project.resource-source-remove': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const sourceId = requirePlanId(requireOption(scan, '--source', state, 'source'), state, 'source');
+      const revision = parseUnsignedInteger(requireOption(scan, '--revision', state, 'revision'));
+      if (revision === undefined || !Number.isSafeInteger(revision)) fail(state, 'invalid_revision', 'revision');
+      const manifestPath = spec.commandId === 'project.resource-source-register'
+        ? requireOption(scan, '--manifest-file', state, 'manifest-file') : undefined;
+      return { ...base, command: 'project', commandId: spec.commandId, projectId, sourceId, revision,
+        ...(manifestPath === undefined ? {} : { manifestPath }) };
+    }
+    case 'project.resource-list':
+    case 'project.resource-discover':
+    case 'project.resource-preview':
+    case 'project.resource-import':
+    case 'project.resource-enable':
+    case 'project.resource-disable':
+    case 'project.resource-revoke': {
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const common = { ...base, command: 'project' as const, projectId };
+      if (spec.commandId === 'project.resource-list') return { ...common, commandId: spec.commandId };
+      if (spec.commandId === 'project.resource-discover' || spec.commandId === 'project.resource-preview') {
+        const sourceIds = (scan.options.get('--source') ?? []).map(id => requirePlanId(id, state, 'source'));
+        if (sourceIds.length === 0) fail(state, 'missing_required_option', 'source');
+        const selectedResourceIds = (scan.options.get('--selected') ?? []).map(id => requirePlanId(id, state, 'selected'));
+        return { ...common, commandId: spec.commandId, sourceIds, selectedResourceIds };
+      }
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const rawRevision = requireOption(scan, '--revision', state, 'revision');
+      const revision = parseUnsignedInteger(rawRevision);
+      if (revision === undefined || !Number.isSafeInteger(revision)) fail(state, 'invalid_revision', 'revision');
+      const explicitCommandId = optionalCommandId(scan, state);
+      if (explicitCommandId === undefined) fail(state, 'missing_required_option', 'command-id');
+      if (spec.commandId === 'project.resource-import') return { ...common, commandId: spec.commandId, revision, explicitCommandId,
+        sourceId: requirePlanId(requireOption(scan, '--source', state, 'source'), state, 'source'),
+        candidateId: requirePlanId(requireOption(scan, '--candidate', state, 'candidate'), state, 'candidate'),
+        sourceDigest: requireSha256Option(scan, '--source-digest', state, 'source-digest'),
+        candidateDigest: requireSha256Option(scan, '--candidate-digest', state, 'candidate-digest') };
+      return { ...common, commandId: spec.commandId, revision, explicitCommandId,
+        resourceId: requirePlanId(requireOption(scan, '--resource', state, 'resource'), state, 'resource') };
+    }
     case 'project.init': {
       const { repositoryPathInput, repositoryPath } = resolveRepositoryPath(
         scan.positionals[0] as string,
@@ -3607,13 +4171,50 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
       };
     }
     case 'project.overview': {
+      const positional = scan.positionals[0];
+      const option = takeOption(scan, '--project');
+      if (positional !== undefined && option !== undefined) fail(state, 'scope_conflict', 'project');
+      const projectId = option ?? positional;
+      if (projectId === undefined) fail(state, 'missing_positional', 'projectId');
       return {
         ...base,
         command: 'project',
         commandId: 'project.overview',
-        projectId: requireProjectId(scan.positionals[0] as string, state),
+        projectId: requireProjectId(projectId, state),
       };
     }
+    case 'project.repository-move-preview': {
+      const { repositoryPath } = resolveRepositoryPath(scan.positionals[0] as string, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.repository-move-preview',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        repositoryPath,
+      };
+    }
+    case 'project.repository-move-confirm': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const { repositoryPath } = resolveRepositoryPath(scan.positionals[0] as string, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.repository-move-confirm',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        repositoryPath,
+        previewFile: requireOption(scan, '--preview-file', state, 'preview-file'),
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'project.profile-detect':
+    case 'project.profile-get':
+    case 'project.profile-match':
+    case 'project.profile-confirm':
+    case 'project.profile-modify':
+    case 'project.profile-reject':
+      return buildProjectProfile(scan, state, spec);
     case 'project.register': {
       const repositoryPath = scan.positionals[0] as string;
       if (repositoryPath.length === 0 || repositoryPath.includes('\0')) {
@@ -3698,7 +4299,35 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
       };
     }
     case 'project.labels': {
-      return { ...base, command: 'project', commandId: 'project.labels' };
+      // P06-6 / F-007：无参保持项目层计数旧形态；提供 --entity 进入四层计数
+      // 模式（其余筛选参数仅在该模式下可月）。
+      const entityRaw = takeOption(scan, '--entity');
+      const modeFlags = ['--project', '--phase', '--feature', '--batch', '--label', '--match'] as const;
+      const hasModeFlag = modeFlags.some((flag) => scan.options.has(flag));
+      if (entityRaw === undefined) {
+        if (hasModeFlag) {
+          fail(state, 'unknown_argument');
+        }
+        return { ...base, command: 'project', commandId: 'project.labels' };
+      }
+      if (!LABEL_ENTITY_VALUES.includes(entityRaw as (typeof LABEL_ENTITY_VALUES)[number])) {
+        fail(state, 'invalid_entity', 'entity');
+      }
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const phaseRaw = takeOption(scan, '--phase');
+      const featureRaw = takeOption(scan, '--feature');
+      const batchRaw = takeOption(scan, '--batch');
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.labels',
+        entity: entityRaw as 'phase' | 'feature' | 'task' | 'run',
+        projectId,
+        ...(phaseRaw !== undefined ? { phaseId: requirePlanId(phaseRaw, state, 'phase') } : {}),
+        ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'feature') } : {}),
+        ...(batchRaw !== undefined ? { batchId: requireBatchId(batchRaw, state) } : {}),
+        ...optionalEntityLabelFilter(scan, state),
+      };
     }
     default:
       fail(state, 'unknown_subcommand');
@@ -3899,6 +4528,15 @@ function buildBaseline(scan: ScanResult, state: ParseState, spec: AppCommandSpec
         command: 'baseline',
         commandId: 'baseline.status',
         operationId: requireOperationId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'baseline.compare': {
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.compare',
+        previousOperationId: requireOperationId(scan.positionals[0] as string, state),
+        currentOperationId: requireOperationId(scan.positionals[1] as string, state),
       };
     }
     case 'baseline.cancel': {
@@ -4133,6 +4771,24 @@ function buildExecution(
         commandId: 'execution.attempts',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    // P06-6 / F-007：Run 持久元数据列表（runs.list 只读查询；标签规范化与
+    // 游标绑定由 Core 复核，CLI 不打开状态库）。
+    case 'execution.runs': {
+      const featureRaw = takeOption(scan, '--feature');
+      const batchRaw = takeOption(scan, '--batch');
+      const filter = optionalEntityLabelFilter(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.runs',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'feature') } : {}),
+        ...(batchRaw !== undefined ? { batchId: requireBatchId(batchRaw, state) } : {}),
+        labels: filter.labels ?? [],
+        match: filter.match ?? 'any',
         ...optionalPlanListPage(scan, state),
       };
     }
@@ -4492,6 +5148,87 @@ function buildWorkspace(
   }
 }
 
+function buildKnowledge(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  const optionValue = (primary: string, alias: string, field: string): string | undefined => {
+    const first = takeOption(scan, primary);
+    const second = takeOption(scan, alias);
+    if (first !== undefined && second !== undefined) fail(state, 'scope_conflict', field);
+    return first ?? second;
+  };
+  const optionalPositive = (flag: string, field: string, reason: AppCliParseReason = 'invalid_integer'): number | undefined => {
+    const raw = takeOption(scan, flag);
+    if (raw === undefined) return undefined;
+    const value = parseUnsignedInteger(raw);
+    if (value === undefined || value < 1 || !Number.isSafeInteger(value)) fail(state, reason, field);
+    return value;
+  };
+  const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+  if (spec.commandId === 'knowledge.read') {
+    const optionDocumentId = optionValue('--document-id', '--document', 'documentId');
+    const positionalDocumentId = scan.positionals[0];
+    if (optionDocumentId !== undefined && positionalDocumentId !== undefined) fail(state, 'scope_conflict', 'documentId');
+    const documentId = optionDocumentId ?? positionalDocumentId;
+    if (documentId === undefined) fail(state, 'missing_positional', 'documentId');
+    const parsedDocumentId = requirePlanId(documentId, state, 'documentId');
+    const version = optionalPositive('--version', 'version', 'invalid_version');
+    const maxReadBytes = optionalPositive('--max-read-bytes', 'max-read-bytes');
+    if (maxReadBytes !== undefined && maxReadBytes > 16 * 1024 * 1024) fail(state, 'integer_out_of_range', 'max-read-bytes');
+    return {
+      ...base,
+      command: 'knowledge', commandId: 'knowledge.read', projectId, documentId: parsedDocumentId,
+      ...(version !== undefined ? { version } : {}),
+      ...(maxReadBytes !== undefined ? { maxReadBytes } : {}),
+    };
+  }
+
+  const documentIdRaw = optionValue('--document-id', '--document', 'documentId');
+  const documentId = documentIdRaw === undefined ? undefined : requirePlanId(documentIdRaw, state, 'documentId');
+  const version = optionalPositive('--version', 'version', 'invalid_version');
+  if (version !== undefined && documentId === undefined) fail(state, 'invalid_knowledge_query', 'version');
+  const textOption = (flag: string, field: string): string | undefined => {
+    const raw = takeOption(scan, flag);
+    if (raw === undefined) return undefined;
+    if (raw.trim().length === 0 || raw.includes('\0')) fail(state, 'invalid_knowledge_query', field);
+    return raw;
+  };
+  const keyword = textOption('--keyword', 'keyword');
+  const title = textOption('--title', 'title');
+  const path = textOption('--path', 'path');
+  if (path !== undefined && (path.startsWith('/') || path.includes('\\') || path.split('/').includes('..'))) {
+    fail(state, 'invalid_knowledge_query', 'path');
+  }
+  if (documentId === undefined && keyword === undefined && title === undefined && path === undefined) {
+    fail(state, 'invalid_knowledge_query', 'query');
+  }
+  const limit = optionalPositive('--limit', 'limit', 'invalid_limit');
+  const snippetMaxChars = optionalPositive('--snippet-max-chars', 'snippet-max-chars');
+  const maxReadBytes = optionalPositive('--max-read-bytes', 'max-read-bytes');
+  const maxCandidates = optionalPositive('--max-candidates', 'max-candidates');
+  if (limit !== undefined && limit > 100) fail(state, 'integer_out_of_range', 'limit');
+  if (snippetMaxChars !== undefined && snippetMaxChars > 2_000) fail(state, 'integer_out_of_range', 'snippet-max-chars');
+  if (maxReadBytes !== undefined && maxReadBytes > 16 * 1024 * 1024) fail(state, 'integer_out_of_range', 'max-read-bytes');
+  if (maxCandidates !== undefined && maxCandidates > 500) fail(state, 'integer_out_of_range', 'max-candidates');
+  return {
+    ...base,
+    command: 'knowledge', commandId: 'knowledge.search', projectId,
+    ...(documentId !== undefined ? { documentId } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(keyword !== undefined ? { keyword } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(path !== undefined ? { path } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(snippetMaxChars !== undefined ? { snippetMaxChars } : {}),
+    ...(maxReadBytes !== undefined ? { maxReadBytes } : {}),
+    ...(maxCandidates !== undefined ? { maxCandidates } : {}),
+  };
+}
+
 function buildPlanning(
   scan: ScanResult,
   state: ParseState,
@@ -4636,6 +5373,7 @@ function buildPlanEntity(
         commandId: 'phase.list',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         ...optionalPlanListPage(scan, state),
+        ...optionalEntityLabelFilter(scan, state),
       };
     }
     case 'phase.get': {
@@ -4707,6 +5445,7 @@ function buildPlanEntity(
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
         ...optionalPlanListPage(scan, state),
+        ...optionalEntityLabelFilter(scan, state),
       };
     }
     case 'feature.get': {
@@ -4804,6 +5543,7 @@ function buildPlanEntity(
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         featureId: requirePlanIdOption(scan, '--feature', state, 'featureId'),
         ...optionalPlanListPage(scan, state),
+        ...optionalEntityLabelFilter(scan, state),
       };
     }
     case 'task.get': {
@@ -4830,6 +5570,19 @@ function buildPlanEntity(
         ...(reason !== undefined ? { reason } : {}),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
+    }
+    case 'task.strategy-reapply-preview': {
+      const ids = [
+        ...scan.positionals.map(id => requirePlanId(id, state, 'taskId')),
+        ...(scan.options.get('--task') ?? []).map(id => requirePlanId(id as string, state, 'taskId')),
+      ];
+      if (ids.length === 0) fail(state, 'missing_required_option', 'task');
+      return { ...base, command: 'task', commandId: 'task.strategy-reapply-preview', projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state), taskIds: [...new Set(ids)] };
+    }
+    case 'task.strategy-reapply': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'task', commandId: 'task.strategy-reapply', projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state), inputFile: requireInputFile(scan, state), confirm: true, ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
     }
     case 'task.strategy': {
       const explicitCommandId = optionalCommandId(scan, state);
@@ -5076,6 +5829,57 @@ export function parseAppCliArgs(
   if (second.startsWith('-')) {
     fail(state, 'missing_subcommand');
   }
+
+  if (state.command === 'project' && (second === 'move' || second === 'repository')) {
+    const nestedOffset = second === 'repository' ? 3 : 2;
+    const nested = args[nestedOffset];
+    if (nested === 'preview' || nested === 'confirm') {
+      const commandId = nested === 'preview'
+        ? 'project.repository-move-preview'
+        : 'project.repository-move-confirm';
+      state.commandId = commandId;
+      const spec = SPECS[commandId];
+      const scan = scanOptions(args.slice(nestedOffset + 1), spec, state);
+      if (scan.help) return { kind: 'help', scope: commandId };
+      assertNoEnvOverride(state, env);
+      return buildProject(scan, state, spec);
+    }
+  }
+
+  // Profile 保持在 project 命令组内，但采用三级命令以区分查询和显式写操作。
+  // 解析仍是纯函数；任何 Host/文件 I/O 都在执行层完成。
+  if (state.command === 'project' && second === 'profile') {
+    const third = args[2];
+    if (third === undefined) {
+      fail(state, 'missing_subcommand', 'profile');
+    }
+    if (isHelpToken(third)) {
+      return { kind: 'help', scope: 'project' };
+    }
+    if (third.startsWith('-')) {
+      fail(state, 'missing_subcommand', 'profile');
+    }
+    const profileCommandId = ({
+      detect: 'project.profile-detect',
+      get: 'project.profile-get',
+      match: 'project.profile-match',
+      confirm: 'project.profile-confirm',
+      modify: 'project.profile-modify',
+      reject: 'project.profile-reject',
+    } as const)[third as 'detect' | 'get' | 'match' | 'confirm' | 'modify' | 'reject'];
+    if (profileCommandId === undefined) {
+      fail(state, 'unknown_subcommand', third);
+    }
+    state.commandId = profileCommandId;
+    const spec = SPECS[profileCommandId];
+    const scan = scanOptions(args.slice(3), spec, state);
+    if (scan.help) {
+      return { kind: 'help', scope: profileCommandId };
+    }
+    assertNoEnvOverride(state, env);
+    return buildProject(scan, state, spec);
+  }
+
   const commandId = SUBCOMMAND_TO_ID[state.command][second];
   if (commandId === undefined) {
     fail(state, 'unknown_subcommand', second);
@@ -5095,6 +5899,8 @@ export function parseAppCliArgs(
       return buildConfig(scan, state, spec);
     case 'receipt':
       return buildReceipt(scan, state, spec);
+    case 'knowledge':
+      return buildKnowledge(scan, state, spec);
     case 'baseline':
       return buildBaseline(scan, state, spec);
     case 'phase':

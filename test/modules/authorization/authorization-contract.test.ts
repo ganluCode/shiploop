@@ -199,6 +199,9 @@ function envelope(
         expectedRevision: null,
         payload: { operationId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
       } as ValidatedCommandEnvelope;
+    case 'project.repository.rebind':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { canonicalPath: '/repo/new', gitCommonDir: '/repo/new/.git', repoIdentity: 'gitdir-sha256:' + 'b'.repeat(64) } };
     case 'project.register':
       return {
         ...base,
@@ -214,6 +217,18 @@ function envelope(
         scope,
         expectedRevision: expectedRevision ?? 1,
         payload: { displayName: '新名称' },
+      } as ValidatedCommandEnvelope;
+    case 'project.profile.detect':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: null, payload: {} };
+    case 'project.profile.confirm':
+    case 'project.profile.modify':
+    case 'project.profile.reject':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: operation === 'project.profile.reject' ? {} : { profile: {} },
       } as ValidatedCommandEnvelope;
     case 'settings.global.create':
     case 'settings.global.update':
@@ -293,7 +308,22 @@ function envelope(
           executionConfig: { schemaVersion: 2, runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
         },
       } as ValidatedCommandEnvelope;
-    case 'feature.plan.decide':
+    case 'task.strategy.reapply':
+      return {
+        ...base,
+        operation,
+        scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: null,
+        payload: {
+          confirmed: true,
+          previewDigest: 'ab'.repeat(32),
+          globalSettingsRevision: 1,
+          projectSettingsRevision: null,
+          selectedTaskIds: ['t-1'],
+          expectedTaskRevisions: [{ taskId: 't-1', revision: 1 }],
+        },
+      } as ValidatedCommandEnvelope;
+
       return {
         ...base,
         operation,
@@ -447,10 +477,24 @@ function envelope(
         expectedRevision: null,
         payload: { featureId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
       } as ValidatedCommandEnvelope;
+    case 'project.resource.import':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { sourceId: 'source-1', sourceDigest: '0'.repeat(64), candidateId: 'candidate-1', candidateDigest: '0'.repeat(64) } };
+    case 'project.resource.enable':
+    case 'project.resource.disable':
+    case 'project.resource.revoke':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { resourceId: 'resource-1' } };
+    case 'feature.plan.decide':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { featureId: 'feature-1', decision: 'approve', planDigest: '0'.repeat(64) } } as ValidatedCommandEnvelope;
+    default:
+      throw new Error(`missing test envelope fixture for ${operation}`);
   }
 }
 
 const COMMANDS_MATRIX = [
+  { operation: 'project.profile.detect', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'project.metadata.write' },
   { operation: 'execution.stop.manual', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'execution.start' },
   { operation: 'project.register', scope: { kind: 'registration' }, revision: null, capability: 'project.register' },
   { operation: 'project.metadata.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 2, capability: 'project.metadata.write' },
@@ -470,6 +514,7 @@ const COMMANDS_MATRIX = [
   { operation: 'feature.plan.revise', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.revise' },
   // P03-2 / F-001：Task 策略副本 CAS 编辑（project scope + task.strategy.write；expectedRevision 为目标 Task 自身 revision）。
   { operation: 'task.strategy.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'task.strategy.write' },
+  { operation: 'task.strategy.reapply', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'task.strategy.write' },
   // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；expectedRevision 为 Feature 聚合 CAS）。
   { operation: 'feature.plan.decide', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.decide' },
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；创建类不携带 expectedRevision）。
@@ -492,6 +537,10 @@ const COMMANDS_MATRIX = [
   { operation: 'workspace.discard', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'workspace.discard' },
   // P03-5 / F-011：人工丢弃预览（同一能力位；创建类，payload 深校验在应用层）。
   { operation: 'workspace.discard.preview', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'workspace.discard' },
+  { operation: 'project.resource.import', scope: { kind: 'project', projectId: PROJECT_A }, revision: 0, capability: 'settings.project.write' },
+  { operation: 'project.resource.enable', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
+  { operation: 'project.resource.disable', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
+  { operation: 'project.resource.revoke', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

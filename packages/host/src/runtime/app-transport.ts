@@ -33,7 +33,9 @@
  * import 本模块无副作用：不监听端口、不读文件系统、不读 argv/env。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { validateKnowledgeQueryResponse, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 import {
+  toPublicTaskStrategyReapplicationPreview,
   isPublicError,
   PublicError as CorePublicError,
   WorkAccessError,
@@ -43,6 +45,7 @@ import {
 } from 'shiploop-core';
 import type {
   BaselineExecutionService,
+  BaselineComparisonService,
   BaselineQueryService,
   CommandReceiptsService,
   CommandService,
@@ -59,6 +62,7 @@ import {
   BATCHES_ROUTE_PREFIX,
   ARTIFACT_CONTENT_ROUTE_SUFFIX,
   ARTIFACTS_ROUTE_PREFIX,
+  BASELINE_COMPARE_ROUTE,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   DISPATCH_QUEUE_ROUTE,
@@ -87,10 +91,17 @@ import {
   PLANNING_CANDIDATE_ROUTE_SUFFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
+  PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX,
+  PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX,
+  PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX,
+  PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX,
+  PROJECT_RESOURCE_ROUTE_SUFFIX,
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
+  RUNS_ROUTE,
   RUNS_ROUTE_PREFIX,
+  LABEL_COUNTS_ROUTE,
   RUN_SCHEDULE_ROUTE_SUFFIX,
   RUN_CONTROL_ROUTE_SUFFIX,
   RUN_RECOVERY_ROUTE_SUFFIX,
@@ -103,6 +114,7 @@ import {
   SNAPSHOT_ROUTE,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
+  TASK_STRATEGY_REAPPLICATION_ROUTE,
   TASK_APPROVALS_ROUTE_SUFFIX,
   TASK_REWORK_CHAIN_ROUTE_SUFFIX,
   TASK_VERIFICATION_ROUTE_SUFFIX,
@@ -122,6 +134,7 @@ import type { HostWorkToolAuthentication } from './work-tool-access.js';
 
 /** 应用操作身份字面量（与 §3.2 路由总表一一对应；错误体 operation）。 */
 export type ApplicationOperation =
+  | 'knowledge.search' | 'knowledge.read' | 'memory.search'
   | 'work.tools.invoke'
   | 'execution.sessions.list'
   | 'execution.session.get'
@@ -139,6 +152,8 @@ export type ApplicationOperation =
   | 'projects.labelCounts'
   | 'projects.inspect'
   | 'projects.overview'
+  | 'projects.profile.get'
+  | 'projects.profile.match'
   | 'settings.global.get'
   | 'settings.global.export'
   | 'settings.project.get'
@@ -147,6 +162,7 @@ export type ApplicationOperation =
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
+  | 'baselines.compare'
   | 'artifacts.get'
   | 'events.subscribe'
   // P03-1 / F-009 §6.6：计划域查询操作身份（与 Core PLAN_QUERY_OPERATIONS 同源）。
@@ -157,6 +173,11 @@ export type ApplicationOperation =
   | 'features.get'
   | 'tasks.list'
   | 'tasks.get'
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数只读查询（与 Core
+  // runs.list / labels.counts 操作身份同源）。
+  | 'runs.list'
+  | 'labels.counts'
+  | 'task.strategy.reapply.preview'
   // P03-2 / F-007：Feature 审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
   | 'execution.budget.get'
@@ -201,7 +222,13 @@ export type ApplicationOperation =
   // 同源；候选正文经受管内容接口核验读取）。
   | 'planning.contexts.list'
   | 'planning.context.get'
-  | 'planning.candidate.get';
+  | 'planning.candidate.get'
+  | 'project.resources.list'
+  | 'project.resources.candidates'
+  | 'project.resources.preview'
+  | 'project.resources.sources.configure'
+  | 'repository.move.preview'
+  | 'repository.move.confirm';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -221,10 +248,13 @@ export interface ResolvedAppRoute {
 export interface HostApplicationContext {
   /** Instance-local restricted credentials; never authenticate against the owner token. */
   readonly workTools?: HostWorkToolAuthentication;
+  readonly knowledgeQueryService?: Partial<Pick<import('shiploop-core').KnowledgeQueryService, 'search' | 'read'>>;
+  readonly memoryQueryService?: Pick<import('shiploop-core').MemoryQueryService, 'search'>;
   readonly principal: TrustedPrincipal;
   readonly commandService: CommandService;
   readonly queryService: QueryService;
   readonly commandReceiptsService: CommandReceiptsService;
+  readonly projectProfileService?: Pick<import('shiploop-core').ProjectProfileService, 'getQuery' | 'matchTaskModules'>;
   /** P02-3 / F-006（§7.2/§7.3）：静态接入用例（inspect/overview）；授权在 Core。 */
   readonly onboardingService: OnboardingService;
   /**
@@ -232,12 +262,16 @@ export interface HostApplicationContext {
    * 能力清单宣告 baselines.list/baselines.get/artifacts.get，必须真实接线。
    */
   readonly baselineQueryService: BaselineQueryService;
+  /** P06-5：同项目基线身份与逐项状态的只读比较；无写端口。 */
+  readonly baselineComparisonService?: Pick<BaselineComparisonService, 'compareBaselines'>;
   /**
    * P05-1 / F-012：规划上下文/候选只读查询（授权/可见性/候选正文完整性全部在
    * Core；能力清单宣告 planning.contexts.list/planning.context.get/
    * planning.candidate.get，必须真实接线）。
    */
   readonly planningQueryService: Pick<PlanningQueryService, 'listPlanningContexts' | 'getPlanningContext' | 'getPlanningCandidate'>;
+  readonly projectResourceService?: Pick<import('shiploop-core').ProjectResourceService, 'getConfiguration' | 'discoverCandidates' | 'previewCandidates' | 'configureSource'>;
+  readonly repositoryMoveService?: Pick<import('shiploop-core').RepositoryMoveService, 'preview' | 'prepareConfirmation' | 'confirm'>;
   /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
@@ -376,10 +410,13 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
-  // P03-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
+  // P06-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
   // 冻结形态）。P03-9 / F-013：GET /v1/runs/:runId/control 与
-  // /v1/runs/:runId/recovery 同一形态。其他 /v1/runs/* 形态一律未匹配 →
-  // 404 unknown_operation。
+  // /v1/runs/:runId/recovery 同一形态。P06-6 / F-007：GET /v1/runs 集合根
+  //（四层标签 Run 列表）。其他 /v1/runs/* 形态一律未匹配 → 404 unknown_operation。
+  if (path === RUNS_ROUTE) {
+    return { operation: 'runs.list', method: 'GET' };
+  }
   if (path.startsWith(RUNS_ROUTE_PREFIX)) {
     const segments = path.slice(RUNS_ROUTE_PREFIX.length).split('/');
     if (segments.some((segment) => segment.length === 0)) {
@@ -481,6 +518,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
+  // P06-5：比较是固定字面量，必须先于 baselines/:operationId 解析。
+  if (path === BASELINE_COMPARE_ROUTE) {
+    return { operation: 'baselines.compare', method: 'GET' };
+  }
   // P02-3 / F-014 §3.2：GET /v1/baselines/:operationId（单段路径参数）。
   if (path.startsWith(BASELINES_ROUTE_PREFIX)) {
     const segment = path.slice(BASELINES_ROUTE_PREFIX.length);
@@ -563,6 +604,13 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
+  if (path === TASK_STRATEGY_REAPPLICATION_ROUTE) {
+    return { operation: 'task.strategy.reapply.preview', method: 'GET' };
+  }
+  // P06-6 / F-007：GET /v1/label-counts（四层实体标签去重计数集合根）。
+  if (path === LABEL_COUNTS_ROUTE) {
+    return { operation: 'labels.counts', method: 'GET' };
+  }
   if (path === TASKS_ROUTE) {
     return { operation: 'tasks.list', method: 'GET' };
   }
@@ -644,6 +692,16 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
+      case 'knowledge/search':
+        return { operation: 'knowledge.search', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'knowledge/read':
+        return { operation: 'knowledge.read', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'memory/search':
+        return { operation: 'memory.search', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'profile':
+        return { operation: 'projects.profile.get', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'profile/match':
+        return { operation: 'projects.profile.match', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       case 'settings':
         return {
           operation: 'settings.project.get',
@@ -669,6 +727,18 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
+      case PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX:
+        return { operation: 'repository.move.preview', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX:
+        return { operation: 'repository.move.confirm', method: 'POST', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_RESOURCE_ROUTE_SUFFIX:
+        return { operation: 'project.resources.list', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX:
+        return { operation: 'project.resources.candidates', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX:
+        return { operation: 'project.resources.preview', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'resources/sources':
+        return { operation: 'project.resources.sources.configure', method: 'POST', pathParam: { name: 'projectId', value: projectId } };
       default:
         return undefined;
     }
@@ -767,6 +837,9 @@ interface QuerySpec {
 }
 
 const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = Object.freeze({
+  'knowledge.search': { allowed: ['documentId', 'version', 'keyword', 'title', 'path', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'], repeatable: [] },
+  'knowledge.read': { allowed: ['documentId', 'version', 'maxReadBytes'], repeatable: [] },
+  'memory.search': { allowed: ['keyword', 'recordKey', 'scope', 'version', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'], repeatable: [] },
   'execution.budget.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.budget.revisions': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   // P03-4 / F-008：调度/审计查询参数白名单（取值规则由 Core 单一权威复核）。
@@ -819,23 +892,42 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // P02-3 / F-006（§7.2）：path 是唯一例外查询参数（仓库根绝对路径，经
   // RepositoryInspector 校验；不是通用文件读取）。
   'projects.inspect': Object.freeze({ allowed: ['path'], repeatable: [] }),
+  'projects.profile.get': Object.freeze({ allowed: [], repeatable: [] }),
+  'projects.profile.match': Object.freeze({ allowed: ['directory', 'requiredModuleId', 'language', 'framework', 'scope'], repeatable: ['requiredModuleId', 'language', 'framework', 'scope'] }),
+
   'snapshot.get': Object.freeze({ allowed: ['scope', 'projectId'], repeatable: [] }),
   // F-012（§9.4）：订阅恢复位置 Last-Event-ID（头）优先于 ?cursor=；缺省 400。
   'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
   // P02-3 / F-014（§7.4）：baselines.list 分页参数（取值规则由 Core 复核）。
   'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
-  // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
-  // Core validatePlanListFilter 单一权威复核）。
+  'baselines.compare': Object.freeze({ allowed: ['previousOperationId', 'currentOperationId'], repeatable: [] }),
+  'project.resources.list': Object.freeze({ allowed: [], repeatable: [] }),
+  'project.resources.candidates': Object.freeze({ allowed: ['sourceId'], repeatable: ['sourceId'] }),
+  'project.resources.preview': Object.freeze({ allowed: ['sourceId', 'selectedResourceId'], repeatable: ['sourceId', 'selectedResourceId'] }),
+  'repository.move.preview': Object.freeze({ allowed: ['path'], repeatable: [] }),
+  // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；P06-6 /
+  // F-007 扩展可重复 label 与 match；取值规则由 Core 单一权威复核）。
   'phases.graph.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
-  'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
+  'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor', 'label', 'match'], repeatable: ['label'] }),
   'features.list': Object.freeze({
-    allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
-    repeatable: [],
+    allowed: ['projectId', 'phaseId', 'limit', 'cursor', 'label', 'match'],
+    repeatable: ['label'],
   }),
   'tasks.list': Object.freeze({
-    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
-    repeatable: [],
+    allowed: ['projectId', 'featureId', 'limit', 'cursor', 'label', 'match'],
+    repeatable: ['label'],
   }),
+  // P06-6 / F-007：Run 列表与四层标签计数查询参数白名单（父级适用范围/
+  // 标签规范化/游标绑定由 Core 单一权威复核；计数不接受分页参数）。
+  'runs.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'batchId', 'limit', 'cursor', 'label', 'match'],
+    repeatable: ['label'],
+  }),
+  'labels.counts': Object.freeze({
+    allowed: ['entity', 'projectId', 'phaseId', 'featureId', 'batchId', 'label', 'match'],
+    repeatable: ['label'],
+  }),
+  'task.strategy.reapply.preview': Object.freeze({ allowed: ['projectId', 'taskId'], repeatable: ['taskId'] }),
   // P03-5 / F-011：工作区状态查询参数白名单（取值规则由 Core 单一权威复核）。
   'workspaces.list': Object.freeze({
     allowed: ['projectId', 'featureId', 'limit', 'cursor'],
@@ -888,6 +980,26 @@ function parseQueryParams(
     }
   }
   return params;
+}
+
+/**
+ * P06-6 / F-007：四层标签列表/计数查询的 label/match 形态转换（与
+ * buildProjectListFilter 同一纪律：可重复 label 原样透传，match 不透明透传；
+ * 标签规范化、match 枚举、父级适用范围与游标绑定全部由 Core 单一权威复核）。
+ */
+function withEntityLabelFilter(
+  params: URLSearchParams,
+  query: Record<string, unknown>,
+): Record<string, unknown> {
+  const labels = params.getAll('label');
+  if (labels.length > 0) {
+    query.labels = labels;
+  }
+  const match = params.get('match');
+  if (match !== null) {
+    query.match = match;
+  }
+  return query;
 }
 
 /** projects.list 查询串 → Core 筛选对象（形态转换；取值规则仍由 Core 复核）。 */
@@ -1088,6 +1200,73 @@ async function handleCommandSubmit(
   sendBoundedJson(response, status, receipt, MAX_APP_BODY_BYTES, operation);
 }
 
+async function handleRepositoryMoveConfirm(input: ApplicationRequestInput, parsedBody: unknown): Promise<void> {
+  const { app, request, response, route } = input;
+  const operation = route.operation;
+  authenticateOrReject(request, input.authToken, operation);
+  if (input.rawQuery !== '') reject(400, 'invalid_input', operation, '仓库移动确认不接受查询参数');
+  if (app.getLifecycleState() !== 'ready') reject(503, 'not_ready', operation, 'Host 未就绪');
+  if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    reject(400, 'invalid_input', operation, '仓库移动确认请求必须是对象');
+  }
+  const body = parsedBody as Record<string, unknown>;
+  const allowed = ['projectId', 'preview', 'decision', 'commandId', 'issuedAt', 'expiresAt'];
+  if (Object.keys(body).some(key => !allowed.includes(key))) {
+    reject(400, 'invalid_input', operation, '仓库移动确认包含未知字段', { field: 'body' });
+  }
+  if (body.projectId !== route.pathParam?.value) {
+    reject(400, 'invalid_input', operation, '仓库移动确认项目不匹配', { field: 'body.projectId' });
+  }
+  if (typeof body.commandId !== 'string' || typeof body.issuedAt !== 'string') {
+    reject(400, 'invalid_input', operation, '仓库移动确认缺少命令身份', { field: 'body.commandId' });
+  }
+  if (app.repositoryMoveService === undefined) reject(501, 'unsupported', operation, '仓库移动未装配');
+  try {
+    const plan = await app.repositoryMoveService.prepareConfirmation(app.principal, {
+      preview: body.preview,
+      decision: {
+        schemaVersion: 1,
+        projectId: body.projectId,
+        oldBinding: (body.preview as { readonly oldBinding?: unknown }).oldBinding,
+        previewDigest: (body.preview as { readonly previewDigest?: unknown }).previewDigest,
+        decision: body.decision,
+      },
+    });
+    const receipt = await app.commandService.submit(app.principal, {
+      schemaVersion: 5,
+      commandId: body.commandId,
+      issuedAt: body.issuedAt,
+      ...(body.expiresAt === undefined ? {} : { expiresAt: body.expiresAt }),
+      operation: 'project.repository.rebind',
+      scope: { kind: 'project', projectId: plan.projectId },
+      expectedRevision: plan.expectedRevision,
+      payload: {
+        expectedBindingRevision: plan.expectedBindingRevision,
+        expectedBindingId: plan.expectedBindingId,
+        canonicalPath: plan.canonicalPath,
+        gitCommonDir: plan.gitCommonDir,
+        repoIdentity: plan.repoIdentity,
+      },
+    });
+    const status = receipt.status === 'completed'
+      ? 200
+      : receipt.status === 'accepted'
+        ? 202
+        : publicErrorHttpStatus(receipt.error.code);
+    sendBoundedJson(response, status, receipt, MAX_APP_BODY_BYTES, operation);
+  } catch (error) {
+    if (isStorageError(error)) {
+      throw new CorePublicError(
+        error.kind === 'conflict' ? 'conflict' : error.kind === 'ownership' ? 'forbidden' : error.kind === 'not_found' ? 'not_found' : error.kind === 'validation' ? 'invalid_input' : 'internal',
+        operation,
+        undefined,
+        { details: { reason: 'repository_move_rejected' } },
+      );
+    }
+    throw error;
+  }
+}
+
 async function handleQuery(input: ApplicationRequestInput): Promise<void> {
   const { app, route, request, response } = input;
   const operation = route.operation;
@@ -1172,6 +1351,66 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.onboardingService.inspectRepository(app.principal, repositoryPath);
       break;
     }
+    case 'repository.move.preview': {
+      const projectId = pathParam?.value;
+      const repositoryPath = params.get('path');
+      if (repositoryPath === null) {
+        reject(400, 'invalid_input', operation, '仓库移动预览必须携带 path 查询参数', { field: 'query.path', reason: 'missing_path' });
+      }
+      if (app.repositoryMoveService === undefined) reject(501, 'unsupported', operation, '仓库移动未装配');
+      result = await app.repositoryMoveService.preview(app.principal, { projectId, repositoryPath });
+      break;
+    }
+    case 'knowledge.search':
+    case 'knowledge.read':
+    case 'memory.search': {
+      const input: Record<string, unknown> = {};
+      for (const [key, value] of params) {
+        if (['version', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'].includes(key)) {
+          if (!/^[1-9]\d{0,8}$/.test(value)) reject(400, 'invalid_input', operation, '查询预算或版本必须为正整数');
+          input[key] = Number(value);
+        } else input[key] = value;
+      }
+      const projectId = pathParam!.value;
+      if (operation === 'knowledge.search') {
+        if (typeof app.knowledgeQueryService?.search !== 'function') reject(501, 'unsupported', operation, '知识检索未装配');
+        result = await app.knowledgeQueryService.search(app.principal, projectId, input);
+      } else if (operation === 'knowledge.read') {
+        if (typeof app.knowledgeQueryService?.read !== 'function') reject(501, 'unsupported', operation, '知识读取未装配');
+        const { documentId, version, ...options } = input;
+        result = await app.knowledgeQueryService.read(app.principal, projectId, documentId as string, version as number | undefined, options);
+      } else {
+        if (typeof app.memoryQueryService?.search !== 'function') reject(501, 'unsupported', operation, '记忆检索未装配');
+        result = await app.memoryQueryService.search(app.principal, projectId, input);
+      }
+      try {
+        const checked = validateKnowledgeQueryResponse(operation, result);
+        if (checked.projectId !== projectId) throw new Error('query_scope_mismatch');
+      }
+      catch { reject(500, 'internal', operation, '知识查询响应未通过契约校验'); }
+      break;
+    }
+    case 'projects.profile.get':
+      if (app.projectProfileService === undefined) reject(501, 'unsupported', operation, 'Profile 查询未在本装配中启用', { reason: 'profile_unsupported' });
+      result = app.projectProfileService.getQuery(app.principal, pathParam?.value);
+      break;
+    case 'projects.profile.match': {
+      if (app.projectProfileService === undefined) reject(501, 'unsupported', operation, 'Profile 匹配未在本装配中启用', { reason: 'profile_unsupported' });
+      const projectId = pathParam?.value;
+      result = {
+        schemaVersion: 1,
+        projectId,
+        match: app.projectProfileService.matchTaskModules(app.principal, {
+          projectId,
+          directory: params.get('directory') ?? undefined,
+          requiredModuleIds: params.getAll('requiredModuleId'),
+          languages: params.getAll('language'),
+          frameworks: params.getAll('framework'),
+          scope: params.getAll('scope'),
+        }),
+      };
+      break;
+    }
     case 'projects.overview':
       result = await app.onboardingService.getProjectOverview(app.principal, pathParam?.value);
       break;
@@ -1218,15 +1457,44 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       );
       break;
     }
+    case 'project.resources.list':
+      if (app.projectResourceService === undefined) reject(501, 'unsupported', operation, '项目资源查询未装配');
+      result = app.projectResourceService.getConfiguration(app.principal, pathParam?.value as string);
+      break;
+    case 'project.resources.candidates': {
+      if (app.projectResourceService === undefined) reject(501, 'unsupported', operation, '项目资源查询未装配');
+      const sourceIds = params.getAll('sourceId');
+      result = await app.projectResourceService.discoverCandidates(app.principal, pathParam?.value as string, sourceIds);
+      break;
+    }
+    case 'project.resources.preview': {
+      if (app.projectResourceService === undefined) reject(501, 'unsupported', operation, '项目资源查询未装配');
+      const sourceIds = params.getAll('sourceId');
+      const selectedResourceIds = params.getAll('selectedResourceId');
+      result = await app.projectResourceService.previewCandidates(app.principal, pathParam?.value as string, sourceIds, selectedResourceIds);
+      break;
+    }
     case 'baselines.get':
       result = await app.baselineQueryService.getBaseline(app.principal, pathParam?.value);
       break;
+    case 'baselines.compare': {
+      const previousOperationId = params.get('previousOperationId');
+      const currentOperationId = params.get('currentOperationId');
+      if (previousOperationId === null || currentOperationId === null) {
+        reject(400, 'invalid_input', operation, '基线比较必须携带 previousOperationId 和 currentOperationId', {
+          reason: 'missing_comparison_identity',
+        });
+      }
+      if (app.baselineComparisonService === undefined) reject(501, 'unsupported', operation, '基线比较未在本装配中启用');
+      result = await app.baselineComparisonService.compareBaselines(app.principal, previousOperationId, currentOperationId);
+      break;
+    }
     // P03-1 / F-009 §6.6：计划域查询分发。传输层只做形态转换（父级必填、
     // limit 十进制整数文本）；授权/可见性/分页范围/游标全部由 Core 单一权威复核。
     case 'phases.list':
       result = await app.queryService.listPhases(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId'),
+        withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId')),
       );
       break;
     case 'phases.graph.get':
@@ -1240,7 +1508,7 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'features.list':
       result = await app.queryService.listFeatures(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId', 'phaseId'),
+        withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId', 'phaseId')),
       );
       break;
     case 'features.get':
@@ -1249,12 +1517,60 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'tasks.list':
       result = await app.queryService.listTasks(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId', 'featureId'),
+        withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId', 'featureId')),
       );
       break;
+    // P06-6 / F-007：四层标签 Run 列表（集合根 + 必填 projectId + 可选父级；
+    // 取值/可见性/游标绑定全部由 Core 单一权威复核，查询零写入）。
+    case 'runs.list': {
+      const query = withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId'));
+      for (const key of ['featureId', 'batchId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listRuns(app.principal, query);
+      break;
+    }
+    // P06-6 / F-007：四层实体标签去重计数（entity 枚举为结构参数；父级适用
+    // 范围/标签语义由 Core 单一权威复核；不接受分页参数）。
+    case 'labels.counts': {
+      const entity = params.get('entity');
+      if (entity === null) {
+        reject(400, 'invalid_input', operation, 'labels.counts 必须携带 entity 查询参数', {
+          field: 'query.entity',
+          reason: 'missing_entity',
+        });
+      }
+      if (entity !== 'phase' && entity !== 'feature' && entity !== 'task' && entity !== 'run') {
+        reject(400, 'invalid_input', operation, "entity 必须是 'phase' | 'feature' | 'task' | 'run'", {
+          field: 'query.entity',
+          reason: 'invalid_entity',
+        });
+      }
+      const query: Record<string, unknown> = { entity };
+      const projectId = params.get('projectId');
+      if (projectId === null) {
+        reject(400, 'invalid_input', operation, 'labels.counts 必须携带 projectId 查询参数', {
+          field: 'query.projectId',
+          reason: 'missing_project_id',
+        });
+      }
+      query.projectId = projectId;
+      for (const key of ['phaseId', 'featureId', 'batchId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.getLabelCounts(app.principal, withEntityLabelFilter(params, query));
+      break;
+    }
     case 'tasks.get':
       result = await app.queryService.getTask(app.principal, pathParam?.value);
       break;
+    case 'task.strategy.reapply.preview': {
+      const projectId = params.get('projectId');
+      const taskIds = params.getAll('taskId');
+      const preview = await app.queryService.previewTaskStrategyReapplication(app.principal, { projectId, taskIds });
+      result = toPublicTaskStrategyReapplicationPreview(preview);
+      break;
+    }
     // P03-2 / F-007：审批决策查询分发（授权/可见性由 Core 单一权威复核；
     // 不可见/不存在统一 not_found，不区分存在性）。
     case 'execution.budget.get':
@@ -1512,7 +1828,9 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       throw new TypeError(`应用路由未接线：${operation}`);
   }
   sendBoundedJson(response, 200, result,
-    operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+    operation === 'knowledge.read' ? MAX_KNOWLEDGE_READ_RESPONSE_BYTES
+      : operation === 'knowledge.search' || operation === 'memory.search' ? MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES
+      : operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
       : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
 }
 
@@ -1596,6 +1914,31 @@ export async function handleApplicationRequest(input: ApplicationRequestInput): 
         if (isPublicError(error)) throw new CorePublicError(error.code, operation);
         throw error;
       }
+      return;
+    }
+    if (operation === 'project.resources.sources.configure') {
+      authenticateOrReject(request, input.authToken, operation);
+      if (input.rawQuery !== '') reject(400, 'invalid_input', operation, '管理入口不接受查询参数');
+      if (input.app.getLifecycleState() !== 'ready') reject(503, 'not_ready', operation, 'Host 未就绪');
+      const service = input.app.projectResourceService;
+      if (!service) reject(501, 'unsupported', operation, '来源管理未装配');
+      if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)
+        || (parsedBody as Record<string, unknown>).projectId !== route.pathParam?.value) {
+        reject(400, 'invalid_input', operation, '来源管理项目不匹配');
+      }
+      try {
+        sendBoundedJson(response, 200, await service.configureSource(input.app.principal, parsedBody), MAX_APP_BODY_BYTES, operation);
+      } catch (error) {
+        if (isStorageError(error)) {
+          reject(error.kind === 'conflict' ? 409 : error.kind === 'ownership' ? 403 : error.kind === 'validation' ? 400 : 500,
+            error.kind === 'conflict' ? 'conflict' : error.kind === 'ownership' ? 'forbidden' : error.kind === 'validation' ? 'invalid_input' : 'internal', operation, '来源管理请求被拒绝');
+        }
+        throw error;
+      }
+      return;
+    }
+    if (operation === 'repository.move.confirm') {
+      await handleRepositoryMoveConfirm(input, parsedBody);
       return;
     }
     if (operation === 'commands.submit') {

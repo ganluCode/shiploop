@@ -124,12 +124,13 @@ import type {
   ExecutionStopManualActionResult,
 } from '../../ports/execution-stop-manual.js';
 
-import { TASK_STATUSES } from '../../ports/plan-store.js';
+import { validateUpdatePlanEntityLabelsInput, TASK_STATUSES } from '../../ports/plan-store.js';
 import type { TaskStatus } from '../../ports/plan-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type { PlanListRequest, PlanRecordPage, SettingsScopeSnapshot } from '../../ports/queries.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
+import { parseStoredRunLabels } from './run-labels.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
@@ -169,6 +170,7 @@ interface RunSqlRow {
   readonly batch_id: string;
   readonly feature_id: string;
   readonly purpose: string;
+  readonly labels: string;
   readonly input_snapshot: string;
   readonly config_snapshot: string;
   readonly status: string;
@@ -273,7 +275,7 @@ const SELECT_BATCH_SQL =
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
   'runtime_starts, no_progress_runs, deadline_at, reason, pause_requested_at FROM execution_batches';
 const SELECT_RUN_SQL =
-  'SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
+  'SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, labels, ' +
   'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, ' +
   'max_attempts_per_run, run_time_limit_ms, attempts_created, reason, started_at, ended_at, ' +
   'pause_requested_at FROM runs';
@@ -350,6 +352,8 @@ export interface SqliteExecutionAccess {
   reviseBatchBudgetInTransaction(input: unknown): BatchBudgetRevisionResult;
   /** 创建执行 Run（派发身份/上限冻结；同 Feature 活动 Run 唯一兜底）。 */
   insertExecutionRunInTransaction(input: unknown): RunRecord;
+  /** 纯标签 CAS 编辑 Run；只触达 runs.labels/revision/updated_at。 */
+  updateExecutionRunLabelsInTransaction(input: unknown): RunRecord;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership）。 */
   getExecutionBatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 读取 Batch 的不可变成员范围（按 memberOrdinal；同项目归属已核验）。 */
@@ -517,8 +521,10 @@ export function createSqliteExecutionAccess(
   })();
   const SELECT_BATCH = pauseColumnsPresent ? SELECT_BATCH_SQL
     : SELECT_BATCH_SQL.replace('reason, pause_requested_at FROM execution_batches', 'reason, NULL AS pause_requested_at FROM execution_batches');
-  const SELECT_RUN = pauseColumnsPresent ? SELECT_RUN_SQL
-    : SELECT_RUN_SQL.replace('pause_requested_at FROM runs', 'NULL AS pause_requested_at FROM runs');
+  const labelsColumnPresent = (session.database.prepare("SELECT 1 FROM pragma_table_info('runs') WHERE name = 'labels'").get() !== undefined);
+  const runSelect = labelsColumnPresent ? SELECT_RUN_SQL : SELECT_RUN_SQL.replace('purpose, labels, ', "purpose, '[]' AS labels, ");
+  const SELECT_RUN = pauseColumnsPresent ? runSelect
+    : runSelect.replace('pause_requested_at FROM runs', 'NULL AS pause_requested_at FROM runs');
 
   function assertOpen(operation: string): void {
     if (!session.isOpen()) {
@@ -615,6 +621,7 @@ export function createSqliteExecutionAccess(
       batchId: row.batch_id,
       featureId: row.feature_id,
       purpose: row.purpose,
+      labels: parseStoredRunLabels(row.labels, operation),
       inputSnapshot: parseJsonColumn(row.input_snapshot, operation, 'invalid_input_snapshot_json'),
       configSnapshot: parseJsonColumn(row.config_snapshot, operation, 'invalid_config_snapshot_json'),
       status: requireBatchStatus(row.status, operation, 'run'),
@@ -1049,6 +1056,48 @@ export function createSqliteExecutionAccess(
     return batchFromRow(updated, operation);
   }
 
+  function updateExecutionRunLabelsInTransaction(input: unknown): RunRecord {
+    const operation = 'ExecutionStore.updateExecutionRunLabels';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateUpdatePlanEntityLabelsInput(input, operation);
+    if (valid.entityType !== 'run') {
+      throw new StorageError('validation', operation, 'Run 标签原语只接受 entityType=run');
+    }
+    const entity: StorageEntityRef = { type: 'run', projectId: valid.projectId, id: valid.id };
+    const db = session.database;
+    const row = db.prepare<[string], { project_id: string; revision: number }>(
+      'SELECT project_id, revision FROM runs WHERE id = ?',
+    ).get(valid.id);
+    if (row === undefined) {
+      throw notFound(operation, entity, `Run ${valid.id} 不存在`);
+    }
+    if (row.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Run 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    if (row.revision !== valid.expectedRevision) {
+      throw new StorageError('conflict', operation, '标签编辑 CAS 不匹配（旧 revision 拒绝）', {
+        entity,
+        details: { reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: row.revision },
+      });
+    }
+    const timestamp = nowUtcMs();
+    const changed = db.prepare(
+      'UPDATE runs SET labels = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?',
+    ).run(JSON.stringify(valid.labels), timestamp, valid.projectId, valid.id, valid.expectedRevision);
+    if (changed.changes !== 1) {
+      throw new StorageError('conflict', operation, '标签编辑 CAS 不匹配（竞争写入拒绝）', {
+        entity,
+        details: { reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: row.revision + 1 },
+      });
+    }
+    const updated = db.prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`).get(valid.id);
+    if (updated === undefined) {
+      throw executionCorruptError(operation, entity, 'Run 更新后无法读取');
+    }
+    return runFromRow(updated, operation);
+  }
+
   function insertExecutionRunInTransaction(input: unknown): RunRecord {
     const operation = 'ExecutionStore.insertExecutionRun';
     assertOpen(operation);
@@ -1081,12 +1130,16 @@ export function createSqliteExecutionAccess(
     } else if (batchRow.feature_id !== valid.featureId) {
       throw ownership(operation, entity, 'Run 的 Feature 不在父 Batch 的单 Feature 范围内');
     }
+    if (!labelsColumnPresent && valid.labels.length > 0) {
+      throw new StorageError('validation', operation, 'Run 标签需要先升级数据库到 v53', { entity });
+    }
     try {
-      db.prepare(
-        'INSERT INTO runs (id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
-          'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run, ' +
-          'run_time_limit_ms, attempts_created, reason) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)',
-      ).run(
+      const insertSql = 'INSERT INTO runs (id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
+        (labelsColumnPresent ? 'labels, ' : '') +
+        'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run, ' +
+        'run_time_limit_ms, attempts_created, reason) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ' +
+        (labelsColumnPresent ? '?, ' : '') + '?, ?, ?, ?, ?, ?, ?, ?, 0, ?)';
+      db.prepare(insertSql).run(
         valid.runId,
         timestamp,
         valid.projectId,
@@ -1094,6 +1147,7 @@ export function createSqliteExecutionAccess(
         valid.batchId,
         valid.featureId,
         valid.purpose,
+        ...(labelsColumnPresent ? [JSON.stringify(valid.labels)] : []),
         JSON.stringify(valid.inputSnapshot),
         JSON.stringify(valid.configSnapshot),
         valid.status,
@@ -3497,6 +3551,7 @@ export function createSqliteExecutionAccess(
     insertBatchBudgetRevisionInTransaction,
     reviseBatchBudgetInTransaction,
     insertExecutionRunInTransaction,
+    updateExecutionRunLabelsInTransaction,
     getExecutionBatchInTransaction,
     listExecutionBatchMemberFeatureIdsInTransaction,
     listExecutionRunsForWorkKeyInTransaction,

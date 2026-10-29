@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/host/p06-2-knowledge-host.test.ts", "all": true },
+        { "file": "test/modules/host/p06-2-knowledge-wire.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/host/host-client-application.test.ts", "all": true },
+        { "file": "test/modules/host/host-client.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-http-transport.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p02-3-baseline-host-routes.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p06-1-profile-host-protocol.test.ts", "all": true },
+        { "file": "test/modules/storage/artifacts/p06-2-f003-knowledge-query.test.ts", "all": true },
+        { "file": "test/modules/storage/artifacts/p06-2-f004-memory.test.ts", "all": true },
+        { "file": "test/modules/engineering/client-protocol-boundary.test.ts", "all": true }
+      ]
+    }
+  ]
+}

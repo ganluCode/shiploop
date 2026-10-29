@@ -55,6 +55,8 @@ import { validateRuntimeRecoveryDecision } from '../ports/runtime-recovery.js';
 import type { CommandProcessIdentity } from '../ports/command-process.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import { PublicError } from '../ports/commands.js';
+import { createLocalOwnerPrincipal } from '../ports/authorization.js';
+import type { ProjectResourceSelection } from '../ports/project-resources.js';
 import { isFinalizationOnlyRun, type FinalizationExecutionPort } from '../ports/finalization-execution.js';
 import type { FinalizationCompletionPort } from '../ports/finalization-completion.js';
 import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
@@ -70,6 +72,8 @@ export interface WorkRuntimeContext {
   readonly workspaceRoots: Readonly<Record<string, string>>;
   readonly reader: (request: RuntimeExecutionRequest) => BoundExecutionInputReader | undefined;
   readonly commitCommandIdentity: (identity: CommandProcessIdentity, request: RuntimeExecutionRequest) => Promise<{ launchId: string }>;
+  /** Frozen project resource selection for a new Work Attempt; no live config is exposed to Runtime. */
+  readonly projectResourceSelection?: (projectId: string) => ProjectResourceSelection;
 }
 /** Approved Task-local routing, supplied by trusted assembly; authorization is checked on every switch. */
 export interface WorkFailureRoutingAssembly {
@@ -93,7 +97,7 @@ export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
 export function assembleWorkExecution(options: {
   readonly session: SqliteStorageSession;
   readonly application: Pick<CoreApplication, 'dataRoot' | 'artifactStore' | 'artifactFileStore' | 'stateStore' |
-    'configurationService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare' | 'planningInputPrepare'> & {
+    'configurationService' | 'projectResourceService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare' | 'planningInputPrepare'> & {
       readonly runtimeRecovery?: CoreApplication['runtimeRecovery'];
       readonly runtimeRecoveryCatalog?: CoreApplication['runtimeRecoveryCatalog'];
       readonly workRecoveryContinuation?: CoreApplication['workRecoveryContinuation'];
@@ -246,6 +250,7 @@ export function assembleWorkExecution(options: {
     return outcome;
   }
   const runtimeAssembly = options.runtimeFactory?.({ capabilityCatalog: options.capabilityCatalog, workspaceRoots, reader: request => readers.get(request.invocationId),
+    projectResourceSelection: projectId => app.projectResourceService.snapshotForAttempt(createLocalOwnerPrincipal(), projectId),
     async commitCommandIdentity(processIdentity, request) {
       if (request.identity.purpose !== 'work') throw new TypeError('Work identity required');
       const work = request.identity;

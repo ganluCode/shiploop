@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      {"file": "test/modules/host/p06-3-source-registration.test.ts", "all": true},
+      {"file": "test/modules/host/p04-2-work-tools.test.ts", "all": true},
+      {"file": "test/modules/cli/p06-3-f006-resource-cli.test.ts", "all": true},
+      {"file": "test/modules/host/p06-3-f006-resource-client.test.ts", "all": true},
+      {"file": "test/modules/host/host-startup.test.ts", "all": true},
+      {"file": "test/modules/cli/app-cli-args.test.ts", "all": true},
+      {"file": "test/modules/cli/app-cli-config-execute.test.ts", "all": true},
+      {"file": "test/modules/cli/app-cli-execute.test.ts", "all": true},
+      {"file": "test/modules/cli/control/p03-9-f015-cli-control.test.ts", "all": true},
+      {"file": "test/modules/host/p04-2-access-integration.test.ts", "all": true},
+      {"file": "test/modules/host/p06-3-f005-resource-command-host.test.ts", "all": true}
+    ]
+  }]
+}

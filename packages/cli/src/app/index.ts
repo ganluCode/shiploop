@@ -32,6 +32,9 @@ export type {
   ParsedConfigGet,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedKnowledgeSearch,
+  ParsedKnowledgeRead,
+  ParsedKnowledgeCommand,
   ParsedFeatureGet,
   ParsedFeatureImport,
   ParsedFeatureList,
@@ -89,6 +92,7 @@ export type {
   ParsedGitOperationGet,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
+export { formatKnowledgeSearchText, formatKnowledgeReadText } from './knowledge.js';
 export {
   FEATURE_FINAL_APPROVAL_NOTE,
   buildBatchDeliveryView,

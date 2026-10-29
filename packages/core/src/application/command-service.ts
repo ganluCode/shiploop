@@ -12,6 +12,7 @@
  * 更新复用 P01 既有 *_updated 写入，不重复。
  */
 import { submitPhaseMutation } from './phase-lifecycle.js';
+import type { ProjectProfileDetectionService, PreparedProfileDetection } from './project-profile-detection.js';
 import { submitFeaturePhaseMove } from './feature-phase.js';
 import { submitFeatureDagUpdate } from './feature-dag-update.js';
 import { randomBytes } from 'node:crypto';
@@ -126,6 +127,14 @@ import {
   submitTaskStrategyUpdate,
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
+import {
+  TASK_STRATEGY_REAPPLICATION_OPERATION,
+  submitTaskStrategyReapplication,
+} from './task-strategy-reapply.js';
+import type { ProjectProfileService } from './project-profile-service.js';
+import type { ProjectResourceService } from './project-resource-service.js';
+import type { ProjectResourceStore } from '../ports/project-resource-store.js';
+import type { ProjectResourceCandidate } from '../ports/project-resources.js';
 
 import { createBatchDeliveryCommandHandler, type BatchDeliveryDependencies } from './batch-delivery-commands.js';
 export interface DeliveryActivity {
@@ -162,7 +171,10 @@ export interface CommandServiceOptions {
    */
   readonly executionStopControl?: import('../ports/execution-stop.js').ExecutionStopControlPort;
   readonly atomicStore: AtomicCommandStore;
-  /** F-008：project.register 的只读仓库检查（写事务之外调用；不传则注册命令 unsupported）。 */
+  /** P06-1：Profile confirm/modify/reject uses Core-owned authorization and version CAS. */
+  readonly projectProfileService?: ProjectProfileService;
+  readonly projectProfileDetection?: ProjectProfileDetectionService;
+
   readonly repositoryInspector?: RepositoryInspector;
   /** F-009：配置命令的能力目录复检（可信装配注入；不传则配置命令 unsupported）。 */
   readonly capabilityCatalog?: RuntimeCapabilityCatalog;
@@ -236,8 +248,13 @@ export interface CommandServiceOptions {
    * composition 根；受控测试可直接注入窄端口实现。
    */
   readonly taskVerificationContinue?: TaskVerificationContinueDeps;
-  readonly batchDelivery?: BatchDeliveryDependencies;
   readonly featureDelivery?: FeatureDeliveryDependencies;
+  readonly batchDelivery?: BatchDeliveryDependencies;
+  /** P06-3 / F-005：资源命令事务外候选核验 + 同事务配置 CAS。 */
+  readonly projectResources?: {
+    readonly service: ProjectResourceService;
+    readonly store: ProjectResourceStore;
+  };
   readonly nowUtcMs?: () => number;
 }
 
@@ -296,6 +313,8 @@ function isSettingsEnvelope(envelope: ValidatedCommandEnvelope): envelope is Set
 export function createCommandService(options: CommandServiceOptions): CommandService {
   const store = options.atomicStore;
   const repositoryInspector = options.repositoryInspector;
+  const projectProfileService = options.projectProfileService;
+
   const capabilityCatalog = options.capabilityCatalog;
   const baselineService = options.baselineService;
   const baselineCancel = options.baselineCancel;
@@ -311,6 +330,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionDispatchSignal = options.executionDispatchSignal;
   const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
+  const projectResources = options.projectResources;
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
@@ -380,7 +400,40 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     return receipt;
   }
 
-  /** 注册：项目 + 绑定 + project.registered 创建事件 + 回执同一事务（F-008）。 */
+  function submitRepositoryRebind(
+    principal: TrustedPrincipal,
+    envelope: Extract<ValidatedCommandEnvelope, { operation: 'project.repository.rebind' }>,
+    digest: string,
+    transaction: CommandTransaction,
+    now: number,
+  ): CommandReceipt {
+    const identity: ReceiptIdentity = { principalId: principal.principalId, commandId: envelope.commandId,
+      operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+      completedAt: new Date(now).toISOString() };
+    try {
+      const result = transaction.rebindRepository(envelope.scope.projectId, {
+        expectedRevision: envelope.expectedRevision,
+        expectedBindingRevision: envelope.payload.expectedBindingRevision,
+        expectedBindingId: envelope.payload.expectedBindingId,
+        canonicalPath: envelope.payload.canonicalPath,
+        gitCommonDir: envelope.payload.gitCommonDir,
+        repoIdentity: envelope.payload.repoIdentity,
+      });
+      const receipt = createCompletedReceipt({ ...identity, resultRef: createResultRef(randomBytes(32)), result: {
+        project: toPublicProjectRecord(result.project), previousBinding: toPublicRepositoryBindingRecord(result.previousBinding),
+        binding: toPublicRepositoryBindingRecord(result.binding), snapshots: result.snapshots,
+      } });
+      transaction.saveReceipt(receipt);
+      return receipt;
+    } catch (error) {
+      if (!isStorageError(error, 'conflict') && !isStorageError(error, 'not_found')) throw error;
+      const receipt = createRejectedReceipt({ ...identity, error: mapStorageError(error as import('../ports/errors.js').StorageError, { operation: envelope.operation }) });
+      transaction.saveReceipt(receipt);
+      return receipt;
+    }
+  }
+
+
   function submitRegister(
     principal: TrustedPrincipal,
     envelope: Extract<ValidatedCommandEnvelope, { operation: 'project.register' }>,
@@ -680,12 +733,22 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'project.register' && repositoryInspector === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'project.profile.detect' && options.projectProfileDetection === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
+        if (envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') {
+          if (projectProfileService === undefined) throw new PublicError('unsupported', operation);
+        }
+
         if (isSettingsEnvelope(envelope) && capabilityCatalog === undefined) {
           throw new PublicError('unsupported', operation);
         }
         // P03-2 / F-001：Task 策略编辑的能力兼容校验复用可信目录；目录未装配
         // 时命令 unsupported（与配置命令同一纪律，不冒充能力）。
         if (envelope.operation === TASK_STRATEGY_UPDATE_OPERATION && capabilityCatalog === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
+        if (envelope.operation === TASK_STRATEGY_REAPPLICATION_OPERATION && capabilityCatalog === undefined) {
           throw new PublicError('unsupported', operation);
         }
         // P02-3 / F-014：baseline.cancel 已随取消/停止核验（F-010/F-012）进入白名单；
@@ -743,9 +806,18 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && taskVerificationContinue === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'project.resource.import' || envelope.operation === 'project.resource.enable'
+          || envelope.operation === 'project.resource.disable' || envelope.operation === 'project.resource.revoke') {
+          if (projectResources === undefined) throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
+          envelope.operation !== 'project.profile.detect' &&
+          envelope.operation !== 'project.profile.confirm' &&
+          envelope.operation !== 'project.profile.modify' &&
+          envelope.operation !== 'project.profile.reject' &&
           envelope.operation !== 'project.register' &&
+          envelope.operation !== 'project.repository.rebind' &&
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'execution.attempt.cancel' &&
@@ -766,6 +838,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
+          envelope.operation !== TASK_STRATEGY_REAPPLICATION_OPERATION &&
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
           envelope.operation !== TASK_APPROVAL_BLOCK_OPERATION &&
           !TASK_APPROVAL_DECISION_OPERATIONS.includes(envelope.operation as (typeof TASK_APPROVAL_DECISION_OPERATIONS)[number]) &&
@@ -778,6 +851,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
           envelope.operation !== TASK_VERIFICATION_CONTINUE_OPERATION &&
+          envelope.operation !== 'project.resource.import' &&
+          envelope.operation !== 'project.resource.enable' &&
+          envelope.operation !== 'project.resource.disable' &&
+          envelope.operation !== 'project.resource.revoke' &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -804,6 +881,37 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           options.atomicStore.transact('task.verification.continue.preflight', tx =>
             validateTaskVerificationContinue(envelope, tx, taskVerificationContinue!));
           continuationStopEvidence = await taskVerificationContinue.verifyCurrentEvidence(envelope);
+        }
+
+        let profileMutationResult: import('../ports/project-profile-store.js').PersistedProjectProfile | undefined;
+        let preparedProfile: PreparedProfileDetection | undefined;
+        if (envelope.operation === 'project.profile.detect' && existing === undefined) {
+          preparedProfile = await options.projectProfileDetection!.prepare(principal, envelope.scope.projectId);
+        }
+        let projectResourceCandidate: ProjectResourceCandidate | undefined;
+        if (existing === undefined && projectResources !== undefined
+          && (envelope.operation === 'project.resource.import' || envelope.operation === 'project.resource.enable'
+            || envelope.operation === 'project.resource.disable' || envelope.operation === 'project.resource.revoke')) {
+          const projectId = envelope.scope.projectId;
+          if (envelope.operation === 'project.resource.import') {
+            projectResourceCandidate = await projectResources.service.prepareImportCandidate(
+              principal, projectId, envelope.expectedRevision, envelope.payload,
+            );
+          } else if (envelope.operation === 'project.resource.enable') {
+            projectResourceCandidate = await projectResources.service.prepareEnable(
+              principal, projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId,
+            );
+          } else {
+            projectResources.service.assertWriteAccess(principal, projectId);
+          }
+        }
+        if ((envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') && existing === undefined) {
+          const action = envelope.operation === 'project.profile.confirm' ? 'confirm' : envelope.operation === 'project.profile.modify' ? 'modify' : 'reject';
+          profileMutationResult = projectProfileService![action](principal, {
+            projectId: envelope.scope.projectId,
+            expectedRevision: envelope.expectedRevision,
+            ...(envelope.payload.profile === undefined ? {} : { profile: envelope.payload.profile }),
+          });
         }
 
         // F-008：只读仓库检查（Git/文件系统）在写事务之外，仅对新命令执行；
@@ -991,6 +1099,68 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (original !== undefined) return original;
           const now = nowUtcMs();
           checkTiming(envelope, now);
+          if (projectResources !== undefined && (envelope.operation === 'project.resource.import'
+            || envelope.operation === 'project.resource.enable' || envelope.operation === 'project.resource.disable'
+            || envelope.operation === 'project.resource.revoke')) {
+            const identity: ReceiptIdentity = {
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+            };
+            try {
+              const projectId = envelope.scope.projectId;
+              const configuration = envelope.operation === 'project.resource.import'
+                ? projectResources.store.importCandidateInTransaction(projectId, envelope.expectedRevision, projectResourceCandidate!)
+                : envelope.operation === 'project.resource.enable'
+                  ? projectResources.store.setEnabledInTransaction(projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId, true)
+                  : envelope.operation === 'project.resource.disable'
+                    ? projectResources.store.setEnabledInTransaction(projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId, false)
+                    : projectResources.store.revokeInTransaction(projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId);
+              const receipt = createCompletedReceipt({
+                ...identity,
+                resultRef: createResultRef(randomBytes(32)),
+                // Configuration acceptance is deliberately separate from Runtime loading/execution.
+                result: {
+                  configuration,
+                  resourceLoaded: false,
+                  runtimeExecuted: false,
+                  appliesTo: 'new_attempts_only',
+                },
+              });
+              transaction.saveReceipt(receipt);
+              return receipt;
+            } catch (error) {
+              if (!(isStorageError(error) || error instanceof PublicError)) throw error;
+              const receipt = createRejectedReceipt({ ...identity, error: mapToPublicError(error, { operation }) });
+              transaction.saveReceipt(receipt);
+              return receipt;
+            }
+          }
+          if (envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') {
+            if (profileMutationResult === undefined) throw new TypeError('Profile 命令缺少事务外变更结果');
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId, commandId: envelope.commandId, operation: envelope.operation,
+              scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)),
+              result: { profile: profileMutationResult.profile, profileDigest: profileMutationResult.profileDigest },
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
+          if (envelope.operation === 'project.profile.detect') {
+            if (!preparedProfile) throw new TypeError('Profile detection preparation missing');
+            const saved = options.projectProfileDetection!.commit(principal, preparedProfile);
+            const receipt = createCompletedReceipt({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)),
+              result: { profile: saved.profile, profileDigest: saved.profileDigest } });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
           if (envelope.operation === 'project.register') {
             // 新注册命令必定已在事务外完成仓库检查（重放已在上面返回）。
             if (binding === undefined) throw new TypeError('注册命令缺少事务外仓库检查结果');
@@ -1254,6 +1424,25 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               },
             );
           }
+          if (envelope.operation === TASK_STRATEGY_REAPPLICATION_OPERATION) {
+            return submitTaskStrategyReapplication(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              {
+                capabilityCatalog: capabilityCatalog!,
+                ...(taskStrategyEditGuards !== undefined ? { guards: taskStrategyEditGuards } : {}),
+              },
+            );
+          }
           if (envelope.operation === TASK_APPROVAL_BLOCK_OPERATION) {
             return submitTaskApprovalBlock({ principalId: principal.principalId, commandId: envelope.commandId,
               operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
@@ -1435,6 +1624,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             });
             transaction.saveReceipt(receipt);
             return receipt;
+          }
+          if (envelope.operation === 'project.repository.rebind') {
+            return submitRepositoryRebind(principal, envelope, digest, transaction, now);
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

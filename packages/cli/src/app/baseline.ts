@@ -71,8 +71,8 @@ export interface BaselineCheckInputView {
   readonly checkKey: string;
   readonly kind: 'command';
   readonly argv: readonly string[];
-  readonly cwdRef?: string;
-  readonly environmentRef?: string;
+  readonly cwdRef?: string | null;
+  readonly environmentRef?: string | null;
   readonly timeoutMs: number;
   readonly required: boolean;
 }
@@ -563,6 +563,58 @@ export interface BaselineCheckCountsView {
   readonly notRun: number;
 }
 
+export interface BaselineCodeIdentityView {
+  readonly headCommit: string | null;
+  readonly workingTreeDigest: string;
+  readonly hasUncommittedChanges: boolean;
+}
+
+export type BaselineDirtyScopeStatusView = 'clean' | 'tracked' | 'untracked' | 'mixed' | 'unknown';
+
+export interface BaselineDirtyScopeView {
+  readonly status: BaselineDirtyScopeStatusView;
+  readonly explanation: string;
+}
+
+export interface BaselineEnvironmentIdentityView {
+  readonly schemaVersion: 1;
+  readonly environmentRef: string | null;
+  readonly definitionRevision: string | null;
+  readonly toolchain: Readonly<Record<string, string | null>>;
+  readonly platform: { readonly os: string | null; readonly arch: string | null };
+  readonly allowedVariables: readonly string[];
+  readonly coverage: readonly string[];
+  readonly unknownFields: readonly string[];
+}
+
+export interface BaselineAuthorizationView {
+  readonly projectId: string;
+  readonly repositoryBindingId: string;
+  readonly repositoryBindingRevision?: number;
+  readonly codeIdentity: BaselineCodeIdentityView;
+  readonly dirtyScope?: BaselineDirtyScopeView;
+  readonly environmentIdentity?: BaselineEnvironmentIdentityView;
+  readonly missingFields?: readonly string[];
+  readonly policyRevision?: string;
+  readonly planDigest?: string;
+  readonly plan?: BaselineCheckPlanView;
+}
+
+export interface BaselinePreviewResultView {
+  readonly projectId: string;
+  readonly previewDigest: string;
+  readonly policyRevision: string;
+  readonly repositoryBindingId?: string;
+  readonly repositoryBindingRevision?: number;
+  readonly bindingRecordRevision?: number;
+  readonly codeIdentity: BaselineCodeIdentityView;
+  readonly dirtyScope?: BaselineDirtyScopeView;
+  readonly environmentIdentity?: BaselineEnvironmentIdentityView;
+  readonly workspace: BaselinePreviewWorkspaceView;
+  readonly checks: readonly BaselinePreviewCheckView[];
+  readonly warnings: readonly BaselinePreviewWarningView[];
+}
+
 export interface BaselineCheckOutputRefView {
   readonly artifactId: string;
   readonly byteSize: number;
@@ -582,10 +634,97 @@ export interface BaselineCheckResultView {
   readonly signal: string | null;
   readonly timedOut: boolean;
   readonly output: BaselineCheckOutputRefView | null;
-  readonly tail: string | null;
+  readonly tail?: string | null;
+  readonly startedAt?: string | null;
+  readonly endedAt?: string | null;
+  readonly durationMs?: number | null;
+}
+export interface BaselineCheckOutcomeView {
+  readonly checkKey: string;
+  readonly argv: readonly string[];
+  readonly cwdRef: string | null;
+  readonly environmentRef: string | null;
+  readonly timeoutMs: number;
+  readonly status: BaselineCheckStatusView;
+  readonly reasonCode?: string;
+  readonly required: boolean;
+  readonly timedOut: boolean;
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  readonly durationMs: number | null;
+  readonly output: BaselineCheckOutputRefView | null;
+}
+
+export interface BaselineCommandResultView {
+  readonly operationId: string;
+  readonly state: BaselineDisplayState;
+  readonly status: BaselineOperationStatusView;
+  readonly reasonCode?: string;
+}
+export interface BaselineOperationResultView {
+  readonly operationId: string;
+  readonly state: BaselineDisplayState;
+  readonly status: BaselineOperationStatusView;
+  readonly reasonCode?: string;
+  readonly codeIdentity: BaselineCodeIdentityView | null;
+  readonly repositoryBindingId: string | null;
+  readonly repositoryBindingRevision: number | null;
+  readonly dirtyScope: BaselineDirtyScopeView | null;
+  readonly environmentIdentity: BaselineEnvironmentIdentityView | null;
+  readonly missingFields: readonly string[];
+  readonly policyRevision: string | null;
+  readonly planDigest: string | null;
+  readonly plan: BaselineCheckPlanView | null;
+  readonly createdAt: string;
   readonly startedAt: string | null;
   readonly endedAt: string | null;
-  readonly durationMs: number | null;
+  readonly summary: BaselineCheckCountsView;
+  readonly checks: readonly BaselineCheckOutcomeView[];
+}
+
+export type BaselineComparisonClassification =
+  | 'unchanged_passed' | 'existing_failure' | 'regressed' | 'new_failure' | 'fixed'
+  | 'not_run' | 'incomparable' | 'removed' | 'added';
+export type BaselineComparisonGap =
+  | 'baseline_not_completed' | 'authorization_missing' | 'code_identity_missing'
+  | 'binding_identity_missing' | 'binding_identity_changed' | 'dirty_scope_missing'
+  | 'dirty_scope_changed' | 'environment_identity_missing' | 'environment_identity_changed'
+  | 'check_not_run' | 'evidence_missing' | 'evidence_incomplete' | 'stop_unconfirmed'
+  | 'failure_identity_missing' | 'check_removed' | 'check_added' | 'check_definition_changed';
+export interface BaselineComparisonSourceView {
+  readonly operationId: string;
+  readonly projectId: string;
+  readonly operationStatus: BaselineOperationStatusView;
+  readonly codeIdentity: BaselineCodeIdentityView | null;
+  readonly repositoryBindingId: string | null;
+  readonly repositoryBindingRevision: number | null;
+  readonly dirtyScope?: BaselineDirtyScopeView | null;
+  readonly environmentIdentity?: BaselineEnvironmentIdentityView | null;
+  readonly evidence: readonly { readonly operationId: string; readonly checkKey: string; readonly artifactId: string | null }[];
+  readonly gaps: readonly BaselineComparisonGap[];
+}
+export interface BaselineComparisonCheckView {
+  readonly checkKey: string;
+  readonly classification: BaselineComparisonClassification;
+  readonly reason?: BaselineComparisonGap;
+  readonly definitionChanged: boolean;
+  readonly previous: BaselineCheckResultView | null;
+  readonly current: BaselineCheckResultView | null;
+  readonly evidence: {
+    readonly previous: { readonly operationId: string; readonly checkKey: string; readonly artifactId: string | null } | null;
+    readonly current: { readonly operationId: string; readonly checkKey: string; readonly artifactId: string | null } | null;
+  };
+}
+export interface BaselineComparisonView {
+  readonly schemaVersion: number;
+  readonly projectId: string;
+  readonly previous: BaselineComparisonSourceView;
+  readonly current: BaselineComparisonSourceView;
+  readonly codeDiff: { readonly headCommitChanged: boolean; readonly workingTreeDigestChanged: boolean; readonly uncommittedChangesChanged: boolean; readonly anyChanged: boolean };
+  readonly identityDiff: { readonly repositoryBindingChanged: boolean; readonly dirtyScopeChanged: boolean; readonly environmentChanged: boolean };
+  readonly checks: readonly BaselineComparisonCheckView[];
+  readonly comparable: boolean;
+  readonly gaps: readonly BaselineComparisonGap[];
 }
 
 export interface BaselineOperationView {
@@ -631,52 +770,16 @@ export interface BaselinePreviewWarningView {
 export interface BaselinePreviewWireView {
   readonly previewDigest: string;
   readonly policyRevision: string;
+  readonly repositoryBindingId?: string;
+  readonly repositoryBindingRevision?: number;
+  readonly bindingRecordRevision?: number;
   readonly codeIdentity: BaselineCodeIdentityView;
+  readonly dirtyScope?: BaselineDirtyScopeView;
+  readonly environmentIdentity?: BaselineEnvironmentIdentityView;
   readonly workspace: BaselinePreviewWorkspaceView;
   readonly checks: readonly BaselinePreviewCheckView[];
   readonly warnings: readonly BaselinePreviewWarningView[];
 }
-
-/** baseline preview 的结构化结果（含项目身份）。 */
-export interface BaselinePreviewResultView extends BaselinePreviewWireView {
-  readonly projectId: string;
-}
-
-/** 逐项检查的结构化输出（保留结果引用与耗时；tail 只在详情中携带）。 */
-export interface BaselineCheckOutcomeView {
-  readonly checkKey: string;
-  readonly status: BaselineCheckStatusView;
-  readonly reasonCode?: string;
-  readonly required: boolean;
-  readonly timedOut: boolean;
-  readonly exitCode: number | null;
-  readonly signal: string | null;
-  readonly durationMs: number | null;
-  readonly output: BaselineCheckOutputRefView | null;
-}
-
-/** baseline run/cancel 命令回执结果（含展示状态）。 */
-export interface BaselineCommandResultView {
-  readonly operationId: string;
-  readonly state: BaselineDisplayState;
-  readonly status: BaselineOperationStatusView;
-  readonly reasonCode?: string;
-}
-
-/** baseline status / run --wait 终态结果（含授权摘要的代码身份；拒绝记录为 null）。 */
-export interface BaselineOperationResultView {
-  readonly operationId: string;
-  readonly state: BaselineDisplayState;
-  readonly status: BaselineOperationStatusView;
-  readonly reasonCode?: string;
-  readonly codeIdentity: BaselineCodeIdentityView | null;
-  readonly createdAt: string;
-  readonly startedAt: string | null;
-  readonly endedAt: string | null;
-  readonly summary: BaselineCheckCountsView;
-  readonly checks: readonly BaselineCheckOutcomeView[];
-}
-
 export interface BaselineListEntryView {
   readonly operationId: string;
   readonly state: BaselineDisplayState;
@@ -817,13 +920,17 @@ export function classifyBaselineState(input: {
 function checkOutcome(check: BaselineCheckResultView): BaselineCheckOutcomeView {
   return {
     checkKey: check.checkKey,
+    argv: [...check.argv],
+    cwdRef: check.cwdRef,
+    environmentRef: check.environmentRef,
+    timeoutMs: check.timeoutMs,
     status: check.status,
     ...(check.reasonCode !== undefined ? { reasonCode: check.reasonCode } : {}),
     required: check.required,
     timedOut: check.timedOut,
     exitCode: check.exitCode,
     signal: check.signal,
-    durationMs: check.durationMs,
+    durationMs: check.durationMs ?? null,
     output: check.output === null ? null : { ...check.output },
   };
 }
@@ -837,7 +944,19 @@ export function buildBaselinePreviewResult(
     projectId,
     previewDigest: preview.previewDigest,
     policyRevision: preview.policyRevision,
+    ...(preview.repositoryBindingId === undefined ? {} : { repositoryBindingId: preview.repositoryBindingId }),
+    ...(preview.repositoryBindingRevision === undefined ? {} : { repositoryBindingRevision: preview.repositoryBindingRevision }),
+    ...(preview.bindingRecordRevision === undefined ? {} : { bindingRecordRevision: preview.bindingRecordRevision }),
     codeIdentity: { ...preview.codeIdentity },
+    ...(preview.dirtyScope === undefined ? {} : { dirtyScope: { ...preview.dirtyScope } }),
+    ...(preview.environmentIdentity === undefined ? {} : { environmentIdentity: {
+      ...preview.environmentIdentity,
+      toolchain: { ...preview.environmentIdentity.toolchain },
+      platform: { ...preview.environmentIdentity.platform },
+      allowedVariables: [...preview.environmentIdentity.allowedVariables],
+      coverage: [...preview.environmentIdentity.coverage],
+      unknownFields: [...preview.environmentIdentity.unknownFields],
+    } }),
     workspace: {
       excludedDirNames: [...preview.workspace.excludedDirNames],
       fileCount: preview.workspace.fileCount,
@@ -882,6 +1001,7 @@ export function buildBaselineOperationResult(
   operation: BaselineOperationView,
   checks: readonly BaselineCheckResultView[],
   codeIdentity?: BaselineCodeIdentityView | null,
+  authorization?: BaselineAuthorizationView | null,
 ): BaselineOperationResultView {
   return {
     operationId: operation.operationId,
@@ -895,6 +1015,23 @@ export function buildBaselineOperationResult(
     ...(operation.reasonCode !== undefined ? { reasonCode: operation.reasonCode } : {}),
     codeIdentity:
       codeIdentity === undefined || codeIdentity === null ? null : { ...codeIdentity },
+    repositoryBindingId: authorization?.repositoryBindingId ?? null,
+    repositoryBindingRevision: authorization?.repositoryBindingRevision ?? null,
+    dirtyScope: authorization?.dirtyScope === undefined ? null : { ...authorization.dirtyScope },
+    environmentIdentity: authorization?.environmentIdentity === undefined ? null : {
+      ...authorization.environmentIdentity,
+      toolchain: { ...authorization.environmentIdentity.toolchain },
+      platform: { ...authorization.environmentIdentity.platform },
+      allowedVariables: [...authorization.environmentIdentity.allowedVariables],
+      coverage: [...authorization.environmentIdentity.coverage],
+      unknownFields: [...authorization.environmentIdentity.unknownFields],
+    },
+    missingFields: [...(authorization?.missingFields ?? [])],
+    policyRevision: authorization?.policyRevision ?? null,
+    planDigest: authorization?.planDigest ?? null,
+    plan: authorization?.plan === undefined ? null : {
+      checks: authorization.plan.checks.map(check => ({ ...check, argv: [...check.argv] })),
+    },
     createdAt: operation.createdAt,
     startedAt: operation.startedAt,
     endedAt: operation.endedAt,
@@ -959,6 +1096,40 @@ function describeCodeIdentity(identity: BaselineCodeIdentityView): string {
   return `HEAD=${head} 工作区=${dirty} workingTreeDigest=${identity.workingTreeDigest}`;
 }
 
+function describeDirtyScope(scope: BaselineDirtyScopeView | null | undefined): string {
+  return scope === undefined || scope === null
+    ? 'null（历史记录缺少脏范围；不使用当前状态回填）'
+    : `${scope.status}（${scope.explanation}）`;
+}
+
+function describeEnvironmentIdentity(identity: BaselineEnvironmentIdentityView | null | undefined): string {
+  if (identity === undefined || identity === null) {
+    return 'null（历史记录缺少获准环境身份；不使用当前环境回填）';
+  }
+  return [
+    `ref=${identity.environmentRef ?? 'null'}`,
+    `definitionRevision=${identity.definitionRevision ?? 'null'}`,
+    `toolchain=${JSON.stringify(identity.toolchain)}`,
+    `platform=${JSON.stringify(identity.platform)}`,
+    `allowedVariables=${JSON.stringify([...identity.allowedVariables])}`,
+    `coverage=${JSON.stringify([...identity.coverage])}`,
+    `unknownFields=${JSON.stringify([...identity.unknownFields])}`,
+  ].join(' ');
+}
+
+function describeAuthorizationIdentity(input: {
+  readonly repositoryBindingId: string | null | undefined;
+  readonly repositoryBindingRevision: number | null | undefined;
+  readonly dirtyScope?: BaselineDirtyScopeView | null;
+  readonly environmentIdentity?: BaselineEnvironmentIdentityView | null;
+}): string[] {
+  return [
+    `  绑定身份：repositoryBindingId=${input.repositoryBindingId ?? 'null'} repositoryBindingRevision=${input.repositoryBindingRevision ?? 'null'}`,
+    `  脏范围：dirtyScope=${describeDirtyScope(input.dirtyScope)}`,
+    `  获准环境：${describeEnvironmentIdentity(input.environmentIdentity)}`,
+  ];
+}
+
 /**
  * baseline preview 人类预览：明确项目、argv、cwd、环境引用、timeout、政策
  * （policyRevision/required）及脏/无 HEAD 代码范围；argv 原样展示为 JSON 数组。
@@ -968,6 +1139,9 @@ export function formatBaselinePreview(view: BaselinePreviewResultView): string {
     'baseline preview 预览（只读事实；不执行检查命令、不安装依赖）：',
     `  项目：${view.projectId}`,
     `  代码范围：${describeCodeIdentity(view.codeIdentity)}`,
+    `  绑定身份：repositoryBindingId=${view.repositoryBindingId ?? '缺失'} repositoryBindingRevision=${view.repositoryBindingRevision ?? '缺失'} bindingRecordRevision=${view.bindingRecordRevision ?? '缺失'}`,
+    `  脏范围：dirtyScope=${describeDirtyScope(view.dirtyScope)}`,
+    `  获准环境：${describeEnvironmentIdentity(view.environmentIdentity)}`,
     `  工作区摘要：fileCount=${view.workspace.fileCount} excludedDirNames=${JSON.stringify([...view.workspace.excludedDirNames])}`,
     `  政策：policyRevision=${view.policyRevision}`,
     `  预览摘要：previewDigest=${view.previewDigest}（授权绑定完整输入摘要；argv/cwd/环境/timeout/政策/代码身份任一实质变化即失效）`,
@@ -1014,13 +1188,14 @@ function formatCheckOutcome(check: BaselineCheckOutcomeView): string {
   const exit = check.exitCode === null ? 'exitCode=null' : `exitCode=${check.exitCode}`;
   const signal = check.signal === null ? '' : ` signal=${check.signal}`;
   const timedOut = check.timedOut ? ' timedOut=true' : '';
-  const duration =
-    check.durationMs === null ? 'durationMs=null' : `durationMs=${check.durationMs}`;
-  const output =
-    check.output === null
-      ? 'output=（无）'
-      : `output.artifactId=${check.output.artifactId} byteSize=${check.output.byteSize} truncated=${String(check.output.truncated)}`;
-  return `    - ${check.checkKey}（${required}）status=${check.status}${reason} ${exit}${signal}${timedOut} ${duration} ${output}`;
+  const duration = check.durationMs === null ? 'durationMs=null' : `durationMs=${check.durationMs}`;
+  const output = check.output === null
+    ? 'output=（无）'
+    : `output.artifactId=${check.output.artifactId} byteSize=${check.output.byteSize} truncated=${String(check.output.truncated)}`;
+  return [
+    `    - ${check.checkKey}（${required}）status=${check.status}${reason} ${exit}${signal}${timedOut} ${duration} ${output}`,
+    `      argv=${formatArgvLossless(check.argv)} cwdRef=${check.cwdRef ?? '（仓库根）'} environmentRef=${check.environmentRef ?? '（最小环境：PATH）'} timeoutMs=${check.timeoutMs}`,
+  ].join('\n');
 }
 
 /** status/--wait 终态的人类摘要（逐项退出码/耗时/结果引用、代码身份；not_run 显式展示）。 */
@@ -1035,6 +1210,9 @@ export function formatBaselineOperationResult(result: BaselineOperationResultVie
     result.codeIdentity === null
       ? '  代码身份：（无授权行；拒绝记录未执行任何检查）'
       : `  代码身份：${describeCodeIdentity(result.codeIdentity)}`,
+    ...describeAuthorizationIdentity(result),
+    `  历史身份缺口：${result.missingFields.length === 0 ? '无' : result.missingFields.join(',')}`,
+    `  获准政策：policyRevision=${result.policyRevision ?? 'null'} planDigest=${result.planDigest ?? 'null'}`,
     `  检查计数：total=${counts.total} passed=${counts.passed} failed=${counts.failed} error=${counts.error} inconclusive=${counts.inconclusive} notRun=${counts.notRun}（not_run 不折算成功）`,
     '  检查明细：',
   ];
@@ -1045,7 +1223,39 @@ export function formatBaselineOperationResult(result: BaselineOperationResultVie
   return lines.join('\n');
 }
 
-/** baseline list 人类摘要（分页与状态区分；不折算 not_run）。 */
+/** 基线比较人类摘要：只表达两侧事实与逐项诊断，不生成豁免或验收结论。 */
+export function formatBaselineComparison(view: BaselineComparisonView): string {
+  const sourceLines = (label: string, source: BaselineComparisonSourceView): string[] => [
+    `  ${label}：operationId=${source.operationId} projectId=${source.projectId} operationStatus=${source.operationStatus}`,
+    `    代码身份：${source.codeIdentity === null ? 'null（缺失）' : describeCodeIdentity(source.codeIdentity)}`,
+    ...describeAuthorizationIdentity(source),
+    `    身份/证据缺口：${source.gaps.length === 0 ? '无' : source.gaps.join(',')}`,
+  ];
+  const lines = [
+    'baseline 比较结果（只读诊断；不自动豁免、不改变原结果）：',
+    `  项目：${view.projectId} schemaVersion=${view.schemaVersion} comparable=${String(view.comparable)}`,
+    `  代码差异：headCommitChanged=${String(view.codeDiff.headCommitChanged)} workingTreeDigestChanged=${String(view.codeDiff.workingTreeDigestChanged)} uncommittedChangesChanged=${String(view.codeDiff.uncommittedChangesChanged)} anyChanged=${String(view.codeDiff.anyChanged)}`,
+    `  身份差异：repositoryBindingChanged=${String(view.identityDiff.repositoryBindingChanged)} dirtyScopeChanged=${String(view.identityDiff.dirtyScopeChanged)} environmentChanged=${String(view.identityDiff.environmentChanged)}`,
+    ...sourceLines('历史基线', view.previous),
+    ...sourceLines('当前基线', view.current),
+    `  总体缺口：${view.gaps.length === 0 ? '无' : view.gaps.join(',')}`,
+    '  逐项比较：',
+  ];
+  for (const check of view.checks) {
+    const reason = check.reason === undefined ? '' : ` reason=${check.reason}`;
+    lines.push(`    - ${check.checkKey} classification=${check.classification}${reason} definitionChanged=${String(check.definitionChanged)}`);
+    if (check.previous !== null) {
+      lines.push(`      previous status=${check.previous.status} argv=${formatArgvLossless(check.previous.argv)} environmentRef=${check.previous.environmentRef ?? '（最小环境：PATH）'} evidence=${check.evidence.previous?.artifactId ?? 'null'}`);
+    }
+    if (check.current !== null) {
+      lines.push(`      current status=${check.current.status} argv=${formatArgvLossless(check.current.argv)} environmentRef=${check.current.environmentRef ?? '（最小环境：PATH）'} evidence=${check.evidence.current?.artifactId ?? 'null'}`);
+    }
+  }
+  lines.push('  无法确认相同失败、命令/环境变化或历史身份缺失时，保留 incomparable/缺口，不提供自动豁免结论。', '');
+  return lines.join('\n');
+}
+
+
 export function formatBaselineListResult(result: BaselineListResultView): string {
   const lines = [
     'baseline 历史列表：',

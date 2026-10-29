@@ -39,7 +39,7 @@ import {
   isRepositoryInspectionError,
   validateRepositoryInspectionPath,
 } from '../../../packages/core/src/ports/repository-inspector.ts';
-import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
+import { createRepositoryInspector, deriveObservedRepoIdentity } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import type { RepositoryInspector } from '../../../packages/core/src/ports/repository-inspector.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import { assertGitAvailable, commitAll, git, initGitRepo } from '../../helpers/git-repo.ts';
@@ -101,7 +101,7 @@ describe('P01-3 / F-004 只读仓库路径检查适配器', () => {
       const realRepo = realpathSync(repo);
       expect(result.canonicalPath).toBe(realRepo);
       expect(result.gitCommonDir).toBe(realpathSync(join(realRepo, '.git')));
-      expect(result.repoIdentity).toBe(deriveRepoIdentity(result.gitCommonDir as string));
+      expect(result.repoIdentity).toBe(deriveObservedRepoIdentity(result.gitCommonDir as string));
       expect(result.repoIdentity.startsWith(REPO_IDENTITY_PREFIX)).toBe(true);
       expect(result.headCommit).toBe(head);
       expect(result.hasInitialCommit).toBe(true);

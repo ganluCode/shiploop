@@ -210,7 +210,7 @@ describe('F-009 计划域 HostClient 纵向（真实 Host + SQLite）', () => {
     const s = await setupWired('vertical');
     try {
       const { projectId, phaseId } = await s.seedProjectWithPhase('phase-main');
-      expect(CURRENT_SCHEMA_VERSION).toBe(5);
+      expect(CURRENT_SCHEMA_VERSION).toBe(6);
 
       // 事件观察：以命令前水位续读（SSE 线校验覆盖新事件类型）。
       const snapshotBefore = await s.client.getSnapshot({ kind: 'project', projectId });
