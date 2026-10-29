@@ -351,6 +351,9 @@ async function claimAndPass(
   const head = f.box.box.gitHead('A');
   const tree = git(['rev-parse', 'HEAD^{tree}'], f.box.box.repoDirA, { home: f.box.box.homeDir }).trim();
   const taskCommitId = randomUUID();
+  /* 摘要与 canonical 意图域一致：integrationPlan/budgetSnapshot 在注册校验
+   * 规范化后始终为显式 null（stableStringify 区分「键缺失」与 null，
+   * P05-7 摘要域扩展后 fixture 必须携带两者，否则读取侧重算不一致）。 */
   const intentDigest = computeGitOperationIntentDigest({
     operationId: taskCommitId,
     projectId: f.box.projectId,
@@ -364,6 +367,8 @@ async function claimAndPass(
     worktreePath: binding.canonicalPath,
     expectedHead: head,
     candidateTree: tree,
+    integrationPlan: null,
+    budgetSnapshot: null,
     codeDigest,
     verificationRefs: [{ kind: 'verification_batch', id: batchId, digest: codeDigest }],
     approvalRefs: [],
