@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { createFeatureWorktreePreparer } from '../../../packages/core/src/adapters/fs/feature-worktree-preparer.ts';
 import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs/workspace-inspector.ts';
+import { deriveObservedRepoIdentity } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { deriveRepoIdentity } from '../../../packages/core/src/ports/repository-inspector.ts';
 import type { WorkspacePreparationCheckpoint } from '../../../packages/core/src/ports/workspace-preparation.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
@@ -31,7 +32,7 @@ function fixture() {
   writeFileSync(join(source, 'source.ts'), 'baseline source\n');
   const baseCommit = commitAll(source, 'confirmed baseline');
   const gitCommonDir = realpathSync(join(source, '.git'));
-  const repoIdentity = deriveRepoIdentity(gitCommonDir);
+  const repoIdentity = deriveObservedRepoIdentity(gitCommonDir);
   const workspace = join(root, 'managed');
   const baseline = { repositoryBindingId: 'binding', repositoryBindingRevision: 1, repoIdentity,
     canonicalPath: workspace, gitCommonDir, branch: 'shiploop/f012', baseCommit };

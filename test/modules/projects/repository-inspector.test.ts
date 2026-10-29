@@ -24,6 +24,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -302,6 +303,34 @@ describe('P01-3 / F-004 只读仓库路径检查适配器', () => {
       expect(linkedResult.repoIdentity).toBe(mainResult.repoIdentity);
       expect(linkedResult.canonicalPath).not.toBe(mainResult.canonicalPath);
       expect(linkedResult.hasInitialCommit).toBe(true);
+    } finally {
+      sandbox.cleanup();
+    }
+  });
+
+  it('同一位置被另一仓库替换后 repoIdentity 改变：路径相同不判定为同一实体（P07-1/F-002）', async () => {
+    const sandbox = createTempSandbox();
+    try {
+      const repo = join(sandbox.path, 'repo-replaced');
+      initGitRepo(repo);
+      writeFileSync(join(repo, 'README.md'), 'first entity\n');
+      commitAll(repo, 'first entity');
+      const inspector = createRepositoryInspector();
+      const first = await inspector.inspect(repo);
+      const firstDerivedIdentity = deriveObservedRepoIdentity(first.gitCommonDir as string);
+
+      // 原位置替换：删除后重新 init 同路径仓库（独立 clone/重建的同路径场景同构）。
+      rmSync(repo, { recursive: true, force: true });
+      initGitRepo(repo);
+      writeFileSync(join(repo, 'README.md'), 'second entity\n');
+      commitAll(repo, 'second entity');
+      const second = await inspector.inspect(repo);
+
+      expect(second.canonicalPath).toBe(first.canonicalPath);
+      expect(second.gitCommonDir).toBe(first.gitCommonDir);
+      expect(second.repoIdentity).not.toBe(first.repoIdentity);
+      expect(first.repoIdentity).toBe(firstDerivedIdentity);
+      expect(second.repoIdentity).toBe(deriveObservedRepoIdentity(second.gitCommonDir as string));
     } finally {
       sandbox.cleanup();
     }

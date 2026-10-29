@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
 import type { CommandProcessHandle, CommandProcessIdentity, CommandProcessPort } from '../../../packages/core/src/ports/command-process.ts';
 import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs/workspace-inspector.ts';
+import { deriveObservedRepoIdentity } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { deriveRepoIdentity } from '../../../packages/core/src/ports/repository-inspector.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import { commitAll, git, initGitRepo } from '../../helpers/git-repo.ts';
@@ -25,7 +26,7 @@ function fixture() {
   git(['worktree', 'add', '-b', 'feature/test', workspace, baseCommit], source);
   const common = realpathSync(join(source, '.git'));
   const baseline = { repositoryBindingId: 'binding', repositoryBindingRevision: 1,
-    repoIdentity: deriveRepoIdentity(common), canonicalPath: realpathSync(workspace),
+    repoIdentity: deriveObservedRepoIdentity(common), canonicalPath: realpathSync(workspace),
     gitCommonDir: common, branch: 'feature/test', baseCommit };
   const inspector = createWorkspaceInspector({ authorizedRoots: [root],
     confirmProcessIdentity: async identity => ({ launchId: identity.launchId }) });
@@ -133,6 +134,31 @@ describe('P03-5 F-004 read-only workspace evidence', () => {
     expect(() => reader(f, { limits: { maxFiles: 20_001 } })).toThrow('invalid_input');
     expect(start).not.toHaveBeenCalled();
   });
+
+  it('[case:recovery-identity-boundary] verifies the real entity at recovery; legacy path identities stay isolated and same-path replacements are rejected', async () => {
+    const f = fixture();
+    // 正常恢复（含 linked worktree 场景，本夹具 workspace 即 linked worktree）：
+    // 现代 P06 文件系统对象身份与 common dir 实际实体一致。
+    await expect(f.inspector.inspect(f.baseline)).resolves.toMatchObject({ complete: true });
+    // 旧绑定（P06 前路径派生身份）：路径摘要匹配不足以证明仓库实体未被替换，
+    // 缺少实体证据时保持隔离并报告兼容限制，不以路径摘要回退证明安全。
+    const legacy = { ...f.baseline, repoIdentity: deriveRepoIdentity(f.baseline.gitCommonDir) };
+    await expect(f.inspector.inspect(legacy)).rejects.toMatchObject({ reason: 'repository_identity_unverifiable', complete: false });
+    // 原位置被另一仓库替换：路径相同但实体（dev/ino）已变，现代身份不符明确拒绝。
+    rmSync(f.source, { recursive: true, force: true });
+    initGitRepo(f.source);
+    writeFileSync(join(f.source, 'source.ts'), 'replacement entity\n');
+    commitAll(f.source, 'replacement entity');
+    await expect(f.inspector.inspect(f.baseline)).rejects.toMatchObject({ reason: 'repository_mismatch', complete: false });
+    // 元数据无法读取（父目录无搜索权限）：两个身份版本都失败关闭。
+    chmodSync(f.source, 0o000);
+    try {
+      await expect(f.inspector.inspect(f.baseline)).rejects.toMatchObject({ reason: 'repository_mismatch', complete: false });
+      await expect(f.inspector.inspect(legacy)).rejects.toMatchObject({ reason: 'repository_identity_unverifiable', complete: false });
+    } finally {
+      chmodSync(f.source, 0o755);
+    }
+  }, 20_000);
 
   it('distinguishes missing, unauthorized, wrong repository and damaged reciprocal registration', async () => {
     const f = fixture();

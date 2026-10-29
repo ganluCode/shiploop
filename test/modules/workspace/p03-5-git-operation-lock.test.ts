@@ -51,6 +51,11 @@ describe('F-003 Git public metadata lock', () => {
       .rejects.toMatchObject({ code: 'resource_busy', operation: 'baseline.run', details: { reason: 'baseline_in_progress' } });
     await lease.release();
     await lease.release();
+    // 旧身份 Work 调用方（P06 前路径派生身份）与 baseline 仍争用同一公共 claim。
+    const legacyWork = await work.acquire({ ...first, operationId: randomUUID(), repoIdentity: deriveRepoIdentity(first.gitCommonDir) });
+    await expect(baseline.acquire({ canonicalPath: first.workspacePath, gitCommonDir: first.gitCommonDir, operationId: randomUUID() }))
+      .rejects.toMatchObject({ code: 'resource_busy', operation: 'baseline.run', details: { reason: 'baseline_in_progress' } });
+    await legacyWork.release();
     const baselineLease = await baseline.acquire({ canonicalPath: first.workspacePath, gitCommonDir: first.gitCommonDir, operationId: first.operationId });
     await expect(work.acquire(input(box))).rejects.toMatchObject({ code: 'resource_busy' });
     await baselineLease.release();
@@ -153,5 +158,38 @@ describe('F-003 Git public metadata lock', () => {
     expect(existsSync(claimPath(input(box)))).toBe(false);
     const next = await createGitPublicMetadataLock().acquire(input(box));
     await next.release();
+  });
+
+  it('[case:git-lock-identity-race] legacy and modern callers contend for one claim across processes; independent repos never block', async () => {
+    const box = fixture(), environment = createIsolatedHostEnvironment();
+    held.push(() => environment.dispose());
+    const scriptPath = fileURLToPath(new URL('../../helpers/git-public-lock-child.ts', import.meta.url));
+    const modern = input(box);
+    const legacy = { ...modern, operationId: randomUUID(), repoIdentity: deriveRepoIdentity(modern.gitCommonDir) };
+    // 同一 Git common dir：旧身份调用方与新身份调用方真实争用同一公共 claim，
+    // 不按身份版本建立两把互不相干的锁——至多一个持有者（双向均如此）。
+    const contended = await runBarrierChildren(environment, {
+      scriptPath,
+      configs: [{ input: legacy }, { input: modern }],
+    });
+    expect(contended.filter(result => result.result.ok === true)).toHaveLength(1);
+    expect(contended.filter(result => result.result.code === 'resource_busy')).toHaveLength(1);
+    expect(existsSync(claimPath(modern))).toBe(false);
+    // 独立仓库互不阻塞：旧身份调用方与新身份调用方各自仓库可同时持有。
+    const cloneCommon = realpathSync(join(box.repos.cloneA, '.git'));
+    const independent = await runBarrierChildren(environment, {
+      scriptPath,
+      configs: [{ input: legacy }, {
+        input: {
+          ...modern,
+          workspacePath: box.repos.cloneA,
+          gitCommonDir: cloneCommon,
+          repoIdentity: deriveObservedRepoIdentity(cloneCommon),
+        },
+      }],
+    });
+    expect(independent.filter(result => result.result.ok === true)).toHaveLength(2);
+    expect(existsSync(claimPath(modern))).toBe(false);
+    expect(existsSync(join(cloneCommon, 'shiploop-baseline.claim'))).toBe(false);
   });
 });

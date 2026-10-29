@@ -49,6 +49,7 @@ import {
   REPOSITORY_INSPECTION_MAX_TIMEOUT_MS,
   RepositoryInspectionError,
   REPO_IDENTITY_PREFIX,
+  deriveRepoIdentity,
   validateRepositoryInspectionPath,
 } from '../../ports/repository-inspector.js';
 import type {
@@ -63,16 +64,32 @@ const OPERATION = 'RepositoryInspector.inspect';
  * 运行期仓库身份：在保留端口层路径派生身份的同时，加入 Git 公共目录的
  * 文件系统对象标识。这样同一目录的符号链接/linked worktree 保持一致，而
  * 原路径被另一仓库替换后不会误认为是同一个项目。
+ *
+ * stat 失败（元数据不可读）时退回路径身份，交由上层核对；需要区分
+ * 「实体证据可用」与「仅有路径摘要」的调用方使用 observeRepoIdentityEvidence。
  */
-export function deriveObservedRepoIdentity(gitCommonDirRealPath: string): string {
-  let identityMaterial = gitCommonDirRealPath;
+export type ObservedRepoIdentityEvidence =
+  | { readonly kind: 'entity'; readonly repoIdentity: string }
+  | { readonly kind: 'path_only'; readonly reason: 'metadata_unavailable' };
+
+export function observeRepoIdentityEvidence(gitCommonDirRealPath: string): ObservedRepoIdentityEvidence {
   try {
     const metadata = statSync(gitCommonDirRealPath);
-    identityMaterial = `${gitCommonDirRealPath}\u0000${String(metadata.dev)}:${String(metadata.ino)}`;
+    return {
+      kind: 'entity',
+      repoIdentity: `${REPO_IDENTITY_PREFIX}${createHash('sha256')
+        .update(`${gitCommonDirRealPath}\u0000${String(metadata.dev)}:${String(metadata.ino)}`, 'utf8')
+        .digest('hex')}`,
+    };
   } catch {
-    // 兼容已存在但暂不可 stat 的只读检查：退回原有路径身份，交由上层核对。
+    return { kind: 'path_only', reason: 'metadata_unavailable' };
   }
-  return `${REPO_IDENTITY_PREFIX}${createHash('sha256').update(identityMaterial, 'utf8').digest('hex')}`;
+}
+
+export function deriveObservedRepoIdentity(gitCommonDirRealPath: string): string {
+  const evidence = observeRepoIdentityEvidence(gitCommonDirRealPath);
+  // 兼容已存在但暂不可 stat 的只读检查：退回原有路径身份，交由上层核对。
+  return evidence.kind === 'entity' ? evidence.repoIdentity : deriveRepoIdentity(gitCommonDirRealPath);
 }
 
 /** 已解析的装配配置（全部有限且有界）。 */

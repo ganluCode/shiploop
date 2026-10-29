@@ -1,7 +1,7 @@
 import type { WorkspaceBaseline } from './workspace.js';
 
 export type WorkspaceInspectionReason = 'invalid_input' | 'outside_authorized_root' | 'not_found'
-  | 'permission_denied' | 'repository_mismatch' | 'registration_damaged' | 'detached_head'
+  | 'permission_denied' | 'repository_mismatch' | 'repository_identity_unverifiable' | 'registration_damaged' | 'detached_head'
   | 'branch_mismatch' | 'commit_missing' | 'git_failed' | 'git_timeout' | 'output_limit'
   | 'stop_unconfirmed' | 'file_limit' | 'byte_limit' | 'scan_timeout' | 'symlink_rejected'
   | 'special_file' | 'content_changed' | 'invalid_git_output' | 'io';

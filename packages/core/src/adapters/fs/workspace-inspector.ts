@@ -11,7 +11,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { CommandProcessError } from '../../ports/command-process.js';
 import type { CommandProcessPort, ConfirmCommandProcessIdentity } from '../../ports/command-process.js';
-import { deriveObservedRepoIdentity } from './repository-inspector.js';
+import { observeRepoIdentityEvidence } from './repository-inspector.js';
 import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 import { validateWorkspaceBaseline, type WorkspaceBaseline } from '../../ports/workspace.js';
 import { WorkspaceInspectionError, type WorkspaceContentEntry, type WorkspaceInspectionReason,
@@ -129,10 +129,19 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
     try { baseline = validateWorkspaceBaseline(input); } catch { return fail('invalid_input'); }
     if (baseline.branch === 'HEAD') fail('invalid_input');
     if (!roots.some(root => inside(root, baseline.canonicalPath))) fail('outside_authorized_root');
-    if (
-      deriveObservedRepoIdentity(baseline.gitCommonDir) !== baseline.repoIdentity &&
-      deriveRepoIdentity(baseline.gitCommonDir) !== baseline.repoIdentity
-    ) fail('repository_mismatch');
+    /* P07-1 / F-002 恢复入口实体身份核验：现代（P06）身份以 Git common dir
+     * 的文件系统对象标识（dev/ino）核对真实实体；旧路径派生身份保持已支持
+     * 兼容（锁与绑定去重仍接受两种身份），但路径摘要匹配不能证明仓库实体
+     * 未被替换（同路径重新 clone/重建的 dev/ino 已变）——旧绑定缺少实体证据
+     * 时保持隔离并报告兼容限制，不以路径摘要回退证明安全；显式迁移沿用 P06
+     * 授权入口，不在此自动重写历史 binding 或 operation 身份。 */
+    const identityEvidence = observeRepoIdentityEvidence(baseline.gitCommonDir);
+    if (identityEvidence.kind !== 'entity' || identityEvidence.repoIdentity !== baseline.repoIdentity) {
+      if (baseline.repoIdentity === deriveRepoIdentity(baseline.gitCommonDir)) {
+        fail('repository_identity_unverifiable');
+      }
+      fail('repository_mismatch');
+    }
     const startedAt = new Date().toISOString();
     const deadline = performance.now() + limits.totalTimeoutMs;
     let gitCalls = 0, outputBytes = 0;
