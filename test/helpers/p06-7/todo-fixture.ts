@@ -175,6 +175,7 @@ export interface TodoProcessFacts {
   readonly alive: number;
   readonly exited: number;
   readonly identities: readonly TodoProcessIdentity[];
+  readonly trees: readonly ReturnType<OwnedProcessTree['snapshot']>[];
 }
 
 export interface TodoDirtyEntry {
@@ -737,6 +738,7 @@ export function createTodoBrownfieldFixture(options: TodoBrownfieldFixtureOption
         alive: identities.filter((identity) => identity.alive).length,
         exited: identities.filter((identity) => !identity.alive).length,
         identities,
+        trees: [...ownedTrees.values()].map(tree => tree.snapshot()),
       };
     };
 

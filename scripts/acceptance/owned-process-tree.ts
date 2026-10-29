@@ -19,6 +19,7 @@ function processTable(): ProcessIdentity[] {
 /** Acceptance-only ownership tracking: ancestry first, then PID + start time + argv revalidation. */
 export class OwnedProcessTree {
   private readonly owned = new Map<number, string>();
+  private readonly observed = new Map<string, ProcessIdentity>();
   private readonly timer: ReturnType<typeof setInterval>;
   private scanFailed = false;
   private lastScanError = 'none';
@@ -64,12 +65,23 @@ export class OwnedProcessTree {
           }
         }
       }
+      for (const row of rows) {
+        if (this.owned.get(row.pid) === row.identity) this.observed.set(`${row.pid}/${row.identity}`, row);
+      }
       return rows;
     } catch (error) {
       this.scanFailed = true;
       this.lastScanError = String((error as NodeJS.ErrnoException).code ?? 'scan_error');
       return [];
     }
+  }
+
+  /** Read-only export of proven ancestry, retained after exit for acceptance evidence. */
+  snapshot(): { rootPid: number | null; scanConfirmed: boolean; identities: (ProcessIdentity & { alive: boolean })[] } {
+    const rows = this.capture();
+    return { rootPid: this.rootPid ?? null, scanConfirmed: !this.scanFailed,
+      identities: [...this.observed.values()].map(before => ({ ...before,
+        alive: rows.some(row => row.pid === before.pid && row.identity === before.identity && !row.zombie) })) };
   }
 
   kill(): void {
