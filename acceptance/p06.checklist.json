@@ -1,0 +1,495 @@
+{
+  "checklistVersion": 1,
+  "phase": "P06",
+  "layers": [
+    "unit",
+    "feature-integration",
+    "phase-acceptance"
+  ],
+  "executionTypes": [
+    "offline",
+    "live",
+    "manual",
+    "postponed"
+  ],
+  "evidenceCategories": [
+    "command-exit",
+    "sqlite",
+    "git",
+    "process",
+    "artifact",
+    "report",
+    "manifest",
+    "live",
+    "manual",
+    "sha",
+    "usage",
+    "cleanup"
+  ],
+  "countRule": "必需项全部 pass 才算通过；not_run 和人工 pending 不计入通过；deferred 项不参与通过计数；覆盖按必需断言与可观察事实判定，不按日志成功文本或测试数量判断",
+  "items": [
+    {
+      "id": "P06-FR1-OFFLINE-CLOSURE",
+      "group": "fr",
+      "title": "FR-1 存量接入离线闭环演示",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P06-1",
+        "P06-2",
+        "P06-3",
+        "P06-4",
+        "P06-5",
+        "P06-6"
+      ],
+      "scenarioIds": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "FR-1",
+        "AC-1",
+        "AC-3"
+      ],
+      "assertions": [
+        "阶段入口使用脚本化 Runtime，不调用真实模型或网络，并逐项绑定场景 ID、输入摘要和受测完整 SHA；SQLite、Git、文件和进程使用真实临时资源",
+        "接入带未提交文件和已知失败检查的 Todo 仓库后确认能力/检查、检索项目文档并完成受限增量修改；夹具准备失败或必需检查未运行时明确 not_run 且阶段不通过",
+        "重复运行使用独立临时资源，不依赖上一次残留；清理不触及用户仓库"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "git",
+        "process",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-FR2-NEGATIVE-EVIDENCE",
+      "group": "fr",
+      "title": "FR-2 负例与证据完整性",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P06-1",
+        "P06-2",
+        "P06-3",
+        "P06-4",
+        "P06-5",
+        "P06-6"
+      ],
+      "scenarioIds": [
+        "I07",
+        "I08"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-2",
+        "AC-4",
+        "AC-5"
+      ],
+      "assertions": [
+        "每项检查绑定场景 ID、输入摘要、受测 commit、实际命令、退出码、状态和证据类别；正常完成文本或测试数量不构成通过依据",
+        "每个失败用例核对结果、状态与是否产生意外副作用；不能靠手工改 SQLite、忽略失败或跳过必需检查通过",
+        "敏感凭据与开发机绝对路径不进入报告；not_run 与已知缺口如实展示"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "report",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-I01-BROWNFIELD-ONBOARDING",
+      "group": "scenario",
+      "title": "I01 存量 Todo 仓库接入保留脏状态",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-5"
+      ],
+      "scenarioIds": [
+        "I01"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "I01",
+        "P06-5",
+        "AC-1"
+      ],
+      "assertions": [
+        "带未提交修改、未跟踪文件和已知失败检查的 Todo 存量仓库经显式注册接入，未提交文件保持原样、既有失败不被掩盖",
+        "未注册路径、全局目录扫描或目录外知识文件被拒绝并记录原因；登记来源内容变化使旧预览失效"
+      ],
+      "evidence": [
+        "git",
+        "sqlite",
+        "artifact",
+        "command-exit",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-I02-PROFILE-CHECK-BASELINE",
+      "group": "scenario",
+      "title": "I02 技术画像与检查基线确认",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-1"
+      ],
+      "scenarioIds": [
+        "I02"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "I02",
+        "P06-1"
+      ],
+      "assertions": [
+        "项目技术画像与检查基线经确认固定，检查命令逐项可执行并绑定真实退出码",
+        "画像漂移、检查缺失或未确认基线时失败关闭；不得以占位检查或降低门槛放行"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact",
+        "command-exit",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P06-I03-KNOWLEDGE-MANIFEST",
+      "group": "scenario",
+      "title": "I03 项目知识检索与 Manifest 固定",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-2"
+      ],
+      "scenarioIds": [
+        "I03"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "I03",
+        "P06-2"
+      ],
+      "assertions": [
+        "Todo 项目文档按项目范围检索与读取，项目外路径不可见；输入 Manifest 固定后身份与摘要稳定",
+        "未固定输入不得进入执行；Manifest 损坏或摘要不匹配时拒绝执行并保留现场"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P06-I04-RESTRICTED-INCREMENT",
+      "group": "scenario",
+      "title": "I04 受限增量修改与验证",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-2",
+        "P06-6"
+      ],
+      "scenarioIds": [
+        "I04"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "I04",
+        "P06-2",
+        "P06-6"
+      ],
+      "assertions": [
+        "脚本化 Runtime 只能修改获准文件，越界写入被拒绝并保留现场；受限增量修改经验证后保留完整输入身份与差异事实",
+        "验证失败或修改范围漂移时阻塞，不以模型自报成功替代核对"
+      ],
+      "evidence": [
+        "git",
+        "sqlite",
+        "artifact",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P06-I05-RESOURCE-ISOLATION",
+      "group": "scenario",
+      "title": "I05 Skills/MCP 资源选择隔离",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-3"
+      ],
+      "scenarioIds": [
+        "I05"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "I05",
+        "P06-3"
+      ],
+      "assertions": [
+        "未选全局 Skills/MCP 资源不加载，首次执行与恢复后均不可用；资源清单按项目隔离",
+        "越权资源请求、伪造主体或跨项目访问被拒绝且状态不变，审计记录脱敏"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-I06-STDIO-MCP-FAKE",
+      "group": "scenario",
+      "title": "I06 本地无凭据 stdio MCP Fake server",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-4"
+      ],
+      "scenarioIds": [
+        "I06"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "I06",
+        "P06-4",
+        "AC-2"
+      ],
+      "assertions": [
+        "stdio MCP 只使用本地无凭据 Fake server 确定性验收：初始化、工具目录、分发、恢复与进程清理全程可观察",
+        "http/sse 等其他传输明确记录为 unsupported 或 not_run；真实凭据与外部服务器不进入默认验收"
+      ],
+      "evidence": [
+        "process",
+        "sqlite",
+        "artifact",
+        "command-exit",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-I07-FAIL-CLOSED-NEGATIVES",
+      "group": "scenario",
+      "title": "I07 负例 fail-closed 与副作用核对",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P06-3",
+        "P06-4",
+        "P06-5"
+      ],
+      "scenarioIds": [
+        "I07"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I07",
+        "FR-2",
+        "AC-3"
+      ],
+      "assertions": [
+        "无效清单、损坏 Manifest、MCP server 崩溃、越权审批/验收等故障注入核对结果、状态与意外副作用",
+        "失败关闭不覆盖既有成功证据、不静默重试放行；恢复操作保留原失败事实"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact",
+        "command-exit",
+        "report",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-I08-RERUN-EVIDENCE-INTEGRITY",
+      "group": "scenario",
+      "title": "I08 重复运行隔离与证据完整性",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P06-1",
+        "P06-2",
+        "P06-3",
+        "P06-4",
+        "P06-5",
+        "P06-6"
+      ],
+      "scenarioIds": [
+        "I08"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I08",
+        "AC-4",
+        "AC-5",
+        "P06-7"
+      ],
+      "assertions": [
+        "重复运行使用独立 run-id 与临时资源，不依赖上一次残留资源；报告绑定 runId、受测 commit 与输入摘要",
+        "证据哈希、身份或结构不匹配时 fail-closed；not_run、deferred 与人工 pending 不得折算为通过"
+      ],
+      "evidence": [
+        "report",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-LIVE-REAL-MODEL-AUTH",
+      "group": "live",
+      "title": "P06 live 真实模型调用授权",
+      "layer": "phase-acceptance",
+      "execution": "live",
+      "features": [
+        "P06-2",
+        "P06-3",
+        "P06-5"
+      ],
+      "scenarioIds": [
+        "I01",
+        "I04"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "FR-1",
+        "AC-2",
+        "P06-7"
+      ],
+      "assertions": [
+        "真实模型调用必须由负责人显式授权 provider/model、凭据来源、请求预算与写入范围后才可发起",
+        "未授权、无真实证据或预算缺失保持 not_run；离线脚本化 Runtime 与 stdio Fake server 结果不能折算 live 通过"
+      ],
+      "evidence": [
+        "live",
+        "command-exit",
+        "artifact",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-MANUAL-OWNER-GATE",
+      "group": "manual",
+      "title": "P06 负责人 macOS 操作与阶段放行",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "features": [
+        "P06-1",
+        "P06-2",
+        "P06-3",
+        "P06-4",
+        "P06-5",
+        "P06-6"
+      ],
+      "scenarioIds": [
+        "I08"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-4",
+        "AC-5"
+      ],
+      "assertions": [
+        "负责人按 macOS 清单记录完整 SHA、实际命令、退出码、用量来源、清理事实和未执行项，并明确确认时间与结论",
+        "pending/rejected、缺签署、SHA 不匹配或 live not_run 时阶段结论不能通过；机器成功不能代签"
+      ],
+      "evidence": [
+        "manual",
+        "report",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P06-POST-FULL-HISTORY-REGRESSION",
+      "group": "deferred",
+      "title": "后置：全仓历史回归",
+      "layer": "phase-acceptance",
+      "execution": "postponed",
+      "features": [
+        "P06-1",
+        "P06-2",
+        "P06-3",
+        "P06-4",
+        "P06-5",
+        "P06-6"
+      ],
+      "scenarioIds": [
+        "I08"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "FULL-REGRESSION"
+      ],
+      "assertions": [
+        "全仓历史回归只能由显式 --full-regression 选项或发布验收发起，不属于默认 P06 阶段门禁",
+        "未运行全仓回归报告为 not_run，不计入阶段通过"
+      ],
+      "evidence": [
+        "command-exit",
+        "report",
+        "manifest"
+      ]
+    }
+  ]
+}
