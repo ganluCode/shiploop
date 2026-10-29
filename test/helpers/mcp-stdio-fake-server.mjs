@@ -77,10 +77,22 @@ process.stdin.on('data', chunk => {
       if (config.mode === 'exit_initialize') process.exit(19);
       if (config.mode === 'hang_initialize') continue;
       if (config.holdInitialize) {
-        const watcher = watch(root, () => {
-          if (existsSync(join(root, 'initialize.release'))) { watcher.close(); initialize(message.id); }
-        });
-        if (existsSync(join(root, 'initialize.release'))) { watcher.close(); initialize(message.id); }
+        let released = false;
+        let watcher;
+        let poll;
+        const release = () => {
+          if (released || !existsSync(join(root, 'initialize.release'))) return;
+          released = true;
+          watcher?.close();
+          if (poll) clearInterval(poll);
+          initialize(message.id);
+        };
+        watcher = watch(root, release);
+        // macOS fs.watch may coalesce or drop a short-lived file event while the
+        // worker pool is busy. Polling is only a deterministic fixture barrier;
+        // production deadlines and protocol behavior remain unchanged.
+        poll = setInterval(release, 5);
+        release();
       } else initialize(message.id);
     } else if (message.method === 'notifications/initialized') {
       mark('initialized');

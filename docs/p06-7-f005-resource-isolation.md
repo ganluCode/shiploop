@@ -36,6 +36,8 @@ F-005 增加首次执行/对话恢复、受限接口、真实进程故障组合�
 
 最终测试 argv 是 `node scripts/run-tests.ts` 后依次追加四个新增测试文件及 `runtime/p06-4-f002-mcp-fake-server.test.ts`、`runtime/p06-4-f006-mcp-recovery.test.ts`。新增四文件共 21 项，直接相关旧夹具/登记表回归 8 项。其余 14 个索引文件未由 Runtime 执行，交 Nezha 独立复验。
 
+返工记录：独立验证首次执行 15 文件合集时，既有 `p06-4-f002-mcp-stdio.test.ts` 的 `real-handshake-and-process-registration` 在 `fs.watch` 屏障丢事件后超时；该文件单独复现为 21/21 通过。修复 Fake server 的 `holdInitialize` 屏障为 `fs.watch` 加 5ms 有限轮询并用一次性标志防重复响应，未改变生产握手 deadline。修复后原独立 15 文件合集重新通过 **126/126**，日志 `runtime-logs/test-vmr4e5am.log`；F-005 六文件重新通过 **29/29**，日志 `runtime-logs/test-cxy0tv6a.log`；类型检查重新通过 `runtime-logs/test-fyks5v8h.log`。返工证据目录为 `verifications/F-005/evidence-rework-20261029-0828/`。
+
 RED/调试日志保留：`test-fzdsdkca.log` 是尚未实现迟到回包模式的 RED；`test-wtly9sbj.log` 揭示初版强杀夹具因 stdin 结束自动退出，需要显式保活才能验证 orphan 路径；`test-weihc6wa.log` 是接口错误码预期与实际 `invalid_input` 不符的夹具断言修正。`test-xgthm_1v.log` 是新增测试类型注解问题，已修复。它们均未覆盖或标成成功，不将夹具失败称作生产缺陷证据。
 
 ## 独立回归与报告材料
