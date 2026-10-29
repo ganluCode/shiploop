@@ -122,12 +122,25 @@ describe('F-004 atomic Task claim', () => {
     ['task budget', 'UPDATE tasks SET code_attempts_used = 3, attempt_counter = 3', 'not_ready'],
     ['fence', 'UPDATE tasks SET execution_version = 1', 'stale_task'],
     ['revision', 'UPDATE tasks SET revision = revision + 1', 'stale_task'],
-    ['binding', 'UPDATE repository_bindings SET revision = revision + 1', 'repository_binding_changed'],
+    ['binding', 'repository binding change', 'repository_binding_changed'],
   ])('rechecks %s after an advisory ready query with zero writes', async (_, sql, reason) => {
     const f = await openClaimFixture();
     try {
       expect(f.evaluate().readyTaskIds).toEqual(['t-1']);
-      f.box.session.database.exec(sql);
+      if (sql === 'repository binding change') {
+        const binding = f.box.session.database.prepare('SELECT * FROM repository_bindings WHERE project_id = ?').get(f.box.projectId) as {
+          id: string; created_at: number; project_id: string; revision: number; updated_at: number;
+          canonical_path: string; git_common_dir: string | null; repo_identity: string; binding_revision: number;
+        };
+        const changedBindingId = 'binding-changed';
+        f.box.session.database.prepare(
+          'INSERT INTO repository_bindings (id, created_at, project_id, revision, updated_at, canonical_path, git_common_dir, repo_identity, binding_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(changedBindingId, binding.created_at, binding.project_id, binding.revision, binding.updated_at,
+          `${binding.canonical_path}-changed`, binding.git_common_dir, `${binding.repo_identity}-changed`, binding.binding_revision + 1);
+        f.box.session.database.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(changedBindingId, f.box.projectId);
+      } else {
+        f.box.session.database.exec(sql);
+      }
       const before = f.snapshot();
       expect(() => f.store().claimTask(f.input())).toThrow(expect.objectContaining({ kind: 'conflict', details: expect.objectContaining({ reason }) }));
       expect(f.snapshot()).toEqual(before);
@@ -285,6 +298,8 @@ describe('F-004 atomic Task claim', () => {
       expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual(SQLITE_MIGRATIONS.slice(15).map(migration => migration.version));
       before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
       before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
+      before.command_receipts = before.command_receipts!.map(row => ({ ...row as Record<string, unknown>, planning_task_id: null, candidate_id: null }));
+      before.phases = before.phases!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested', delivery_approval_id: null, delivery_candidate_id: null, delivery_batch_id: null, delivery_summary_digest: null }));
       before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, labels: '[]', pause_requested_at: null }));
       before.execution_batches = before.execution_batches!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));
       expect({ ...snapshot(), schema_migrations: predecessor.database.prepare('SELECT * FROM schema_migrations WHERE version <= 15 ORDER BY id').all() })
