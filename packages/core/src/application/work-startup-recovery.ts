@@ -54,6 +54,12 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
        * 核验 + 幂等补完），随后重新 fence 取得补完后的干净扫描；被补完的
        * planning Attempt 不再进入通用逐个核对（planningCompletionFinalized）。 */
       let scan = options.store.fence();
+      if (options.isolatedRestore === true) {
+        // Cross-root restore preserves historical evidence as audit only. Do not
+        // signal source processes, complete planning, settle Git or release leases.
+        state = { status: 'blocked', reason: 'restored_data_requires_current_facts' };
+        return state;
+      }
       let planning: PlanningStartupRecoveryResult | null = null;
       if (options.planning !== undefined) {
         planning = await options.planning.recover();

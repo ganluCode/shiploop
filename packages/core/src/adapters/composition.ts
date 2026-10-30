@@ -54,7 +54,11 @@ import { createExecutionStopControl } from '../application/execution-stop-contro
 import { createVerificationStopControl } from '../application/verification-stop-control.js';
 import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
+import { activateDataRestore, inspectDataRestoreState } from './fs/data-restore.js';
+import { createMaintenanceWriteGate } from '../ports/data-maintenance.js';
 import type { MaintenanceWriteGate } from '../ports/data-maintenance.js';
+export { createDataRestoreService } from './fs/data-restore.js';
+export type { DataRestoreService, RestoreBoundary, RestorePreview, RestoreReceipt } from './fs/data-restore.js';
 import type { RuntimeFallbackSwitchService } from '../ports/runtime-fallback-switch.js';
 import type { BatchDeliveryFactory } from '../application/batch-delivery-commands.js';
 export type { BatchDeliveryFactory, BatchDeliveryDependencies } from '../application/batch-delivery-commands.js';
@@ -330,6 +334,8 @@ export interface CoreApplication {
   readonly workExecution: WorkExecution;
   /** 已 realpath 固定的授权数据根。 */
   readonly dataRoot: string;
+  /** Restored roots require current external facts before any execution. */
+  readonly dataRestoreIsolation?: boolean;
   readonly pathService: PathService;
   readonly stateStore: StateStore;
   readonly artifactStore: ArtifactStore;
@@ -641,6 +647,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   ensureDataRootDirectory(rootCandidate);
 
   const basePathService = createPathService({ dataRoot: rootCandidate });
+  const dataRestoreIsolation = inspectDataRestoreState(basePathService.dataRoot()).isolated;
+  activateDataRestore(basePathService.dataRoot());
 
   const session = openSqliteStorageSession({
     path: basePathService.databaseFilePath(),
@@ -653,8 +661,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   try {
     await migrateSqliteStorage(session);
 
-    const maintenanceGate = (object.maintenanceGate as MaintenanceWriteGate | undefined)
-      ?? createSqliteMaintenanceWriteGate(session);
+    const maintenanceGate = dataRestoreIsolation
+      ? createMaintenanceWriteGate({ state: 'blocked', operation: 'restore', blockedReason: 'restored_data_requires_current_facts' })
+      : (object.maintenanceGate as MaintenanceWriteGate | undefined) ?? createSqliteMaintenanceWriteGate(session);
     const nowUtcMs = object.nowUtcMs as (() => number) | undefined;
     const stateStore = createSqliteStateStore(
       session,
@@ -973,6 +982,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       nowUtcMs,
     });
     const startupRecovery = createWorkStartupRecovery({
+      isolatedRestore: dataRestoreIsolation,
       store: createSqliteWorkStartupRecoveryStore(session, { nowUtcMs }),
       process: workspaceCommandProcess,
       nowUtcMs,
@@ -987,7 +997,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
       }),
     });
-    if (object.workStartupRecoveryRequired === true) startupRecovery.enter();
+    if (object.workStartupRecoveryRequired === true || dataRestoreIsolation) startupRecovery.enter();
     /* P07-1 / F-008：显式 resume 前的受信补回执结算：复用启动恢复核对器与
      * 持久观察；全部积压解决后重评恢复门控并恢复周期调度（幂等）。 */
     let resumeRecoveryCompletionHook: () => void = () => undefined;
@@ -1244,7 +1254,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         maintenanceGate,
         configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
-      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined,
+      capabilityCatalog, runtimeFactory: dataRestoreIsolation ? undefined : object.workRuntimeFactory as WorkRuntimeFactory | undefined,
       recordingMode: object.workRecordingMode as CoreApplicationOptions['workRecordingMode'], nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
         finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
@@ -1525,6 +1535,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       },
       workExecution,
       dataRoot: basePathService.dataRoot(),
+      dataRestoreIsolation,
       pathService,
       stateStore,
       artifactStore,
@@ -1580,7 +1591,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workspaceCleaner,
       workspaceDiscard,
       close(): void {
-        if (object.workRuntimeFactory !== undefined && !workExecution.isClosed()) throw new StorageError('conflict', 'CoreApplication.close', 'Work 执行须先完成关闭核验');
+        if (!dataRestoreIsolation && object.workRuntimeFactory !== undefined && !workExecution.isClosed()) throw new StorageError('conflict', 'CoreApplication.close', 'Work 执行须先完成关闭核验');
         if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
         session.close();
       },

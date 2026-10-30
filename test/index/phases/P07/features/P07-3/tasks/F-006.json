@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-3-f006-offline-restore.test.ts", "all": true },
+      { "file": "test/modules/storage/data-lifecycle-contract.test.ts", "all": true },
+      { "file": "test/modules/storage/p07-3-f002-maintenance-gate.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f005-backup-verification.test.ts", "all": true },
+      { "file": "test/modules/host/host-writer-lock.test.ts", "all": true },
+      { "file": "test/modules/host/host-startup.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f003-stop-reprobe.test.ts", "all": true }
+    ]
+  }]
+}

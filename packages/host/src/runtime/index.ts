@@ -31,6 +31,7 @@ export type {
   EventStreamRequestInput,
   ReplayLowerBoundReader,
 } from './sse-transport.js';
+export { createOfflineRestoreService } from './offline-restore.js';
 export { createMaintenanceController } from './maintenance.js';
 export type { MaintenanceController, MaintenanceControllerOptions } from './maintenance.js';
 export {

@@ -425,7 +425,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     // until durable old identities have been reconciled. Unconfirmed resources remain occupied.
     const work = locked.writer.workExecution;
     work.enterRecovery();
-    await locked.writer.baselineExecutionService.recover();
+    if (!locked.writer.dataRestoreIsolation) await locked.writer.baselineExecutionService.recover();
     await work.recover();
     const baseline = locked.writer.baselineExecutionService;
     const activityGate: HostActivityGate = {

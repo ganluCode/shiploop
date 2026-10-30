@@ -43,6 +43,8 @@ export interface WorkStartupRecoveryStore {
     targetId: string): readonly WorkStartupRecoveryEvidence[];
 }
 export interface WorkStartupRecoveryOptions {
+  /** A restored root must fence old identities without trusting archived stop observations. */
+  readonly isolatedRestore?: boolean;
   readonly store: WorkStartupRecoveryStore;
   readonly process: Pick<CommandProcessPort, 'recoverStop'>;
   readonly publishEvidence: (projectId: string, evidence: WorkStartupRecoveryEvidence) => Promise<string>;
@@ -54,5 +56,5 @@ export interface WorkStartupRecoveryOptions {
 }
 export interface WorkStartupRecoveryState {
   readonly status: 'idle' | 'recovering' | 'complete' | 'blocked';
-  readonly reason: 'startup_recovery' | 'workspace_reconciliation_required' | 'scan_limit' | 'recovery_failed' | 'planning_recovery_required' | null;
+  readonly reason: 'startup_recovery' | 'workspace_reconciliation_required' | 'scan_limit' | 'recovery_failed' | 'planning_recovery_required' | 'restored_data_requires_current_facts' | null;
 }
