@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p07-2-f008-recording-integration.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f007-recording-default-query.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f005-recording-process.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f005-recording-supervision.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-2-f006-recording-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-recording-integration.test.ts", "all": true },
+      { "file": "test/modules/cli/p04-5-recording-cli.test.ts", "all": true }
+    ]
+  }]
+}
