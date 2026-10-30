@@ -218,6 +218,7 @@ describe('F-005 迁移执行与记录', () => {
           'global_settings',
           'integration_plans',
           'integration_predecessor_snapshots',
+          'maintenance_occupancy',
           'managed_workspaces',
           'memory_records',
           'phase_delivery_approvals',
@@ -245,6 +246,7 @@ describe('F-005 迁移执行与记录', () => {
           'task_dependencies',
           'tasks',
           'verification_batches',
+          'verification_processes',
           'workspace_leases',
           'workspace_operations',
         ]);

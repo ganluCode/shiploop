@@ -34,11 +34,14 @@
  * import 本模块无副作用：只有调用 migrateSqliteStorage 才接触文件系统。
  */
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
 import { SQLITE_MIGRATIONS, type SqliteMigration } from './migrations.js';
+import {
+  createVerifiedSqliteBackup,
+  SqliteBackupError,
+} from './backup.js';
 import type { SqliteStorageSession } from './session.js';
 
 /** 迁移执行的阶段标签：verify=写入前核验；backup=升级前一致性备份；apply=事务内应用。 */
@@ -228,51 +231,31 @@ function verifyAppliedAgainstProvided(
   return applied;
 }
 
-/** 生成独立一致性备份并运行 integrity_check；失败抛 step='backup' 证据错误。 */
+/** 生成独立一致性备份并运行只读完整性核验；失败抛 step='backup' 证据错误。 */
 async function createVerifiedBackup(
   session: SqliteStorageSession,
   backupPath: string,
 ): Promise<void> {
-  if (existsSync(backupPath)) {
-    throw new SqliteMigrationError('升级备份目标已存在，拒绝覆盖已有备份或用户数据', {
-      step: 'backup',
-      version: null,
-      backupPath,
-    });
-  }
   try {
-    await session.database.backup(backupPath);
+    await createVerifiedSqliteBackup(session, backupPath);
   } catch (error) {
-    throw new SqliteMigrationError('升级前一致性备份失败，不开始迁移', {
+    if (error instanceof SqliteMigrationError) throw error;
+    const reason = error instanceof SqliteBackupError ? error.reason : undefined;
+    const message = reason === 'target_exists'
+      ? '升级备份目标已存在，拒绝覆盖已有备份或用户数据'
+      : reason === 'integrity_failed'
+        ? '升级备份未通过 integrity_check，不开始迁移'
+        : reason === 'foreign_key_failed'
+          ? '升级备份未通过 foreign_key_check，不开始迁移'
+          : reason === 'budget_exhausted'
+            ? '升级前一致性备份预算耗尽，不开始迁移'
+            : '升级前一致性备份失败，不开始迁移';
+    throw new SqliteMigrationError(message, {
       step: 'backup',
       version: null,
       backupPath,
       cause: error,
     });
-  }
-  let backupCheck: Database.Database | undefined;
-  try {
-    backupCheck = new Database(backupPath, { readonly: true, fileMustExist: true });
-    const integrity = backupCheck.pragma('integrity_check', { simple: true });
-    if (integrity !== 'ok') {
-      throw new SqliteMigrationError('升级备份未通过 integrity_check，不开始迁移', {
-        step: 'backup',
-        version: null,
-        backupPath,
-      });
-    }
-  } catch (error) {
-    if (error instanceof SqliteMigrationError) {
-      throw error;
-    }
-    throw new SqliteMigrationError('升级备份核验失败，不开始迁移', {
-      step: 'backup',
-      version: null,
-      backupPath,
-      cause: error,
-    });
-  } finally {
-    backupCheck?.close();
   }
 }
 
