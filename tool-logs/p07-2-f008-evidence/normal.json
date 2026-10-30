@@ -26,31 +26,31 @@
     ],
     "messages": [
       {
-        "id": "79fee692-9622-4b01-8fd7-6ccf5aaf59c8",
+        "id": "2465fc5e-7d96-49b8-a63f-bc3a66bfe060",
         "kind": "message",
         "sequence": 1
       },
       {
-        "id": "a7d986d1-47bc-4df7-846e-d2edce12d464",
+        "id": "28d1993a-500e-4847-927f-9f356a490e22",
         "kind": "tool_started",
         "sequence": 2
       },
       {
-        "id": "bf75ec5f-882b-46f1-9024-a21fd7c09989",
+        "id": "4a437dc4-8527-4a3e-90cb-2c2daef2c5bc",
         "kind": "tool_finished",
         "sequence": 3
       },
       {
-        "id": "83a5c1e5-fb59-4123-bb70-1fbc99f66315",
+        "id": "fba148d6-df95-45a4-ba5e-42cb58cd4f04",
         "kind": "message",
         "sequence": 4
       }
     ],
     "bodyHashes": [
-      "5e2e38f7b9132b61630660fe73e04893093f18a67d2f79b799bca62d367a2de3",
-      "ae69f674e21c1e2636a28bc93e8c32885db25202e0c0fab9070a6fd349235177",
-      "a734f98f4e2529789fe5a0c923285959d2e8790b0951022c8035e3e18464344f",
-      "b46bdd4e2215d4096b300598aff5f3a9bda86196272f71eccaed6501090d7d1f"
+      "523c1ce3c5a328fa87cf329d93c10d59d116dcb8e64917e392b0d1913e99d15d",
+      "38b93a986f583310d6c14b2f40cf991947717032b01e427f1372db30d0d4223d",
+      "2268303fd95787f34acebb3561111b4e47cb1835475460800c6cf5e78d3ccb7b",
+      "6fef7de3175ecc136f3f9676eb17e9a3dcc07acd57c5e65ec422283edd0033a5"
     ],
     "cliContainsCoverage": true,
     "stopObserved": true,
@@ -66,7 +66,7 @@
       "status": "pending"
     },
     "gitHead": {
-      "base_commit": "f2fac602fac5f8643e880423327b0b8461ee6d8b"
+      "base_commit": "b050e032c0ea31d3fd4ab01817acc008e06428be"
     },
     "toolMarkerPresent": false
   },
