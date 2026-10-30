@@ -67,11 +67,13 @@ import {
   validateRuntimeExecutionResult,
 } from '../ports/runtime-execution.js';
 import type { ArtifactPublisher } from './artifact-publish.js';
+import { isArtifactPublishError } from './artifact-publish.js';
 import type { ArtifactVerifier } from './artifact-verify.js';
 import { createOutputRedactor, redactOutputText } from './output-redaction.js';
 import {
   validateWorkEvidenceManifest,
   validateWorkEvidenceRecorderLimits,
+  validateWorkEvidenceAssemblyRecordingLimits,
   WORK_EVIDENCE_DIAGNOSTICS_MAX_COUNT,
   WORK_EVIDENCE_DIAGNOSTIC_MAX_LENGTH,
   WORK_EVIDENCE_EVENTS_KIND,
@@ -91,6 +93,7 @@ import type {
   WorkEvidenceSequenceReconciliation,
   WorkEvidenceStats,
   WorkEvidenceUsageBasis,
+  WorkEvidenceEffectiveLimits,
 } from '../ports/work-evidence-recorder.js';
 import { RECORDING_GAPS_MAX_COUNT, RECORDING_GAP_MAX_LENGTH } from '../ports/work-session.js';
 import type { WorkSessionStore } from '../ports/work-session.js';
@@ -116,8 +119,22 @@ export type WorkEvidenceRecordingFailureReason =
   | 'event_stream_failed'
   /** 事件分块经 Artifact 发布端口落盘失败（含注入 ENOSPC/短写/hash 漂移）。 */
   | 'event_publish_failed'
-  /** 覆盖清单发布失败。 */
+  /** P07-2：Runner/通道有界队列背压（runner_buffer_overflow 类协议失败）。 */
+  | 'event_queue_backpressure'
+  /** P07-2：事件分块发布超过发布期限（ArtifactPublishError timeout）。 */
+  | 'event_write_timeout'
+  /** P07-2：事件分块写入命中存储额度（maxSizeBytes 或磁盘满 ENOSPC）。 */
+  | 'event_storage_exhausted'
+  /** P07-2：事件分块文件写入失败（短写/hash 漂移/流错误，非超时与额度）。 */
+  | 'event_file_write_failed'
+  /** 覆盖清单发布失败（证据无法保存的通用类别）。 */
   | 'manifest_publish_failed'
+  /** P07-2：覆盖清单发布超过发布期限。 */
+  | 'manifest_write_timeout'
+  /** P07-2：覆盖清单写入命中存储额度（maxSizeBytes 或磁盘满 ENOSPC）。 */
+  | 'manifest_storage_exhausted'
+  /** P07-2：覆盖清单文件写入失败（非超时与额度）。 */
+  | 'manifest_file_write_failed'
   /** Session 水位/缺口推进失败（CAS 冲突等）。 */
   | 'watermark_progress_failed'
   /** 已保存记录存在必需范围缺口，不是水位写入故障。 */
@@ -205,6 +222,12 @@ export interface WorkEvidenceRecorderDeps {
   readonly recording?: WorkRecordingProjectionDeps;
   /** Trusted, explicit Core policy. Runtime events cannot downgrade required recording. */
   readonly recordingMode?: RecordingMode;
+  /**
+   * P07-2 / F-001：装配期有效限制（recorder/publish 部分）；提供时必须与
+   * deps.limits 完全一致（清单不得声明与实际执行不同的限制），并与本次
+   * Attempt 的 request.limits 一并写入清单。缺省 = 旧调用兼容（不写入清单）。
+   */
+  readonly effectiveLimits?: unknown;
   readonly publisher: ArtifactPublisher;
   readonly verifier: Pick<ArtifactVerifier, 'verifyArtifact'>;
   readonly sessions: WorkSessionStore;
@@ -230,6 +253,38 @@ class RecordingFailure extends Error {
     this.failureReason = reason;
     this.causeValue = cause;
   }
+}
+
+/** P07-2：Artifact 发布错误 → 可区分记录失败原因（超时/额度/文件写入/通用）。 */
+function isEnospcCause(cause: unknown): boolean {
+  if (cause === null || typeof cause !== 'object') return false;
+  const detail = cause as { details?: { code?: unknown }; code?: unknown };
+  const code = typeof detail.details?.code === 'string' ? detail.details.code
+    : typeof detail.code === 'string' ? detail.code : null;
+  return code === 'ENOSPC';
+}
+
+function classifyArtifactPublishFailure(
+  stage: 'event' | 'manifest',
+  error: unknown,
+): WorkEvidenceRecordingFailureReason {
+  if (isArtifactPublishError(error)) {
+    if (error.code === 'timeout') return stage === 'event' ? 'event_write_timeout' : 'manifest_write_timeout';
+    if (error.code === 'size_limit_exceeded' || (error.code === 'file' && isEnospcCause(error.cause))) {
+      return stage === 'event' ? 'event_storage_exhausted' : 'manifest_storage_exhausted';
+    }
+    if (error.code === 'file' || error.code === 'stream' || error.code === 'hash_mismatch' || error.code === 'size_mismatch') {
+      return stage === 'event' ? 'event_file_write_failed' : 'manifest_file_write_failed';
+    }
+  }
+  return stage === 'event' ? 'event_publish_failed' : 'manifest_publish_failed';
+}
+
+/** P07-2：事件流异常分类：Runner 有界队列背压与其它流故障可区分。 */
+function classifyEventStreamFailure(error: unknown): WorkEvidenceRecordingFailureReason {
+  return isRuntimeError(error) && error.reason === 'runner_buffer_overflow'
+    ? 'event_queue_backpressure'
+    : 'event_stream_failed';
 }
 
 /** 有界缺口收集：≤32 条、每条 ≤256 码点；溢出以 gaps_overflow 收尾。 */
@@ -295,6 +350,12 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
     throw validationError(context, 'deps.recordingMode', 'required_or_best_effort');
   }
   const limits: WorkEvidenceRecorderLimits = validateWorkEvidenceRecorderLimits(deps.limits);
+  const assemblyLimits = deps.effectiveLimits === undefined ? null
+    : validateWorkEvidenceAssemblyRecordingLimits(deps.effectiveLimits, context, 'deps.effectiveLimits');
+  if (assemblyLimits !== null && JSON.stringify(assemblyLimits.recorder) !== JSON.stringify(limits)) {
+    throw validationError(context, 'deps.effectiveLimits.recorder',
+      '有效限制的 recorder 部分必须与 deps.limits 完全一致（清单不得声明与实际执行不同的限制）', deps.effectiveLimits);
+  }
   const secrets = deps.secrets === undefined ? [] : deps.secrets.map((value, index) => {
     if (typeof value !== 'string') {
       throw validationError(context, `deps.secrets[${index}]`, '秘密值必须是字符串字面量', typeof value);
@@ -317,6 +378,10 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const input = validateRecordingInput(value);
       const { request, handle, eventIdentityPrefix, signal } = input;
       const mode = deps.recordingMode ?? 'required';
+      /* P07-2：本次 Attempt 的实际生效限制（装配期 recorder/publish + 本次请求
+       * limits）；随成功与失败清单一起落盘，与清单身份绑定。 */
+      const effectiveEvidenceLimits: WorkEvidenceEffectiveLimits | null = assemblyLimits === null ? null
+        : { version: assemblyLimits.version, recorder: assemblyLimits.recorder, publish: assemblyLimits.publish, request: request.limits };
       const projection = deps.recording === undefined ? null : createWorkRecordingProjection(deps.recording, request, deps.verifier);
       const maxBatchEvents = projection === null ? limits.chunkMaxEvents : Math.min(limits.chunkMaxEvents, WORK_RECORDING_MAX_BATCH_MESSAGES);
       let stopObservation: WorkEvidenceStopObservation = { status: 'tail_timeout', evidence: null };
@@ -498,7 +563,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             content: [content],
           });
         } catch (error) {
-          throw new RecordingFailure('event_publish_failed', '事件分块发布失败', error);
+          throw new RecordingFailure(classifyArtifactPublishFailure('event', error), '事件分块发布失败', error);
         }
         try {
           const report = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
@@ -920,6 +985,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         kind: WORK_EVIDENCE_MANIFEST_KIND,
         stop: stopObservation,
         recordingMode: mode,
+        ...(effectiveEvidenceLimits === null ? {} : { effectiveLimits: effectiveEvidenceLimits }),
         ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
         identity: {
           projectId: request.projectId,
@@ -1002,7 +1068,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
         });
       } catch (error) {
-        return await failRecording(new RecordingFailure('manifest_publish_failed', '覆盖清单发布失败', error), manifest);
+        return await failRecording(new RecordingFailure(classifyArtifactPublishFailure('manifest', error), '覆盖清单发布失败', error), manifest);
       }
 
       return {
@@ -1024,7 +1090,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         assertCurrent();
         const failure = error instanceof RecordingFailure
           ? error
-          : new RecordingFailure('event_stream_failed', 'Runtime 事件流异常', error);
+          : new RecordingFailure(classifyEventStreamFailure(error), 'Runtime 事件流异常', error);
         const aborted = failure.failureReason === 'aborted';
         if (projection !== null) {
           projection.discardPending();
@@ -1067,7 +1133,9 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         // A broken iterator can leave already accepted events in the bounded
         // chunk buffer. Persist that partial evidence before publishing a failed
         // manifest; never reattempt a failed artifact write or claim completeness.
-        if (failure.failureReason === 'event_stream_failed') {
+        // Stream-origin failures (including bounded-queue backpressure) keep the
+        // already accepted evidence; other failures keep their durable state as-is.
+        if (failure.failureReason === 'event_stream_failed' || failure.failureReason === 'event_queue_backpressure') {
           try {
             if (held.size > 0) await declareMissingUpTo(Math.max(...held.keys()));
             await flushChunk();
@@ -1115,6 +1183,10 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
               sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
             });
           } catch {
+            // 连诚实的失败清单都无法保存：保留可核验缺口（证据无法保存），
+            // 已发布分块与 Session 缺口仍如实保留。
+            gaps.add('evidence_unrecoverable');
+            diagnostics.add('evidence_unrecoverable');
             // Metadata can still close honestly when body storage is unavailable.
             try { await advanceWatermark(failureManifest); } catch { /* preserve the last durable index */ }
           }
@@ -1150,6 +1222,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         const base: WorkEvidenceManifest = manifestDraft ?? {
           schemaVersion: WORK_EVIDENCE_SCHEMA_VERSION,
           kind: WORK_EVIDENCE_MANIFEST_KIND,
+          ...(effectiveEvidenceLimits === null ? {} : { effectiveLimits: effectiveEvidenceLimits }),
           ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
           identity: {
             projectId: request.projectId,

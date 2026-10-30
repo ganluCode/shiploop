@@ -41,6 +41,10 @@ import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
 import { createWorkEvidenceRecorder, type RecordingMode } from '../application/work-evidence-recorder.js';
 import { createWorkRecordingPublisher } from '../application/work-recording-publish.js';
+import {
+  DEFAULT_WORK_RECORDING_BOUND_POLICY,
+  validateWorkRecordingBoundPolicy,
+} from '../ports/work-recording-policy.js';
 import { createSqliteWorkRecordingStore } from './sqlite/work-recording-store.js';
 import { createRuntimeSettlementService } from '../application/runtime-settlement.js';
 import { createWorkspaceRetentionService } from '../application/workspace-retention.js';
@@ -137,8 +141,11 @@ export function assembleWorkExecution(options: {
   const featureDag = createFeatureDagService({ store: createSqliteFeatureDagStore(session) });
   const store = createSqliteSchedulerStore(session, { nowUtcMs: now });
   const sessions = createSqliteWorkSessionStore(session, { nowUtcMs: now });
+  /* P07-2 / F-001：启动前校验统一有界记录策略（recorder/发布/制品预算及其关系）；
+   * 违约立即终止装配，不允许带病启动。默认值与既往装配常量逐项一致。 */
+  const recordingPolicy = validateWorkRecordingBoundPolicy(DEFAULT_WORK_RECORDING_BOUND_POLICY);
   const publisher = createArtifactPublisher({ artifacts: app.artifactStore, files: app.artifactFileStore,
-    limits: { maxSizeBytes: 16_000_000, timeoutMs: 30_000 } });
+    limits: recordingPolicy.artifactPublication });
   const verifier = createArtifactVerifier({ artifacts: app.artifactStore, files: app.artifactFileStore,
     limits: { maxReadBytes: 16_000_000 } });
   const workspaceRoots = { 'managed-work': app.dataRoot };
@@ -319,14 +326,10 @@ export function assembleWorkExecution(options: {
     settlement: createRuntimeSettlementService({ publisher, attempts, dag, sessions,
       lifecycle: createSqliteAttemptLifecycleStore(session, { workspaceAuthority: app.workWorkspaceAuthority, nowUtcMs: now }) }),
     recorder: createWorkEvidenceRecorder({ publisher, verifier, sessions, recordingMode: options.recordingMode,
+      effectiveLimits: { version: 1, recorder: recordingPolicy.recorder, publish: recordingPolicy.publish },
       recording: { store: createSqliteWorkRecordingStore(session, { nowUtcMs: now }), nowUtcMs: now,
-        publisher: createWorkRecordingPublisher({ artifacts: publisher, limits: {
-          maxBodyBytes: 131_072, maxAttachmentBytes: 65_536, maxTotalBytes: 262_144,
-          maxChunkBytes: 8192, maxQueueBytes: 8192,
-        } }) }, limits: {
-      maxEventBodyBytes: 8_192, chunkMaxEvents: 32, chunkMaxBytes: 262_144, maxTotalEvents: 10_000,
-      maxTotalBytes: 8_000_000, reorderWindow: 8, tailWaitMs: 2_000,
-    } }),
+        publisher: createWorkRecordingPublisher({ artifacts: publisher, limits: recordingPolicy.publish }) },
+      limits: recordingPolicy.recorder }),
     eventIdentityPrefix: runtimeAssembly?.eventIdentityPrefix ?? (() => 'unregistered.'),
     ...(runtimeAssembly?.prepareRequest === undefined ? {} : { prepareRuntimeRequest: runtimeAssembly.prepareRequest }),
     nowUtcMs: now,

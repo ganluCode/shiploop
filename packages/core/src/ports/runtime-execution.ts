@@ -388,9 +388,16 @@ function permissions(value: unknown): RuntimeExecutionPermissions {
   };
 }
 
-function limits(value: unknown): RuntimeExecutionLimits {
-  const field = 'request.limits';
-  const raw = requirePlainObject(value, requestContext, field);
+/**
+ * 有限超时/输出政策校验（P07-2 起对外导出，供记录有效限制复用同一套契约；
+ * 不建立第二套请求限制配置系统）。
+ */
+export function validateRuntimeExecutionLimits(
+  value: unknown,
+  context: ValidationContext = requestContext,
+  field = 'request.limits',
+): RuntimeExecutionLimits {
+  const raw = requirePlainObject(value, context, field);
   rejectUnknownKeys(raw, ['timeoutMs', 'toolTimeoutMs', 'maxEvents', 'maxOutputBytes'], requestContext, field);
   const timeoutMs = validatePositiveInteger(raw.timeoutMs, requestContext, `${field}.timeoutMs`);
   if (timeoutMs < WORK_TIMEOUT_MS_MIN || timeoutMs > WORK_TIMEOUT_MS_MAX) {
@@ -457,7 +464,7 @@ export function validateRuntimeExecutionRequest(value: unknown): RuntimeExecutio
     inputManifest: validateExecutionInputRef(raw.inputManifest, requestContext.operation),
     cwd: cwd(raw.cwd),
     permissions: permissions(raw.permissions),
-    limits: limits(raw.limits),
+    limits: validateRuntimeExecutionLimits(raw.limits),
     recovery: recoveryPortion.recovery,
     ...(raw.workAccess === undefined ? {} : {
       workAccess: validateRuntimeWorkAccessSnapshot(raw.workAccess, {

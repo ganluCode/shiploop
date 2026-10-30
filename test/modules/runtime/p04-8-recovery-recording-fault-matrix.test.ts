@@ -32,7 +32,7 @@ describe('P04-8 F-005 恢复与记录离线故障矩阵', () => {
     it(`[case:f005-${scenario}] 存储失败保留已落盘前缀、Core 状态和可追踪缺口`, async () => {
       const row = await runRecordingFault(scenario);
       expect(row.coverage).toBe('failed');
-      expect(row.failureReason).toBe(scenario === 'disk-write' ? 'event_publish_failed' : 'event_stream_failed');
+      expect(row.failureReason).toBe(scenario === 'disk-write' ? 'event_storage_exhausted' : 'event_stream_failed');
       expect(row.watermark).toBe(2);
       expect(row.sequences).toEqual([1, 2]);
       expect(row.sessionGaps).toContain(`recording_failed:${row.failureReason}`);

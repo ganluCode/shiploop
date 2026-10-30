@@ -628,7 +628,8 @@ describe('P03-6 F-007 bounded evidence recorder (real SQLite + files + Fake)', (
       const error = await f.recorder.record({
         request: f.request, handle: f.handle, eventIdentityPrefix: f.eventIdentityPrefix,
       }).then(() => null, (cause: unknown) => cause);
-      expect(isWorkEvidenceRecordingError(error, 'event_publish_failed')).toBe(true);
+      /* P07-2：ENOSPC 现在可区分为存储额度耗尽，不再是泛化发布失败。 */
+      expect(isWorkEvidenceRecordingError(error, 'event_storage_exhausted')).toBe(true);
       const recordingError = error as import("../../../packages/core/src/application/work-evidence-recorder.ts").WorkEvidenceRecordingError;
       expect(recordingError.safeStopRequired).toBe(true);
       /* 诚实失败清单（coverage='failed'），无 ready/complete 假象。 */
@@ -642,7 +643,7 @@ describe('P03-6 F-007 bounded evidence recorder (real SQLite + files + Fake)', (
       expect(eventChunks.every((record) => record.status === 'failed')).toBe(true);
       expect(manifest.chunks).toEqual([]);
       const session = f.sessions.getWorkSession(f.projectId, f.sessionId);
-      expect(session.recordingGaps).toContain('recording_failed:event_publish_failed');
+      expect(session.recordingGaps).toContain('recording_failed:event_storage_exhausted');
       expect(session.recordingWatermark).toBeNull();
     } finally {
       f.close();
@@ -669,7 +670,8 @@ describe('P03-6 F-007 bounded evidence recorder (real SQLite + files + Fake)', (
       const error = await f.recorder.record({
         request: f.request, handle: f.handle, eventIdentityPrefix: f.eventIdentityPrefix,
       }).then(() => null, (cause: unknown) => cause);
-      expect(isWorkEvidenceRecordingError(error, 'event_publish_failed')).toBe(true);
+      /* P07-2：短写（size_mismatch）现在可区分为文件写入失败。 */
+      expect(isWorkEvidenceRecordingError(error, 'event_file_write_failed')).toBe(true);
       const recordingError = error as import("../../../packages/core/src/application/work-evidence-recorder.ts").WorkEvidenceRecordingError;
       expect(isWorkEvidenceRecordingError(recordingError) && recordingError.safeStopRequired).toBe(true);
       const manifest = await readManifest(f, recordingError.manifestArtifactId as string);

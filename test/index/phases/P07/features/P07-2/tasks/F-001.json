@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p07-2-f001-recorder-bounds.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-work-recording-publisher.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
+        { "file": "test/modules/runtime/p06-4-f007-mcp-audit-recording.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-3-runtime-retry-settlement.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts", "all": true }
+      ]
+    }
+  ]
+}

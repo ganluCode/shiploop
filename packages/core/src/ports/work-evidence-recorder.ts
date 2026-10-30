@@ -65,6 +65,10 @@ import {
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
 import { validateRuntimeRecoveryRecording } from './runtime-recovery-recording.js';
+import { validateRuntimeExecutionLimits } from './runtime-execution.js';
+import type { RuntimeExecutionLimits } from './runtime-execution.js';
+import type { RequiredWorkRecordingPublishLimits } from './work-recording.js';
+import { validateWorkRecordingPublishLimits } from './work-recording.js';
 import { RECORDING_GAPS_MAX_COUNT, RECORDING_GAP_MAX_LENGTH } from './work-session.js';
 
 export const WORK_EVIDENCE_SCHEMA_VERSION = 1;
@@ -139,6 +143,65 @@ export function validateWorkEvidenceRecorderLimits(
       return parsed;
     })(),
     tailWaitMs: bounded('tailWaitMs', WORK_EVIDENCE_TAIL_WAIT_MS_CAP),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * 有效限制（P07-2 / F-001）：与当前 project/Run/Attempt/invocation/
+ * executionVersion 关联的实际生效限制，随覆盖清单（记录证据）落盘。
+ *
+ * 兼容规则：字段缺席 = P07-2 之前的旧清单，按已支持版本 1 可读（不假定其
+ * 限制值）；字段存在时 version 必须是 1，未知版本一律拒绝（fail-closed）。
+ * 不修改历史 SQL 或历史制品。
+ * ------------------------------------------------------------------ */
+
+export const WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION = 1;
+
+/** 装配期有效限制（request 按 Attempt 逐次绑定，不在装配期携带）。 */
+export interface WorkEvidenceAssemblyRecordingLimits {
+  readonly version: typeof WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION;
+  readonly recorder: WorkEvidenceRecorderLimits;
+  readonly publish: RequiredWorkRecordingPublishLimits;
+}
+
+/** 清单内有效限制：叠加本次 Attempt 的 RuntimeExecutionLimits。 */
+export interface WorkEvidenceEffectiveLimits extends WorkEvidenceAssemblyRecordingLimits {
+  readonly request: RuntimeExecutionLimits;
+}
+
+export function validateWorkEvidenceAssemblyRecordingLimits(
+  value: unknown,
+  context: ValidationContext = { operation: 'WorkEvidence.assemblyLimits' },
+  field = 'effectiveLimits',
+): WorkEvidenceAssemblyRecordingLimits {
+  const object = requirePlainObject(value, context, field);
+  rejectUnknownKeys(object, ['version', 'recorder', 'publish'], context, field);
+  if (object.version !== WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION) {
+    throw validationError(context, `${field}.version`, `仅支持版本 ${WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION}`, object.version);
+  }
+  return {
+    version: WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION,
+    recorder: validateWorkEvidenceRecorderLimits(object.recorder, context, `${field}.recorder`),
+    publish: validateWorkRecordingPublishLimits(object.publish, context, `${field}.publish`),
+  };
+}
+
+export function validateWorkEvidenceEffectiveLimits(
+  value: unknown,
+  context: ValidationContext = { operation: 'WorkEvidence.effectiveLimits' },
+  field = 'effectiveLimits',
+): WorkEvidenceEffectiveLimits {
+  /* 不先走装配形式校验：request 属于清单形式，误入装配输入会在这里被拒绝。 */
+  const object = requirePlainObject(value, context, field);
+  rejectUnknownKeys(object, ['version', 'recorder', 'publish', 'request'], context, field);
+  if (object.version !== WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION) {
+    throw validationError(context, `${field}.version`, `仅支持版本 ${WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION}`, object.version);
+  }
+  return {
+    version: WORK_EVIDENCE_EFFECTIVE_LIMITS_VERSION,
+    recorder: validateWorkEvidenceRecorderLimits(object.recorder, context, `${field}.recorder`),
+    publish: validateWorkRecordingPublishLimits(object.publish, context, `${field}.publish`),
+    request: validateRuntimeExecutionLimits(object.request, context, `${field}.request`),
   };
 }
 
@@ -302,6 +365,8 @@ export interface WorkEvidenceManifest {
   readonly stop?: WorkEvidenceStopObservation;
   readonly recordingMode?: 'required' | 'best_effort';
   readonly recovery?: import('./runtime-recovery-recording.js').RuntimeRecoveryRecording;
+  /** P07-2：本次 Attempt 实际生效限制；缺席 = 旧清单（兼容可读）。 */
+  readonly effectiveLimits?: WorkEvidenceEffectiveLimits;
   readonly schemaVersion: typeof WORK_EVIDENCE_SCHEMA_VERSION;
   readonly kind: typeof WORK_EVIDENCE_MANIFEST_KIND;
   readonly identity: WorkEvidenceIdentity;
@@ -541,6 +606,7 @@ export function validateWorkEvidenceManifest(
     'schemaVersion', 'kind', 'identity', 'runtime', 'adapterVersion', 'scope', 'redaction',
     'chunks', 'watermark', 'finalEventSequence', 'sequenceReconciliation', 'gaps', 'stats',
     'usage', 'result', 'resultStatus', 'diagnostics', 'coverage', 'recovery', 'stop', 'recordingMode',
+    'effectiveLimits',
   ], context, field);
   if (object.schemaVersion !== WORK_EVIDENCE_SCHEMA_VERSION) {
     throw validationError(context, `${field}.schemaVersion`, `仅支持版本 ${WORK_EVIDENCE_SCHEMA_VERSION}`, object.schemaVersion);
@@ -601,6 +667,9 @@ export function validateWorkEvidenceManifest(
     kind: WORK_EVIDENCE_MANIFEST_KIND,
     ...(stop === undefined ? {} : { stop }),
     ...(object.recordingMode === undefined ? {} : { recordingMode: object.recordingMode as 'required' | 'best_effort' }),
+    ...(object.effectiveLimits === undefined ? {} : {
+      effectiveLimits: validateWorkEvidenceEffectiveLimits(object.effectiveLimits, context, `${field}.effectiveLimits`),
+    }),
     identity: validateIdentity(object.identity, context, `${field}.identity`),
     ...(object.recovery === undefined ? {} : { recovery: validateRuntimeRecoveryRecording(object.recovery) }),
     runtime: boundedManifestText(object.runtime, 128, context, `${field}.runtime`),

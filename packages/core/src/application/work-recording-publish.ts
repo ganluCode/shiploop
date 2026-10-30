@@ -10,13 +10,18 @@ import { createOutputRedactor } from './output-redaction.js';
 import type { ArtifactPublisher, ArtifactPublishResult } from './artifact-publish.js';
 import type { WorkRecordingArtifactRef, WorkRecordingMessageRole } from '../ports/work-recording.js';
 import { WORK_RECORDING_MESSAGE_ROLES } from '../ports/work-recording.js';
+import { validateWorkRecordingPublishLimits } from '../ports/work-recording.js';
+import type { RequiredWorkRecordingPublishLimits, WorkRecordingPublishLimits } from '../ports/work-recording.js';
 import {
   requireNonEmptyString,
   validateArtifactLocator,
-  validatePositiveInteger,
   validateSha256Digest,
   validateStableId,
 } from '../ports/validation.js';
+
+// P07-2 / F-001：限制形状与硬上限上移到 ports/work-recording.ts（单一契约源）；
+// 此处重导出保持既有导入路径兼容。
+export type { WorkRecordingPublishLimits } from '../ports/work-recording.js';
 
 export const WORK_RECORDING_BODY_KINDS = [
   'message', 'tool_input', 'tool_output', 'tool_started', 'tool_finished', 'error', 'stdout', 'stderr', 'final_result', 'attachment',
@@ -26,21 +31,6 @@ export type WorkRecordingBodyStatus = 'complete' | 'truncated' | 'unavailable';
 export type WorkRecordingPublicationCoverage = 'complete' | 'partial' | 'failed';
 
 type ByteStream = AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
-
-export interface WorkRecordingPublishLimits {
-  /** 每条公开正文的 retained byte 上限。 */
-  readonly maxBodyBytes: number;
-  /** 每个附件的 retained byte 上限。 */
-  readonly maxAttachmentBytes: number;
-  /** 一条消息及其附件的 retained byte 总上限。 */
-  readonly maxTotalBytes: number;
-  /** 单次从上游接收的 byte chunk 上限。 */
-  readonly maxChunkBytes: number;
-  /** 发布器正在等待 ArtifactPublisher 消费的 chunk 总上限。 */
-  readonly maxQueueBytes: number;
-  /** 一条消息最多接收的附件数，默认与 Work Recording schema 一致。 */
-  readonly maxAttachments?: number;
-}
 
 export interface WorkRecordingBodyInput {
   readonly projectId: string;
@@ -115,16 +105,8 @@ function isByteStream(value: unknown): value is ByteStream {
   return typeof object[Symbol.asyncIterator] === 'function' || typeof object[Symbol.iterator] === 'function';
 }
 
-function validateLimits(value: WorkRecordingPublishLimits): Required<WorkRecordingPublishLimits> {
-  const maxAttachments = value.maxAttachments ?? 32;
-  return {
-    maxBodyBytes: validatePositiveInteger(value.maxBodyBytes, { operation: 'WorkRecordingPublisher.create' }, 'limits.maxBodyBytes'),
-    maxAttachmentBytes: validatePositiveInteger(value.maxAttachmentBytes, { operation: 'WorkRecordingPublisher.create' }, 'limits.maxAttachmentBytes'),
-    maxTotalBytes: validatePositiveInteger(value.maxTotalBytes, { operation: 'WorkRecordingPublisher.create' }, 'limits.maxTotalBytes'),
-    maxChunkBytes: validatePositiveInteger(value.maxChunkBytes, { operation: 'WorkRecordingPublisher.create' }, 'limits.maxChunkBytes'),
-    maxQueueBytes: validatePositiveInteger(value.maxQueueBytes, { operation: 'WorkRecordingPublisher.create' }, 'limits.maxQueueBytes'),
-    maxAttachments: validatePositiveInteger(maxAttachments, { operation: 'WorkRecordingPublisher.create' }, 'limits.maxAttachments'),
-  };
+function validateLimits(value: WorkRecordingPublishLimits): RequiredWorkRecordingPublishLimits {
+  return validateWorkRecordingPublishLimits(value, { operation: 'WorkRecordingPublisher.create' }, 'limits');
 }
 
 function textual(mediaType: string): boolean {

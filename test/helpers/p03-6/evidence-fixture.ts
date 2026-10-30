@@ -45,6 +45,8 @@ export interface EvidenceFixtureOptions {
   /** Fake 脚本（可信测试装配纯数据）。 */
   readonly script: unknown;
   readonly limits?: Partial<WorkEvidenceRecorderLimits>;
+  /** P07-2：装配期有效限制（recorder/publish）；提供时必须与 limits 一致。 */
+  readonly effectiveLimits?: unknown;
   /** 注入脱敏秘密字面量。 */
   readonly secrets?: readonly string[];
   /** Fake 门闩（lifecycle/await_gate 引用）。 */
@@ -143,6 +145,7 @@ export async function openEvidenceFixture(options: EvidenceFixtureOptions): Prom
     const limits: WorkEvidenceRecorderLimits = { ...DEFAULT_RECORDER_LIMITS, ...options.limits };
     const recorder = createWorkEvidenceRecorder({
       publisher, verifier, sessions, limits,
+      ...(options.effectiveLimits === undefined ? {} : { effectiveLimits: options.effectiveLimits }),
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
       nowMs: nowUtcMs,
     });

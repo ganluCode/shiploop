@@ -35,6 +35,81 @@ export const WORK_RECORDING_REQUIRED_EXCLUSIONS = [
 
 export const WORK_RECORDING_SOURCES = ['live', 'native', 'recovered', 'mixed'] as const;
 export type WorkRecordingSource = (typeof WORK_RECORDING_SOURCES)[number];
+
+/* ------------------------------------------------------------------ *
+ * P07-2 / F-001 正文发布限制端口契约（原 application/work-recording-publish.ts
+ * 内联形状上移；不改变任何字段语义，只补硬上限与统一校验，避免第二套配置）。
+ *
+ * 计量范围：maxBodyBytes/maxAttachmentBytes 只度量单条公开正文/附件的 retained
+ * 字节（脱敏、截断后实际落盘）；maxTotalBytes 度量一条消息正文+附件的 retained
+ * 总量；maxChunkBytes 度量单次从上游接收的 byte chunk；maxQueueBytes 度量发布
+ * 器内等待 ArtifactPublisher 消费的排队字节（背压上限，不是磁盘上限）；
+ * maxAttachments 度量单条消息附件数。上限不能限制授权工具对工作区/仓库的任意
+ * 写入，也不能阻止同用户恶意进程（见 ports/work-recording-policy.ts）。
+ * ------------------------------------------------------------------ */
+export const WORK_RECORDING_PUBLISH_MAX_BODY_BYTES_CAP = 1_048_576;
+export const WORK_RECORDING_PUBLISH_MAX_ATTACHMENT_BYTES_CAP = 1_048_576;
+export const WORK_RECORDING_PUBLISH_MAX_TOTAL_BYTES_CAP = 8_388_608;
+export const WORK_RECORDING_PUBLISH_MAX_CHUNK_BYTES_CAP = 262_144;
+export const WORK_RECORDING_PUBLISH_MAX_QUEUE_BYTES_CAP = 1_048_576;
+export const WORK_RECORDING_PUBLISH_MAX_ATTACHMENTS_CAP = WORK_RECORDING_MAX_ATTACHMENTS;
+
+export interface WorkRecordingPublishLimits {
+  /** 每条公开正文的 retained byte 上限。 */
+  readonly maxBodyBytes: number;
+  /** 每个附件的 retained byte 上限。 */
+  readonly maxAttachmentBytes: number;
+  /** 一条消息及其附件的 retained byte 总上限。 */
+  readonly maxTotalBytes: number;
+  /** 单次从上游接收的 byte chunk 上限。 */
+  readonly maxChunkBytes: number;
+  /** 发布器正在等待 ArtifactPublisher 消费的 chunk 总上限。 */
+  readonly maxQueueBytes: number;
+  /** 一条消息最多接收的附件数，缺省与 Work Recording schema 一致。 */
+  readonly maxAttachments?: number;
+}
+
+/** 正式形式（maxAttachments 总是有值，供清单/有效限制落盘）。 */
+export type RequiredWorkRecordingPublishLimits = Required<WorkRecordingPublishLimits>;
+
+function cappedPositiveInteger(value: unknown, context: ValidationContext, field: string, cap: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw validationError(context, field, `必须是 ≥1 的有限安全整数（≤${cap}）`, value);
+  }
+  if (value > cap) {
+    throw validationError(context, field, `超出硬上限 ${cap}`, value);
+  }
+  return value;
+}
+
+/**
+ * 正文发布限制校验：拒绝非有限数、非安全整数、负数/零与超过硬上限的输入；
+ * 排队上限不得小于单 chunk 上限（否则上游必然永久背压）。返回带缺省值的正式形式。
+ */
+export function validateWorkRecordingPublishLimits(
+  value: unknown,
+  context: ValidationContext = { operation: 'WorkRecording.publishLimits' },
+  field = 'publishLimits',
+): RequiredWorkRecordingPublishLimits {
+  const object = requirePlainObject(value, context, field);
+  rejectUnknownKeys(object, [
+    'maxBodyBytes', 'maxAttachmentBytes', 'maxTotalBytes', 'maxChunkBytes', 'maxQueueBytes', 'maxAttachments',
+  ], context, field);
+  const limits: RequiredWorkRecordingPublishLimits = {
+    maxBodyBytes: cappedPositiveInteger(object.maxBodyBytes, context, `${field}.maxBodyBytes`, WORK_RECORDING_PUBLISH_MAX_BODY_BYTES_CAP),
+    maxAttachmentBytes: cappedPositiveInteger(object.maxAttachmentBytes, context, `${field}.maxAttachmentBytes`, WORK_RECORDING_PUBLISH_MAX_ATTACHMENT_BYTES_CAP),
+    maxTotalBytes: cappedPositiveInteger(object.maxTotalBytes, context, `${field}.maxTotalBytes`, WORK_RECORDING_PUBLISH_MAX_TOTAL_BYTES_CAP),
+    maxChunkBytes: cappedPositiveInteger(object.maxChunkBytes, context, `${field}.maxChunkBytes`, WORK_RECORDING_PUBLISH_MAX_CHUNK_BYTES_CAP),
+    maxQueueBytes: cappedPositiveInteger(object.maxQueueBytes, context, `${field}.maxQueueBytes`, WORK_RECORDING_PUBLISH_MAX_QUEUE_BYTES_CAP),
+    maxAttachments: object.maxAttachments === undefined
+      ? WORK_RECORDING_MAX_ATTACHMENTS
+      : cappedPositiveInteger(object.maxAttachments, context, `${field}.maxAttachments`, WORK_RECORDING_PUBLISH_MAX_ATTACHMENTS_CAP),
+  };
+  if (limits.maxQueueBytes < limits.maxChunkBytes) {
+    throw validationError(context, `${field}.maxQueueBytes`, '不得小于 maxChunkBytes（否则必然背压）', limits.maxQueueBytes);
+  }
+  return limits;
+}
 export const WORK_RECORDING_COVERAGES = ['complete', 'partial', 'failed'] as const;
 export type WorkRecordingCoverage = (typeof WORK_RECORDING_COVERAGES)[number];
 export const WORK_RECORDING_SEQUENCE_RECONCILIATIONS = ['match', 'mismatch', 'not_available'] as const;
