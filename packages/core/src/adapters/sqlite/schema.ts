@@ -2888,3 +2888,28 @@ export const planningContexts = sqliteTable('planning_contexts', {
     .where(sql`${table.status} IN ('open', 'candidate_published')`),
   index('planning_contexts_project_updated_index').on(table.projectId, table.updatedAt),
 ]);
+
+/** P07-3 / F-002：Core/Host 共用的单行维护占用事实。 */
+export const maintenanceOccupancy = sqliteTable('maintenance_occupancy', {
+  id: text('id').primaryKey(),
+  revision: integer('revision').notNull().default(1),
+  state: text('state').notNull().default('idle'),
+  operation: text('operation'),
+  operationId: text('operation_id'),
+  ownerId: text('owner_id'),
+  hostInstanceId: text('host_instance_id'),
+  fence: integer('fence').notNull().default(0),
+  acquiredAt: integer('acquired_at'),
+  blockedReason: text('blocked_reason'),
+}, (table) => [
+  check('maintenance_occupancy_singleton_check', sql`${table.id} = 'global'`),
+  check('maintenance_occupancy_revision_check', sql`${table.revision} >= 1`),
+  check('maintenance_occupancy_state_check', sql`${table.state} IN ('idle', 'held', 'blocked')`),
+  check('maintenance_occupancy_operation_check', sql`${table.operation} IS NULL OR ${table.operation} IN ('backup', 'migration', 'restore', 'project_archive', 'project_delete')`),
+  check('maintenance_occupancy_fence_check', sql`${table.fence} >= 0`),
+  check('maintenance_occupancy_shape_check', sql`(
+    (${table.state} = 'idle' AND ${table.operation} IS NULL AND ${table.operationId} IS NULL AND ${table.ownerId} IS NULL AND ${table.hostInstanceId} IS NULL AND ${table.blockedReason} IS NULL)
+    OR (${table.state} = 'held' AND ${table.operation} IS NOT NULL AND ${table.operationId} IS NOT NULL AND ${table.ownerId} IS NOT NULL AND ${table.hostInstanceId} IS NOT NULL AND ${table.acquiredAt} IS NOT NULL AND ${table.blockedReason} IS NULL)
+    OR (${table.state} = 'blocked' AND ${table.operation} IS NOT NULL AND ${table.operationId} IS NOT NULL AND ${table.ownerId} IS NOT NULL AND ${table.hostInstanceId} IS NOT NULL AND ${table.blockedReason} IS NOT NULL)
+  )`),
+]);

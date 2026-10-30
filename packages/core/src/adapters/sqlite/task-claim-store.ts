@@ -10,6 +10,7 @@ import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER, 
 import { validateTaskClaimInput, validateTaskClaimLaunch, validateTaskClaimDispatch, type TaskClaimStore, type TaskClaimReceipt } from '../../ports/task-claim.js';
 import { requirePlainObject, rejectUnknownKeys, validateStableId } from '../../ports/validation.js';
 import type { WorkWorkspaceAuthority } from '../../ports/work-resources.js';
+import type { MaintenanceWriteGate } from '../../ports/data-maintenance.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -21,6 +22,8 @@ const operation = 'TaskClaim.claimTask';
 
 /** No workspace preparation, Git, process or Runtime I/O belongs in this adapter. */
 export function createSqliteTaskClaimStore(session: SqliteStorageSession, options: {
+  /** P07-3：同一短写事务内的维护占用资格检查。 */
+  readonly maintenanceGate?: MaintenanceWriteGate;
   readonly workspaceAuthority: WorkWorkspaceAuthority;
   /** Trusted startup gate, checked inside the committing claim transaction. */
   readonly assertCanClaim?: () => void;
@@ -95,6 +98,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
             return { replayed: true, receipt };
           }
           options.assertCanClaim?.();
+          options.maintenanceGate?.assertCanWrite('work');
           const now = clock();
           if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid claim clock');
           if (valid.leaseUntilUtcMs <= now) throw new StorageError('validation', operation, 'Expired new claim lease');

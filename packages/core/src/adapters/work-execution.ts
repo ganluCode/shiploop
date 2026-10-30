@@ -26,6 +26,7 @@ import { stableStringify } from '../ports/feature-plan.js';
 import { validateRuntimeStrategy } from '../ports/settings-schema.js';
 import { createWorkScheduler } from '../application/work-scheduler.js';
 import { createPlanningDispatchPrepareService } from '../application/planning-dispatch.js';
+import type { MaintenanceWriteGate } from '../ports/data-maintenance.js';
 import { createSqlitePlanningClaimStore } from './sqlite/planning-claim-store.js';
 import { createSqlitePlanningContextStore } from './sqlite/planning-context-store.js';
 import { transactSqliteConsistentRead } from './sqlite/state-store.js';
@@ -102,6 +103,7 @@ export function assembleWorkExecution(options: {
   readonly session: SqliteStorageSession;
   readonly application: Pick<CoreApplication, 'dataRoot' | 'artifactStore' | 'artifactFileStore' | 'stateStore' |
     'configurationService' | 'projectResourceService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare' | 'planningInputPrepare'> & {
+      readonly maintenanceGate?: MaintenanceWriteGate;
       readonly runtimeRecovery?: CoreApplication['runtimeRecovery'];
       readonly runtimeRecoveryCatalog?: CoreApplication['runtimeRecoveryCatalog'];
       readonly workRecoveryContinuation?: CoreApplication['workRecoveryContinuation'];
@@ -327,7 +329,7 @@ export function assembleWorkExecution(options: {
       lifecycle: createSqliteAttemptLifecycleStore(session, { workspaceAuthority: app.workWorkspaceAuthority, nowUtcMs: now }) }),
     recorder: createWorkEvidenceRecorder({ publisher, verifier, sessions, recordingMode: options.recordingMode,
       effectiveLimits: { version: 1, recorder: recordingPolicy.recorder, publish: recordingPolicy.publish },
-      recording: { store: createSqliteWorkRecordingStore(session, { nowUtcMs: now }), nowUtcMs: now,
+      recording: { store: createSqliteWorkRecordingStore(session, { nowUtcMs: now, maintenanceGate: app.maintenanceGate }), nowUtcMs: now,
         publisher: createWorkRecordingPublisher({ artifacts: publisher, limits: recordingPolicy.publish }) },
       limits: recordingPolicy.recorder }),
     eventIdentityPrefix: runtimeAssembly?.eventIdentityPrefix ?? (() => 'unregistered.'),
@@ -428,6 +430,7 @@ export function assembleWorkExecution(options: {
   // P05-1 / F-005：planning 消费端口（准备/认领真实实现；消费者由装配注入，
   // 未注入时调度器保留 planning_consumer capability gap，不认领不占槽）。
   const planningClaims = createSqlitePlanningClaimStore(session, {
+    maintenanceGate: app.maintenanceGate,
     workspaceAuthority: app.workWorkspaceAuthority,
     assertCanClaim() {
       if (options.startupRecovery.blocked()) {

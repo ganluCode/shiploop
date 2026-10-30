@@ -9,6 +9,7 @@ import type { WorkRecordingArtifactRef, WorkRecordingManifestRecord, WorkRecordi
 import { WORK_RECORDING_MAX_BATCH_MESSAGES } from '../../ports/work-recording-store.js';
 import type { WorkRecordingCommitInput, WorkRecordingStore, WorkRecordingWriteIdentity } from '../../ports/work-recording-store.js';
 import type { SqliteStorageSession } from './session.js';
+import type { MaintenanceWriteGate } from '../../ports/data-maintenance.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 
 const context = { operation: 'WorkRecordingStore.commit' };
@@ -91,7 +92,7 @@ function messageDigest(message: WorkRecordingMessageRecord): string {
 }
 
 export function createSqliteWorkRecordingStore(
-  session: SqliteStorageSession, options: { readonly nowUtcMs?: () => number } = {},
+  session: SqliteStorageSession, options: { readonly nowUtcMs?: () => number; readonly maintenanceGate?: MaintenanceWriteGate } = {},
 ): WorkRecordingStore {
   const db = session.database;
   const now = options.nowUtcMs ?? Date.now;
@@ -145,6 +146,7 @@ export function createSqliteWorkRecordingStore(
     commitRecording(raw) {
       const input = parseInput(raw);
       return session.transactWrite(context.operation, () => {
+        options.maintenanceGate?.assertCanWrite('recording');
         const { identity, manifest } = input;
         const target = fence(identity);
         const current = latest(identity.sessionId);

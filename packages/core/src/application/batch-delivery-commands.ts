@@ -7,6 +7,7 @@ import { validateBatchDeliveryCommandResult } from '../ports/batch-delivery-comm
 import type { BatchDeliveryCommandResult } from '../ports/batch-delivery-commands.js';
 import type { BatchFinalizationCandidate, BatchLeafFinalizationService } from './batch-leaf-finalization.js';
 import type { PhaseDeliveryApprovalService } from './phase-delivery-approval.js';
+import type { MaintenanceWriteGate } from '../ports/data-maintenance.js';
 import type { DeliveryActivity } from './command-service.js';
 
 export interface BatchDeliveryDependencies {
@@ -25,6 +26,7 @@ function conflict(envelope: BatchDeliveryEnvelope, reason: string): never {
 export function createBatchDeliveryCommandHandler(options: {
   readonly atomicStore: AtomicCommandStore;
   readonly dependencies: BatchDeliveryDependencies;
+  readonly maintenanceGate?: MaintenanceWriteGate;
   readonly nowUtcMs: () => number;
 }) {
   const { atomicStore: store, dependencies: deps, nowUtcMs } = options;
@@ -76,6 +78,7 @@ export function createBatchDeliveryCommandHandler(options: {
   async function execute(principal: TrustedPrincipal, envelope: BatchDeliveryEnvelope, digest: string): Promise<CommandReceipt> {
     const previous = store.transact(envelope.operation, tx => {
       const previous = replay(principal, envelope, digest, tx); if (previous) return previous;
+      options.maintenanceGate?.assertCanWrite('git');
       const timing = evaluateCommandTiming(envelope, nowUtcMs());
       if (timing.kind !== 'fresh') throw new PublicError(timing.kind === 'expired' ? 'command_expired' : 'invalid_input', envelope.operation);
       tx.getProject(envelope.scope.projectId);

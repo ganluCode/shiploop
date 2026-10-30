@@ -6,6 +6,7 @@ import { createResultRef, decideCommandReplay } from '../ports/command-receipts.
 import type { ControlledGitCommitService } from '../ports/controlled-git-commit.js';
 import type { GitCommitReconciliationService } from '../ports/git-commit-reconciliation.js';
 import type { GitOperationIntent } from '../ports/git-operations.js';
+import type { MaintenanceWriteGate } from '../ports/data-maintenance.js';
 import { isStorageError } from '../ports/errors.js';
 import { validateSha256Digest } from '../ports/validation.js';
 import { createFeatureFinalizationService, type FeatureFinalizationInput, type FeatureFinalizationOptions } from './feature-finalization.js';
@@ -49,6 +50,7 @@ export type FeatureDeliveryFactory = (context: {
 export function createFeatureDeliveryCommandHandler(options: {
   readonly atomicStore: AtomicCommandStore;
   readonly dependencies: FeatureDeliveryDependencies;
+  readonly maintenanceGate?: MaintenanceWriteGate;
   readonly nowUtcMs: () => number;
 }) {
   const { atomicStore: store, dependencies: deps, nowUtcMs } = options;
@@ -131,6 +133,7 @@ export function createFeatureDeliveryCommandHandler(options: {
     const replayed = store.transact(envelope.operation, transaction => {
       const receipt = original(principal, envelope, digest, transaction);
       if (receipt) return receipt;
+      options.maintenanceGate?.assertCanWrite(envelope.operation.startsWith('git.') ? 'git' : 'verification');
       const timing = evaluateCommandTiming(envelope, nowUtcMs());
       if (timing.kind !== 'fresh') {
         throw new PublicError(timing.kind === 'expired' ? 'command_expired' : 'invalid_input', envelope.operation);

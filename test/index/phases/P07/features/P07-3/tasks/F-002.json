@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/storage/p07-3-f002-maintenance-gate.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/host/host-stop-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-task-claim.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f008-recording-integration.test.ts", "all": true }
+    ]
+  }]
+}

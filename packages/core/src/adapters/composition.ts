@@ -54,6 +54,7 @@ import { createExecutionStopControl } from '../application/execution-stop-contro
 import { createVerificationStopControl } from '../application/verification-stop-control.js';
 import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
+import type { MaintenanceWriteGate } from '../ports/data-maintenance.js';
 import type { RuntimeFallbackSwitchService } from '../ports/runtime-fallback-switch.js';
 import type { BatchDeliveryFactory } from '../application/batch-delivery-commands.js';
 export type { BatchDeliveryFactory, BatchDeliveryDependencies } from '../application/batch-delivery-commands.js';
@@ -213,6 +214,7 @@ import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
+import { createSqliteMaintenanceWriteGate } from './sqlite/data-maintenance.js';
 import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
 import { createSqliteDocumentStore } from './sqlite/document-store.js';
@@ -247,6 +249,8 @@ const OPERATION = 'CoreApplication.open';
 export interface CoreApplicationOptions {
   /** Host sets this under the writer lock, before any trusted adapter factory runs. */
   readonly workStartupRecoveryRequired?: boolean;
+  /** P07-3：可信维护占用资格；检查发生在各写事务内。 */
+  readonly maintenanceGate?: MaintenanceWriteGate;
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Explicit trusted recording policy; omitted means required. Never supplied by Work tools. */
@@ -333,6 +337,8 @@ export interface CoreApplication {
   readonly configurationService: ConfigurationService;
   /** P06-3：项目获准 Skills/MCP 资源配置的 CAS 与授权服务。 */
   readonly projectResourceService: ProjectResourceService;
+  /** P07-3：当前维护占用门控；只读查询不受其阻塞。 */
+  readonly maintenanceGate?: MaintenanceWriteGate;
   /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
   readonly commandReceiptStore: CommandReceiptStore;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
@@ -447,6 +453,7 @@ export interface CoreApplication {
 
 const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
+  'maintenanceGate',
   'workRuntimeFactory',
   'workRecordingMode',
   'batchDeliveryFactory',
@@ -547,6 +554,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     throw validationError(context, 'workStartupRecoveryRequired', 'Expected boolean');
   }
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
+  if (object.maintenanceGate !== undefined) {
+    const gate = object.maintenanceGate as Partial<MaintenanceWriteGate>;
+    if (gate === null || typeof gate !== 'object' || typeof gate.read !== 'function'
+      || typeof gate.acquire !== 'function' || typeof gate.release !== 'function' || typeof gate.assertCanWrite !== 'function') {
+      throw validationError(context, 'maintenanceGate', '可信维护门控端口不完整');
+    }
+  }
   if (object.workRecordingMode !== undefined && object.workRecordingMode !== 'required' && object.workRecordingMode !== 'best_effort') {
     throw validationError(context, 'workRecordingMode', 'required_or_best_effort');
   }
@@ -633,6 +647,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   try {
     await migrateSqliteStorage(session);
 
+    const maintenanceGate = (object.maintenanceGate as MaintenanceWriteGate | undefined)
+      ?? createSqliteMaintenanceWriteGate(session);
     const nowUtcMs = object.nowUtcMs as (() => number) | undefined;
     const stateStore = createSqliteStateStore(
       session,
@@ -966,6 +982,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       onRecoveryComplete: () => resumeRecoveryCompletionHook(),
     });
     const taskClaims = createSqliteTaskClaimStore(session, {
+      maintenanceGate,
       assertCanClaim() {
         if (startupRecovery.blocked()) throw new StorageError('conflict', 'TaskClaim.claimTask',
           'Work startup recovery is incomplete', { details: { reason: 'startup_recovery' } });
@@ -1206,6 +1223,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
+        maintenanceGate,
         configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined,
@@ -1294,6 +1312,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       predecessors: integrationPlanFacts.predecessors,
     });
     const commandService = createCommandService({
+      maintenanceGate,
       atomicStore,
       batchDelivery,
       featureDelivery,
@@ -1497,6 +1516,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       projectService,
       configurationService,
       projectResourceService,
+      maintenanceGate,
       commandReceiptStore,
       commandReceiptsService,
       commandService,

@@ -11,6 +11,7 @@
  * 创建成功同事务写 settings.*_created 创建事件（仅命令路径，契约 §15.3），
  * 更新复用 P01 既有 *_updated 写入，不重复。
  */
+import type { MaintenanceWriteGate, MaintenanceWriteKind } from '../ports/data-maintenance.js';
 import { submitPhaseMutation } from './phase-lifecycle.js';
 import type { ProjectProfileDetectionService, PreparedProfileDetection } from './project-profile-detection.js';
 import { submitFeaturePhaseMove } from './feature-phase.js';
@@ -170,6 +171,8 @@ export interface CommandServiceOptions {
    * 不传时保持 F-002 的意图/持久 operation 语义，不冒充已停止。
    */
   readonly executionStopControl?: import('../ports/execution-stop.js').ExecutionStopControlPort;
+  /** P07-3：维护占用资格在各自提交事务内重核。 */
+  readonly maintenanceGate?: MaintenanceWriteGate;
   readonly atomicStore: AtomicCommandStore;
   /** P06-1：Profile confirm/modify/reject uses Core-owned authorization and version CAS. */
   readonly projectProfileService?: ProjectProfileService;
@@ -258,6 +261,22 @@ export interface CommandServiceOptions {
   readonly nowUtcMs?: () => number;
 }
 
+function maintenanceWriteKind(operation: string): MaintenanceWriteKind | null {
+  if (operation === PLANNING_START_OPERATION) return 'planning';
+  if (operation === 'baseline.run' || operation === 'baseline.cancel') return 'baseline';
+  if (operation === EXECUTION_START_OPERATION || operation === 'execution.resume' || operation === FINALIZATION_RETRY_OPERATION) return 'work';
+  if (operation === 'feature.verification.continue' || operation === 'git.operation.start' || operation === 'git.operation.reconcile') return operation.startsWith('git.') ? 'git' : 'verification';
+  if (operation.startsWith('settings.') || operation === 'project.metadata.update' || operation === 'project.register' || operation === 'project.repository.rebind') return 'configuration';
+  if (operation === WORKSPACE_DISCARD_OPERATION || operation === WORKSPACE_DISCARD_PREVIEW_OPERATION) return 'cleanup';
+  if (operation === 'project.resource.import' || operation === 'project.resource.enable' || operation === 'project.resource.disable' || operation === 'project.resource.revoke') return 'configuration';
+  return null;
+}
+
+function checkMaintenanceWrite(gate: MaintenanceWriteGate | undefined, operation: string): void {
+  const kind = maintenanceWriteKind(operation);
+  if (kind !== null) gate?.assertCanWrite(kind);
+}
+
 function checkTiming(envelope: ValidatedCommandEnvelope, now: number): void {
   const verdict = evaluateCommandTiming(envelope, now);
   if (verdict.kind === 'expired') {
@@ -314,6 +333,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const store = options.atomicStore;
   const repositoryInspector = options.repositoryInspector;
   const projectProfileService = options.projectProfileService;
+  const maintenanceGate = options.maintenanceGate;
 
   const capabilityCatalog = options.capabilityCatalog;
   const baselineService = options.baselineService;
@@ -334,11 +354,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
-    atomicStore: store, dependencies: options.featureDelivery, nowUtcMs,
+    atomicStore: store, dependencies: options.featureDelivery, maintenanceGate, nowUtcMs,
   });
 
   const batchDelivery = options.batchDelivery === undefined ? undefined : createBatchDeliveryCommandHandler({
-    atomicStore: store, dependencies: options.batchDelivery, nowUtcMs,
+    atomicStore: store, dependencies: options.batchDelivery, maintenanceGate, nowUtcMs,
   });
   const activities = [delivery?.activity, batchDelivery?.activity].filter((activity): activity is DeliveryActivity => activity !== undefined);
   const deliveryActivity: DeliveryActivity | undefined = activities.length === 0 ? undefined : {
@@ -1097,6 +1117,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             operation,
           );
           if (original !== undefined) return original;
+          checkMaintenanceWrite(maintenanceGate, envelope.operation);
           const now = nowUtcMs();
           checkTiming(envelope, now);
           if (projectResources !== undefined && (envelope.operation === 'project.resource.import'

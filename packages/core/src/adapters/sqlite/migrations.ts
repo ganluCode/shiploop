@@ -4216,6 +4216,37 @@ CREATE TRIGGER verification_processes_immutable_delete BEFORE DELETE ON verifica
 BEGIN SELECT RAISE(ABORT, 'verification process identity immutable'); END;
 `;
 
+const MIGRATION_055_SQL = `
+-- P07-3 / F-002：独立维护占用。不可由租约过期、PID 消失或单个回执自动回收。
+CREATE TABLE maintenance_occupancy (
+  id TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL DEFAULT 'idle',
+  operation TEXT,
+  operation_id TEXT,
+  owner_id TEXT,
+  host_instance_id TEXT,
+  fence INTEGER NOT NULL DEFAULT 0,
+  acquired_at INTEGER,
+  blocked_reason TEXT,
+  CONSTRAINT maintenance_occupancy_singleton_check CHECK (id = 'global'),
+  CONSTRAINT maintenance_occupancy_revision_check CHECK (revision >= 1),
+  CONSTRAINT maintenance_occupancy_state_check CHECK (state IN ('idle', 'held', 'blocked')),
+  CONSTRAINT maintenance_occupancy_operation_check CHECK (operation IS NULL OR operation IN ('backup', 'migration', 'restore', 'project_archive', 'project_delete')),
+  CONSTRAINT maintenance_occupancy_shape_check CHECK (
+    (state = 'idle' AND operation IS NULL AND operation_id IS NULL AND owner_id IS NULL AND host_instance_id IS NULL AND blocked_reason IS NULL)
+    OR (state = 'held' AND operation IS NOT NULL AND length(operation_id) BETWEEN 1 AND 128 AND length(owner_id) BETWEEN 1 AND 128 AND length(host_instance_id) BETWEEN 1 AND 128 AND acquired_at IS NOT NULL AND blocked_reason IS NULL)
+    OR (state = 'blocked' AND operation IS NOT NULL AND length(operation_id) BETWEEN 1 AND 128 AND length(owner_id) BETWEEN 1 AND 128 AND length(host_instance_id) BETWEEN 1 AND 128 AND blocked_reason IS NOT NULL)
+  ),
+  CONSTRAINT maintenance_occupancy_fence_check CHECK (fence >= 0)
+);
+INSERT INTO maintenance_occupancy (id) VALUES ('global');
+CREATE TRIGGER maintenance_occupancy_identity_immutable
+BEFORE UPDATE ON maintenance_occupancy
+WHEN NEW.id IS NOT OLD.id OR NEW.fence < OLD.fence
+BEGIN SELECT RAISE(ABORT, 'maintenance occupancy identity/fence invalid'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4335,4 +4366,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 52, sql: MIGRATION_052_SQL, checksum: sha256Hex(MIGRATION_052_SQL) },
   { version: 53, sql: MIGRATION_053_SQL, checksum: sha256Hex(MIGRATION_053_SQL) },
   { version: 54, sql: MIGRATION_054_SQL, checksum: sha256Hex(MIGRATION_054_SQL) },
+  { version: 55, sql: MIGRATION_055_SQL, checksum: sha256Hex(MIGRATION_055_SQL) },
 ];

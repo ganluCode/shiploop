@@ -31,6 +31,8 @@ export type {
   EventStreamRequestInput,
   ReplayLowerBoundReader,
 } from './sse-transport.js';
+export { createMaintenanceController } from './maintenance.js';
+export type { MaintenanceController, MaintenanceControllerOptions } from './maintenance.js';
 export {
   createHostStopController,
   createIdleActivityGate,

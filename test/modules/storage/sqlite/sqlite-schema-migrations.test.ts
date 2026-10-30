@@ -120,6 +120,8 @@ const SCHEMA_TABLES = [
   ['phase_delivery_candidates', schema.phaseDeliveryCandidates],
   // P05-9 / F-004：人工批准绑定及失效事实。
   ['phase_delivery_approvals', schema.phaseDeliveryApprovals],
+  // P07-3 / F-002：Core/Host 共享维护占用 fencing（迁移 v55）。
+  ['maintenance_occupancy', schema.maintenanceOccupancy],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
