@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "long-output",
+  "trigger": "controlled child continuously emits 64KiB output against a 4KiB bound",
+  "components": [
+    "default Core",
+    "default Host",
+    "HostClient",
+    "CLI projection",
+    "SQLite",
+    "Artifact files",
+    "FakeRuntime",
+    "CommandProcess child"
+  ],
+  "result": "failed",
+  "failureReason": "output_overflow",
+  "facts": {
+    "coverage": "complete",
+    "watermark": 4,
+    "missingReasons": [],
+    "diagnostics": [
+      "recording_mode_required",
+      "stop_observed_confirmed",
+      "recording_detail_redacted"
+    ],
+    "messages": [
+      {
+        "id": "5efc22b4-a82a-43b9-ad27-ea1f7b4af0e0",
+        "kind": "message",
+        "sequence": 1
+      },
+      {
+        "id": "9232eb02-4574-459a-9f05-e13513bdd723",
+        "kind": "tool_started",
+        "sequence": 2
+      },
+      {
+        "id": "fed003cd-5cbc-48cf-b924-b87928f69fad",
+        "kind": "tool_finished",
+        "sequence": 3
+      },
+      {
+        "id": "455e6a6d-b727-4232-9efe-f01beac5cf5c",
+        "kind": "message",
+        "sequence": 4
+      }
+    ],
+    "bodyHashes": [
+      "b1c588165f9bdf1529dd14ca7ff0948ed4efc7037a3bfbecc37b6baa0c93e4e0",
+      "010395df691116c3fe87efa21d133ff31449a34cf6a26e9e2b6216b4b41923be",
+      "912ab5563bbd857c6ad01ea762cf64e7c367f60469c542adefcbc1e996ded154",
+      "1d4854c48b4e5161f3cac7fbf303e4f07247d38ca3563fe3d0ef780045d9247d"
+    ],
+    "cliContainsCoverage": true,
+    "stopObserved": true,
+    "attempt": {
+      "status": "verifying",
+      "execution_version": 1
+    },
+    "attemptsCreated": {
+      "attempts_created": 1,
+      "runtime_starts": 1
+    },
+    "dependentTask": {
+      "status": "pending"
+    },
+    "gitHead": {
+      "base_commit": "19e6e37c0a93bc3ee5ae8a35deee80f6e111a903"
+    },
+    "toolMarkerPresent": false
+  },
+  "command": {
+    "argv": [
+      "/Users/ganlu/.nvm/versions/node/v22.19.0/bin/node",
+      "--no-warnings",
+      "-e",
+      "require('node:fs').writeFileSync(\"p07-f008-tool.pid\", String(process.pid));process.stdout.write('x'.repeat(65536));setInterval(() => {}, 1000);"
+    ],
+    "exitCode": 0
+  }
+}

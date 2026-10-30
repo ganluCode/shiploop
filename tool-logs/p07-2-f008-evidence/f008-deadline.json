@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "f008-deadline",
+  "trigger": "events and result never settle beyond the shared 1s deadline",
+  "components": [
+    "Core Recorder",
+    "SQLite",
+    "Artifact files"
+  ],
+  "result": "failed",
+  "failureReason": "recording_deadline_exceeded",
+  "facts": {
+    "safeStopRequired": true,
+    "publicationStarted": false,
+    "watermark": null
+  },
+  "command": {
+    "argv": [
+      "vitest",
+      "p07-2-f008-deadline"
+    ],
+    "exitCode": 0
+  }
+}

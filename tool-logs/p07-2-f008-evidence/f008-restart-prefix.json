@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "f008-restart-prefix",
+  "trigger": "restart reads the durable prefix after a stopped session",
+  "components": [
+    "Core recovery",
+    "SQLite recording indexes",
+    "Artifact verifier"
+  ],
+  "result": "passed",
+  "failureReason": null,
+  "facts": {
+    "status": "verified_prefix",
+    "continuation": "metadata_only",
+    "watermark": 1,
+    "verifiedThrough": 1,
+    "taskPassed": false
+  },
+  "command": {
+    "argv": [
+      "vitest",
+      "p07-2-f008-restart-prefix"
+    ],
+    "exitCode": 0
+  }
+}

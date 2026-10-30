@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "f008-replay",
+  "trigger": "controlled replay recorder input",
+  "components": [
+    "Core Recorder",
+    "SQLite",
+    "Artifact files",
+    "Fake Runtime"
+  ],
+  "result": "passed",
+  "failureReason": null,
+  "facts": {
+    "schemaVersion": 1,
+    "scenarioId": "replay",
+    "coverage": "complete",
+    "watermark": 4,
+    "gaps": [],
+    "sessionGaps": [],
+    "failureReason": null,
+    "cancelCalls": 0,
+    "nativeDatabaseRejected": false,
+    "runtimeCompleted": true,
+    "failedChunks": 0,
+    "duplicatesDropped": 4,
+    "sequences": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "toolParents": [
+      [
+        "parent",
+        null
+      ],
+      [
+        "child",
+        "parent"
+      ]
+    ],
+    "inputTokens": 7,
+    "finalInputTokens": 900,
+    "notAdditive": true,
+    "businessUnchanged": true,
+    "taskStatus": "running"
+  },
+  "command": {
+    "argv": [
+      "vitest",
+      "replay"
+    ],
+    "exitCode": 0
+  }
+}

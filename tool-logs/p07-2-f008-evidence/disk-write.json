@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "disk-write",
+  "trigger": "artifact staging write returns ENOSPC",
+  "components": [
+    "default Core",
+    "default Host",
+    "HostClient",
+    "CLI projection",
+    "SQLite",
+    "Artifact files",
+    "FakeRuntime",
+    "CommandProcess child"
+  ],
+  "result": "failed",
+  "failureReason": "publication_file_error",
+  "facts": {
+    "coverage": "failed",
+    "watermark": null,
+    "missingReasons": [
+      "terminal_watermark_unknown",
+      "publication_file_error",
+      "recording_failed:event_publish_failed",
+      "evidence_unrecoverable"
+    ],
+    "diagnostics": [
+      "recording_mode_required",
+      "stop_observed_confirmed",
+      "recording_detail_redacted"
+    ],
+    "messages": [],
+    "bodyHashes": [],
+    "cliContainsCoverage": true,
+    "stopObserved": true,
+    "attempt": {
+      "status": "failed",
+      "execution_version": 1
+    },
+    "attemptsCreated": {
+      "attempts_created": 1,
+      "runtime_starts": 1
+    },
+    "dependentTask": {
+      "status": "pending"
+    },
+    "gitHead": {
+      "base_commit": "5c00e949edf6bb15b9b1bbb40de86c3909e3d0d7"
+    },
+    "toolMarkerPresent": false
+  },
+  "command": {
+    "argv": [
+      "/Users/ganlu/.nvm/versions/node/v22.19.0/bin/node",
+      "--no-warnings",
+      "-e",
+      "require('node:fs').writeFileSync(\"p07-f008-tool.pid\", String(process.pid));"
+    ],
+    "exitCode": 0
+  }
+}

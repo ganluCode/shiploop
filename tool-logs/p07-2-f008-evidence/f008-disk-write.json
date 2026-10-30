@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "f008-disk-write",
+  "trigger": "controlled disk-write recorder input",
+  "components": [
+    "Core Recorder",
+    "SQLite",
+    "Artifact files",
+    "Fake Runtime"
+  ],
+  "result": "failed",
+  "failureReason": "recording_fault",
+  "facts": {
+    "schemaVersion": 1,
+    "scenarioId": "disk-write",
+    "coverage": "failed",
+    "watermark": 2,
+    "gaps": [
+      "recording_failed:event_storage_exhausted"
+    ],
+    "sessionGaps": [
+      "recording_failed:event_storage_exhausted"
+    ],
+    "failureReason": "event_storage_exhausted",
+    "cancelCalls": 1,
+    "nativeDatabaseRejected": false,
+    "runtimeCompleted": true,
+    "failedChunks": 1,
+    "duplicatesDropped": 0,
+    "sequences": [
+      1,
+      2
+    ],
+    "toolParents": [
+      [
+        "parent",
+        null
+      ],
+      [
+        "child",
+        "parent"
+      ]
+    ],
+    "inputTokens": 0,
+    "notAdditive": true,
+    "businessUnchanged": true,
+    "taskStatus": "running"
+  },
+  "command": {
+    "argv": [
+      "vitest",
+      "disk-write"
+    ],
+    "exitCode": 0
+  }
+}

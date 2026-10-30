@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "f008-slow-write-backpressure",
+  "trigger": "first event publication is held behind a release barrier while eight events are produced",
+  "components": [
+    "Core Recorder",
+    "FakeRuntime bounded channel",
+    "Artifact publisher",
+    "SQLite"
+  ],
+  "result": "passed",
+  "failureReason": null,
+  "facts": {
+    "producerConsumerOverlap": true,
+    "highWater": {
+      "events": 2,
+      "bytes": 460
+    },
+    "cumulativeLimitBytes": 200000,
+    "recordingWatermark": 8,
+    "runtimeCompleted": true
+  },
+  "command": {
+    "argv": [
+      "vitest",
+      "p07-2-f008-slow-write-backpressure"
+    ],
+    "exitCode": 0
+  }
+}

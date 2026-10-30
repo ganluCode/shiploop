@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "normal",
+  "trigger": "two messages around a real controlled tool process",
+  "components": [
+    "default Core",
+    "default Host",
+    "HostClient",
+    "CLI projection",
+    "SQLite",
+    "Artifact files",
+    "FakeRuntime",
+    "CommandProcess child"
+  ],
+  "result": "passed",
+  "failureReason": null,
+  "facts": {
+    "coverage": "complete",
+    "watermark": 4,
+    "missingReasons": [],
+    "diagnostics": [
+      "recording_mode_required",
+      "stop_observed_confirmed",
+      "recording_detail_redacted"
+    ],
+    "messages": [
+      {
+        "id": "79fee692-9622-4b01-8fd7-6ccf5aaf59c8",
+        "kind": "message",
+        "sequence": 1
+      },
+      {
+        "id": "a7d986d1-47bc-4df7-846e-d2edce12d464",
+        "kind": "tool_started",
+        "sequence": 2
+      },
+      {
+        "id": "bf75ec5f-882b-46f1-9024-a21fd7c09989",
+        "kind": "tool_finished",
+        "sequence": 3
+      },
+      {
+        "id": "83a5c1e5-fb59-4123-bb70-1fbc99f66315",
+        "kind": "message",
+        "sequence": 4
+      }
+    ],
+    "bodyHashes": [
+      "5e2e38f7b9132b61630660fe73e04893093f18a67d2f79b799bca62d367a2de3",
+      "ae69f674e21c1e2636a28bc93e8c32885db25202e0c0fab9070a6fd349235177",
+      "a734f98f4e2529789fe5a0c923285959d2e8790b0951022c8035e3e18464344f",
+      "b46bdd4e2215d4096b300598aff5f3a9bda86196272f71eccaed6501090d7d1f"
+    ],
+    "cliContainsCoverage": true,
+    "stopObserved": true,
+    "attempt": {
+      "status": "verifying",
+      "execution_version": 1
+    },
+    "attemptsCreated": {
+      "attempts_created": 1,
+      "runtime_starts": 1
+    },
+    "dependentTask": {
+      "status": "pending"
+    },
+    "gitHead": {
+      "base_commit": "f2fac602fac5f8643e880423327b0b8461ee6d8b"
+    },
+    "toolMarkerPresent": false
+  },
+  "command": {
+    "argv": [
+      "/Users/ganlu/.nvm/versions/node/v22.19.0/bin/node",
+      "--no-warnings",
+      "-e",
+      "require('node:fs').writeFileSync(\"p07-f008-tool.pid\", String(process.pid));"
+    ],
+    "exitCode": 0
+  }
+}

@@ -123,7 +123,14 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
       executionFailure = { kind: 'protocol', reason: 'recording_failed' };
     }
     const recordingBlocksExecution = input.recording !== null && recordingRequiresStop(input.recording);
-    if (recordingBlocksExecution && executionFailure === null
+    // A fulfilled partial recording is a durable, inspectable observation. Keep it
+    // as a required-recording gate when stop is confirmed; only a rejected
+    // recording (or an unconfirmed stop) is itself a settlement failure. The
+    // supervisor's explicit recording_failed control still takes precedence
+    // above, so hard recorder faults retain their cancellation/failure path.
+    const recordingObservationFailed = input.recording?.status === 'rejected'
+      || input.stopped?.status !== 'fulfilled' || input.stopped.value.confirmed !== true;
+    if (recordingBlocksExecution && recordingObservationFailed && executionFailure === null
         && input.control?.reason !== 'user_cancelled' && input.control?.reason !== 'service_close') {
       executionFailure = { kind: 'protocol', reason: 'recording_failed' };
     }

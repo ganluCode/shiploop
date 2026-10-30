@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "kind": "p07-2-f008-recording-scenario",
+  "scenario": "f008-large-message",
+  "trigger": "controlled large-message recorder input",
+  "components": [
+    "Core Recorder",
+    "SQLite",
+    "Artifact files",
+    "Fake Runtime"
+  ],
+  "result": "failed",
+  "failureReason": "recording_fault",
+  "facts": {
+    "schemaVersion": 1,
+    "scenarioId": "large-message",
+    "coverage": "partial",
+    "watermark": 3,
+    "gaps": [
+      "event_body_too_large:4",
+      "final_sequence_mismatch:result=4,recorded=3"
+    ],
+    "sessionGaps": [
+      "event_body_too_large:4",
+      "final_sequence_mismatch:result=4,recorded=3"
+    ],
+    "failureReason": null,
+    "cancelCalls": 0,
+    "nativeDatabaseRejected": false,
+    "runtimeCompleted": true,
+    "failedChunks": 0,
+    "duplicatesDropped": 0,
+    "sequences": [
+      1,
+      2,
+      3
+    ],
+    "toolParents": [
+      [
+        "parent",
+        null
+      ],
+      [
+        "child",
+        "parent"
+      ]
+    ],
+    "inputTokens": 7,
+    "finalInputTokens": 900,
+    "notAdditive": true,
+    "businessUnchanged": true,
+    "taskStatus": "running"
+  },
+  "command": {
+    "argv": [
+      "vitest",
+      "large-message"
+    ],
+    "exitCode": 0
+  }
+}
