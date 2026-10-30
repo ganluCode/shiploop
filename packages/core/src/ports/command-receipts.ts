@@ -39,6 +39,8 @@ import {
   WORK_ACCEPTED_SCHEMA_VERSION,
   WORK_ACCEPTED_OPERATION,
   PLANNING_ACCEPTED_SCHEMA_VERSION,
+  DATA_BACKUP_ACCEPTED_SCHEMA_VERSION,
+  DATA_BACKUP_ACCEPTED_OPERATION,
   PLANNING_ACCEPTED_OPERATION,
   PublicError,
   isIsoUtcDateTime,
@@ -52,6 +54,7 @@ import type {
   CommandScope,
   CommandScopeKind,
   CompletedCommandReceipt,
+  DataBackupAcceptedCommandReceipt,
   PublicErrorCode,
   PublicErrorShape,
   RejectedCommandReceipt,
@@ -204,6 +207,8 @@ export interface PersistedCommandReceiptRow {
   /** P05-1 / F-003：planning.start accepted v7 的 planning Task/候选身份；其余恒 null。 */
   readonly planningTaskId?: string | null;
   readonly candidateId?: string | null;
+  /** P07-3 / F-014：data.backup.create accepted v8 的 owner 备份身份；其余恒 null。 */
+  readonly backupId?: string | null;
   readonly result: unknown;
   readonly resultRef: string | null;
   readonly errorCode: string | null;
@@ -227,6 +232,7 @@ const PERSISTED_ROW_KEYS = [
   'runId',
   'planningTaskId',
   'candidateId',
+  'backupId',
   'result',
   'resultRef',
   'errorCode',
@@ -390,8 +396,34 @@ export function mapPersistedCommandReceipt(
       corrupt(operation, 'association');
     }
   }
+  // P07-3 / F-014：data.backup.create 接受回执（v8）携带稳定 operationId 与
+  // owner 备份身份；backup 列缺失或形状损坏按 corrupt 处理。
+  if (row.receiptVersion === DATA_BACKUP_ACCEPTED_SCHEMA_VERSION) {
+    if (row.result !== undefined || row.resultRef !== null || row.errorCode !== null ||
+        row.errorMessage !== null || row.errorDetails !== null ||
+        row.backupId == null || row.batchId != null || row.runId != null ||
+        !isSafeNonNegativeInteger(row.issuedAtUtcMs) || !isSafeNonNegativeInteger(row.completedAtUtcMs)) {
+      corrupt(operation, 'association');
+    }
+    try {
+      return validateReceiptShape({
+        schemaVersion: row.receiptVersion, commandId: row.commandId, principalId: row.principalId,
+        operation: row.operation,
+        // global scope 不携带 projectId（validateReceiptScope 拒绝存在即非法）。
+        scope: row.scopeKind === 'project'
+          ? { kind: row.scopeKind, projectId: row.projectId }
+          : { kind: row.scopeKind },
+        requestDigest: row.requestDigest, status: row.status, operationId: row.operationId,
+        backupId: row.backupId,
+        issuedAt: new Date(row.issuedAtUtcMs).toISOString(),
+        completedAt: new Date(row.completedAtUtcMs).toISOString(), replayed: false,
+      }, operation, 'persisted');
+    } catch {
+      corrupt(operation, 'association');
+    }
+  }
   if ((row.receiptVersion !== undefined && row.receiptVersion !== WIRE_MESSAGE_SCHEMA_VERSION) ||
-      row.batchId != null || row.runId != null || row.planningTaskId != null || row.candidateId != null) {
+      row.batchId != null || row.runId != null || row.planningTaskId != null || row.candidateId != null || row.backupId != null) {
     corrupt(operation, 'association');
   }
   const spec = Object.hasOwn(RECEIPT_OPERATION_SPECS, row.operation) ? RECEIPT_OPERATION_SPECS[row.operation as ReceiptOperation] : undefined;
@@ -554,10 +586,16 @@ function validateReceiptShape(
   const object = requirePlainObject(value, context, 'receipt');
   const isWork = object.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION;
   const isPlanning = object.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION;
-  const extendedKeys = isPlanning ? [...RECEIPT_KEYS, 'batchId', 'runId', 'planningTaskId', 'candidateId'] : [...RECEIPT_KEYS, 'batchId', 'runId', 'runIds'];
-  rejectUnknownKeys(object, isWork || isPlanning ? extendedKeys : RECEIPT_KEYS, context, 'receipt');
+  // P07-3 / F-014：v8 备份接受回执只额外携带 owner 选择的 backupId。
+  const isDataBackup = object.schemaVersion === DATA_BACKUP_ACCEPTED_SCHEMA_VERSION;
+  const extendedKeys = isPlanning
+    ? [...RECEIPT_KEYS, 'batchId', 'runId', 'planningTaskId', 'candidateId']
+    : isDataBackup
+      ? [...RECEIPT_KEYS, 'backupId']
+      : [...RECEIPT_KEYS, 'batchId', 'runId', 'runIds'];
+  rejectUnknownKeys(object, isWork || isPlanning || isDataBackup ? extendedKeys : RECEIPT_KEYS, context, 'receipt');
 
-  if (!isWork && !isPlanning && object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+  if (!isWork && !isPlanning && !isDataBackup && object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
     throw validationError(context, 'receipt.schemaVersion', `必须是 ${WIRE_MESSAGE_SCHEMA_VERSION}`);
   }
   if (!isUuidV4(object.commandId)) {
@@ -574,7 +612,9 @@ function validateReceiptShape(
     ? 'project'
     : isPlanning && object.operation === PLANNING_ACCEPTED_OPERATION
       ? 'project'
-      : (!isWork && !isPlanning ? spec?.scopeKind : undefined);
+      : isDataBackup && object.operation === DATA_BACKUP_ACCEPTED_OPERATION
+        ? 'global'
+        : (!isWork && !isPlanning && !isDataBackup ? spec?.scopeKind : undefined);
   if (scopeKind === undefined) {
     throw validationError(context, 'receipt.operation', '未知操作或版本不匹配');
   }
@@ -643,6 +683,21 @@ function validateReceiptShape(
       status: 'accepted', operationId: object.batchId, batchId: object.batchId, runId: object.runId,
       planningTaskId: object.planningTaskId, candidateId: object.candidateId,
     };
+  }
+  // P07-3 / F-014：data.backup.create 接受回执（v8）——仅 accepted，携带稳定
+  // operationId（备份操作日志身份）与 owner 选择的 backupId；完成事实在受管
+  // 磁盘日志/备份包目录，不携带 result/resultRef/error。
+  if (isDataBackup) {
+    if (object.status !== 'accepted' || object.result !== undefined || object.resultRef !== undefined || object.error !== undefined) {
+      throw validationError(context, 'receipt.status', 'DataBackup v8 仅支持 accepted，且不携带结果或错误');
+    }
+    if (typeof object.backupId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(object.backupId)) {
+      throw validationError(context, 'receipt.association', 'DataBackup accepted 必须携带稳定 backupId');
+    }
+    return {
+      ...base, schemaVersion: DATA_BACKUP_ACCEPTED_SCHEMA_VERSION, operation: DATA_BACKUP_ACCEPTED_OPERATION,
+      status: 'accepted', operationId: object.operationId, backupId: object.backupId,
+    } as DataBackupAcceptedCommandReceipt;
   }
 
   if (object.status === 'completed') {

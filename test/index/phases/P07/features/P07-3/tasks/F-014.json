@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-014",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/host/p07-3-f014-backup-host.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-3-f014-backup-cli.test.ts", "all": true },
+        { "file": "test/modules/storage/p07-3-f014-backup-receipt-store.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f007-startup-upgrade.test.ts", "all": true },
+        { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+        { "file": "test/modules/authorization/authorization-contract.test.ts", "all": true },
+        { "file": "test/modules/storage/data-lifecycle-contract.test.ts", "all": true }
+      ]
+    }
+  ]
+}

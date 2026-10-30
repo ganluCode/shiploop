@@ -2787,6 +2787,13 @@ export const WORK_ACCEPTED_OPERATION = 'execution.start' as const;
  */
 export const PLANNING_ACCEPTED_SCHEMA_VERSION = 7 as const;
 export const PLANNING_ACCEPTED_OPERATION = 'planning.start' as const;
+/**
+ * P07-3 / F-014：data.backup.create 接受回执（v8）。操作身份是备份操作日志的
+ * operationId（UUID）；完成事实由受管 backups/operations/ 磁盘日志与备份包
+ * 目录承载，不关联 baseline/Work/planning 数据库实体。
+ */
+export const DATA_BACKUP_ACCEPTED_SCHEMA_VERSION = 8 as const;
+export const DATA_BACKUP_ACCEPTED_OPERATION = 'data.backup.create' as const;
 
 /** Legacy accepted receipt: operationId references a real baseline operation. */
 export interface BaselineAcceptedCommandReceipt extends ReceiptCommon {
@@ -2824,10 +2831,25 @@ export interface PlanningAcceptedCommandReceipt extends Omit<ReceiptCommon, 'sch
   readonly candidateId: string;
 }
 
+/**
+ * P07-3 / F-014 receipt-only v8 扩展：data.backup.create 接受回执携带稳定
+ * operationId（备份操作日志身份）与 owner 选择的 backupId；不携带 result/
+ * resultRef/error，不代表导出完成（完成状态经 backups.get /
+ * backup.operations.get 查询持久结果）。
+ */
+export interface DataBackupAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaVersion' | 'operation'> {
+  readonly schemaVersion: typeof DATA_BACKUP_ACCEPTED_SCHEMA_VERSION;
+  readonly operation: typeof DATA_BACKUP_ACCEPTED_OPERATION;
+  readonly status: 'accepted';
+  readonly operationId: string;
+  readonly backupId: string;
+}
+
 export type AcceptedCommandReceipt =
   | BaselineAcceptedCommandReceipt
   | WorkAcceptedCommandReceipt
-  | PlanningAcceptedCommandReceipt;
+  | PlanningAcceptedCommandReceipt
+  | DataBackupAcceptedCommandReceipt;
 
 /** Persisted/wire union: legacy v5 receipts and explicit Work accepted v6 receipts. */
 export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt | AcceptedCommandReceipt;
@@ -2958,10 +2980,10 @@ export function createRejectedReceipt(input: RejectedReceiptInput): RejectedComm
 }
 
 export interface AcceptedReceiptInput extends ReceiptInputBase {
-  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start 与规划
-   * 操作 planning.start（两者各自经专属 ReceiptInput 构造，避免重载歧义与
-   * v5 形态混入）。 */
-  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION | typeof PLANNING_ACCEPTED_OPERATION>;
+  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start、规划
+   * 操作 planning.start 与备份操作 data.backup.create（各自经专属
+   * ReceiptInput 构造，避免重载歧义与 v5 形态混入）。 */
+  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION | typeof PLANNING_ACCEPTED_OPERATION | typeof DATA_BACKUP_ACCEPTED_OPERATION>;
   /** 同事务写入的 baseline_operations 行 id（公开 operationId）。 */
   readonly operationId: string;
 }
@@ -2983,12 +3005,19 @@ export interface PlanningAcceptedReceiptInput extends Omit<AcceptedReceiptInput,
   readonly candidateId: string;
 }
 
+/** P07-3 / F-014：data.backup.create 接受回执输入（v8；operationId = 操作日志身份）。 */
+export interface DataBackupAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'operation'> {
+  readonly operation: typeof DATA_BACKUP_ACCEPTED_OPERATION;
+  readonly backupId: string;
+}
+
 /** Existing factory; v5 baseline identity or explicit v6 Work Batch/Run identity. */
 export function createAcceptedReceipt(input: AcceptedReceiptInput): BaselineAcceptedCommandReceipt;
 export function createAcceptedReceipt(input: WorkAcceptedReceiptInput): WorkAcceptedCommandReceipt;
 export function createAcceptedReceipt(input: PlanningAcceptedReceiptInput): PlanningAcceptedCommandReceipt;
+export function createAcceptedReceipt(input: DataBackupAcceptedReceiptInput): DataBackupAcceptedCommandReceipt;
 export function createAcceptedReceipt(
-  input: AcceptedReceiptInput | WorkAcceptedReceiptInput | PlanningAcceptedReceiptInput,
+  input: AcceptedReceiptInput | WorkAcceptedReceiptInput | PlanningAcceptedReceiptInput | DataBackupAcceptedReceiptInput,
 ): AcceptedCommandReceipt {
   assertReceiptIdentity(input, true);
   if (!isUuidV4(input.operationId)) {
@@ -3036,6 +3065,18 @@ export function createAcceptedReceipt(
       ...base, schemaVersion: PLANNING_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
       batchId: input.batchId, runId: input.runId,
       planningTaskId: input.planningTaskId, candidateId: input.candidateId,
+    };
+  }
+  // P07-3 / F-014：备份创建接受回执（v8）携带 owner 选择的 backupId。
+  if (input.operation === DATA_BACKUP_ACCEPTED_OPERATION) {
+    if (input.scope.kind !== 'global') {
+      throw new TypeError('DataBackup accepted requires global scope');
+    }
+    if (typeof input.backupId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.backupId)) {
+      throw new TypeError('DataBackup accepted requires a stable backupId');
+    }
+    return {
+      ...base, schemaVersion: DATA_BACKUP_ACCEPTED_SCHEMA_VERSION, operation: input.operation, backupId: input.backupId,
     };
   }
   return { ...base, schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, operation: input.operation };

@@ -68,9 +68,17 @@ import { createVerificationStopControl } from '../application/verification-stop-
 import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
 import { activateDataRestore, inspectDataRestoreState } from './fs/data-restore.js';
+import { createBackupPackageFactsReader, createDataBackupOperationJournal } from './fs/backup-operation-journal.js';
+import {
+  createDataBackupCommandPort,
+  createDataBackupExecutionService,
+  createDataBackupQueryService,
+} from '../application/data-backup.js';
 import { createMaintenanceWriteGate } from '../ports/data-maintenance.js';
 import type { MaintenanceWriteGate } from '../ports/data-maintenance.js';
 export { createDataRestoreService } from './fs/data-restore.js';
+// P07-3 / F-014：离线备份包只读核验（owner 维护入口；与受信装配同一实现）。
+export { createBackupPackageVerificationService } from './fs/backup-verification.js';
 export type { DataRestoreService, RestoreBoundary, RestorePreview, RestoreReceipt } from './fs/data-restore.js';
 import type { RuntimeFallbackSwitchService } from '../ports/runtime-fallback-switch.js';
 import type { BatchDeliveryFactory } from '../application/batch-delivery-commands.js';
@@ -363,6 +371,10 @@ export interface CoreApplication {
   readonly artifactFileStore: ArtifactFileStore;
   readonly backupPackageService: BackupPackageService;
   readonly backupPackageVerificationService: BackupPackageVerificationService;
+  /** P07-3 / F-014：备份创建执行编排（accepted 后驱动导出；Host 分流 data.backup.create）。 */
+  readonly dataBackupExecution: import('../ports/data-backup.js').DataBackupExecutionPort;
+  /** P07-3 / F-014：备份包/操作只读查询（backups.get / backup.operations.get）。 */
+  readonly dataBackupQueryService: import('../ports/data-backup.js').DataBackupQueryService;
   readonly repositoryInspector: RepositoryInspector;
   /** F-003：跨数据根、跨 Host 共用的 Git common-dir 短操作锁。 */
   readonly gitPublicMetadataLock: GitPublicMetadataLock;
@@ -719,6 +731,20 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const backupPackageVerificationService = createBackupPackageVerificationService({
       dataRoot: basePathService.dataRoot(),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    // P07-3 / F-014：备份操作日志（受管 backups/operations/）与备份包持久事实
+    // 读取；命令/查询/执行编排共用同一事实源，不引入第二套状态。
+    const backupOperationJournal = createDataBackupOperationJournal({
+      backupRoot: join(basePathService.dataRoot(), 'backups'),
+    });
+    const backupPackageFacts = createBackupPackageFactsReader({
+      backupRoot: join(basePathService.dataRoot(), 'backups'),
+    });
+    const dataBackupCommands = createDataBackupCommandPort({
+      backupRoot: join(basePathService.dataRoot(), 'backups'),
+      verification: backupPackageVerificationService,
+      facts: backupPackageFacts,
+      ...(maintenanceGate === undefined ? {} : { maintenanceGate }),
     });
     const runtimeRecovery = createRuntimeRecoveryService({
       configuration: capabilityCatalog,
@@ -1435,6 +1461,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       atomicStore,
       projectLifecycle,
       projectDeletePreview,
+      dataBackup: dataBackupCommands,
       batchDelivery,
       featureDelivery,
       repositoryInspector,
@@ -1598,6 +1625,20 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     baselineExecutionServiceRef = baselineExecutionService;
 
+    // P07-3 / F-014：备份执行编排（accepted 回执提交后驱动实际导出；完成事实
+    // 持久化到备份包目录与操作日志）与备份只读查询（backups.get /
+    // backup.operations.get；能力位复用 data.backup）。
+    const dataBackupExecution = createDataBackupExecutionService({
+      commands: commandService,
+      packages: backupPackageService,
+      journal: backupOperationJournal,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const dataBackupQueryService = createDataBackupQueryService({
+      facts: backupPackageFacts,
+      journal: backupOperationJournal,
+    });
+
     // P02-3 / F-014：基线查询服务（baselines.list/baselines.get/artifacts.get，
     // §7.4-§7.6）；读取面复用同一 baselineStore/artifacts/files，完整性核验读取
     // 由查询服务内部的有界 verifier 承担。
@@ -1635,6 +1676,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       artifactFileStore,
       backupPackageService,
       backupPackageVerificationService,
+      dataBackupExecution,
+      dataBackupQueryService,
       repositoryInspector,
       gitPublicMetadataLock,
       projectService,

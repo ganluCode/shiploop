@@ -129,6 +129,12 @@ export const APP_OPERATIONS = [
   'repository.move.preview',
   // P07-3 / F-012：保留评估只读查询（与 Core RETENTION_EVALUATION_OPERATION 同源）。
   'retention.evaluation.get',
+  // P07-3 / F-014：备份创建/核验命令（与 Core data.backup.* 同源；global scope
+  // + data.backup 能力位）与备份包/操作只读查询。
+  'data.backup.create',
+  'data.backup.verify',
+  'backups.get',
+  'backup.operations.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

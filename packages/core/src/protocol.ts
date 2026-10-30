@@ -15,8 +15,10 @@ export {
   WIRE_MESSAGE_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
   PLANNING_ACCEPTED_SCHEMA_VERSION,
+  DATA_BACKUP_ACCEPTED_SCHEMA_VERSION,
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
+export type { DataBackupOperationQueryResult, DataBackupQueryResult } from './ports/data-backup.js';
 export { FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from './ports/feature-dag.js';
 export {
   INTEGRATION_BLOCK_REASONS,

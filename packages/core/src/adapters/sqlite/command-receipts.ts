@@ -26,6 +26,7 @@ import {
   isValidResultRef,
   isUuidV4,
   PLANNING_ACCEPTED_SCHEMA_VERSION,
+  DATA_BACKUP_ACCEPTED_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
 } from '../../ports/commands.js';
 import type { CommandReceipt } from '../../ports/commands.js';
@@ -65,6 +66,8 @@ interface CommandReceiptSqlRow {
   /** P05-1 / F-003（迁移 v36）：planning.start accepted v7 的 planning Task/候选身份；其余恒 NULL。 */
   readonly planning_task_id: string | null;
   readonly candidate_id: string | null;
+  /** P07-3 / F-014（迁移 v59）：data.backup.create accepted v8 的 owner 备份身份；其余恒 NULL。 */
+  readonly backup_id: string | null;
   readonly result_json: string | null;
   readonly result_ref: string | null;
   readonly error_code: string | null;
@@ -76,7 +79,7 @@ interface CommandReceiptSqlRow {
 
 const SELECT_COLUMNS =
   'principal_id, command_id, scope_kind, project_id, operation, request_digest, status, ' +
-  'operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
+  'operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, backup_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
 
 /** better-sqlite3 约束冲突识别（SqliteError 带 code 字段）。 */
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -145,6 +148,7 @@ export function createSqliteCommandReceiptAccess(
       runId: row.run_id,
       planningTaskId: row.planning_task_id,
       candidateId: row.candidate_id,
+      backupId: row.backup_id,
       // undefined 表示列 NULL：JSON.parse 永不产生 undefined，两种情形可区分。
       result:
         row.result_json === null
@@ -230,20 +234,28 @@ export function createSqliteCommandReceiptAccess(
             throw validationError({ operation, entity: { type: 'command_receipt' } },
               'receipt.association', '规划回执必须与同项目的 Run 及绑定候选/Task 的规划上下文一致');
           }
-        } else {
+        } else if (valid.schemaVersion === DATA_BACKUP_ACCEPTED_SCHEMA_VERSION) {
+          // P07-3 / F-014：备份创建 accepted 回执（v8）——完成事实由受管
+          // backups/operations/ 磁盘日志与备份包目录承载（执行编排在回执事务
+          // 提交后写入；查询在日志落盘前 fail-closed not_found），不做数据库
+          // 实体关联检查。稳定 operationId 由回执自身持久化，重放不重复导出。
+        } else if (valid.scope.kind === 'project') {
           const target = db.prepare('SELECT id FROM baseline_operations WHERE project_id = ? AND id = ?')
               .get(scopeProjectId, valid.operationId);
           if (target === undefined) {
             throw validationError({ operation, entity: { type: 'command_receipt' } },
               'receipt.association', '操作实体必须存在且与回执属于同一项目');
           }
+        } else {
+          throw validationError({ operation, entity: { type: 'command_receipt' } },
+            'receipt.association', '操作实体必须存在且与回执属于同一项目');
         }
       }
       db.prepare(
         'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, ' +
-          'scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, result_json, result_ref, ' +
+          'scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, backup_id, result_json, result_ref, ' +
           'error_code, error_message, error_details, issued_at, completed_at) ' +
-          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         randomUUID(),
         timestamp,
@@ -267,6 +279,7 @@ export function createSqliteCommandReceiptAccess(
           : null,
         valid.status === 'accepted' && valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION ? valid.planningTaskId : null,
         valid.status === 'accepted' && valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION ? valid.candidateId : null,
+        valid.status === 'accepted' && valid.schemaVersion === DATA_BACKUP_ACCEPTED_SCHEMA_VERSION ? valid.backupId : null,
         valid.status === 'completed' ? JSON.stringify(valid.result) : null,
         valid.status === 'completed' ? valid.resultRef : null,
         valid.status === 'rejected' ? valid.error.code : null,

@@ -66,13 +66,16 @@ describe('F-007 upgrade rollback and stop uncertainty', () => {
   it('[case:partial-chain-never-success] reports a later failed step after an earlier committed migration while retaining the original pre-upgrade package', async () => {
     await fixture(async root => {
       const sql = 'CREATE TABLE partial_upgrade (id TEXT); INSERT INTO missing_table VALUES (1);';
-      const bad = { version: 56, sql, checksum: createHash('sha256').update(sql).digest('hex') };
+      // P07-3 / F-014（迁移 v59）：坏迁移取当前清单末尾的下一版本（清单追加
+      // 后仍保持「55 已提交、随后步骤失败」的原始场景语义）。
+      const badVersion = SQLITE_MIGRATIONS[SQLITE_MIGRATIONS.length - 1]!.version + 1;
+      const bad = { version: badVersion, sql, checksum: createHash('sha256').update(sql).digest('hex') };
       let failure: unknown;
       try { await openUpgradedSqliteStorage({ path: join(root, 'core.sqlite'), dataRoot: root, migrations: [...SQLITE_MIGRATIONS, bad] }); } catch (error) { failure = error; }
-      expect(failure).toMatchObject({ step: 'apply', fromVersion: 54, toVersion: 56, version: 56 });
+      expect(failure).toMatchObject({ step: 'apply', fromVersion: 54, toVersion: badVersion, version: badVersion });
       const db = new Database(join(root, 'core.sqlite'), { readonly: true });
       try {
-        expect(db.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 55 });
+        expect(db.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: badVersion - 1 });
         expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'partial_upgrade'").all()).toEqual([]);
         expect(db.prepare('SELECT display_name FROM projects').get()).toEqual({ display_name: 'preserved' });
       } finally { db.close(); }

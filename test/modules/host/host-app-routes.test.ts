@@ -781,6 +781,17 @@ describe('F-011 传输纪律与版本门禁', () => {
         'project.resource.enable',
         'project.resource.disable',
         'project.resource.revoke',
+        // P07-3：数据生命周期命令随 Core 白名单进入 501 支持清单（接线宣告
+        // 另见握手能力视图；data.backup.restore 实际执行不经 HTTP——恢复只在
+        // 持有目标数据根 writer 锁的独立维护入口进行；project.* 公开流程属
+        // F-015）。
+        'data.backup.create',
+        'data.backup.verify',
+        'data.backup.restore',
+        'project.archive',
+        'project.restore',
+        'project.delete.preview',
+        'project.delete.confirm',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -1057,6 +1068,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'project.resource.enable',
         'project.resource.disable',
         'project.resource.revoke',
+        // P07-3 / F-014：备份创建/核验命令随默认装配进入接线宣告。
+        'data.backup.create',
+        'data.backup.verify',
       ],
       queries: [
         'execution.sessions.list',
@@ -1146,6 +1160,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P07-3 / F-012：保留评估只读查询（与 Core
         // RETENTION_EVALUATION_OPERATION 同步）。
         'retention.evaluation.get',
+        // P07-3 / F-014：备份包/操作只读查询（与 Core DATA_BACKUP_QUERY_OPERATIONS
+        // 同步；能力位复用 data.backup）。
+        'backups.get',
+        'backup.operations.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

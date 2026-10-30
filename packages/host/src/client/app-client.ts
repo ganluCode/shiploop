@@ -139,6 +139,8 @@ import {
   GIT_OPERATIONS_ROUTE_PREFIX,
   GIT_REPAIRS_ROUTE,
   GIT_REPAIRS_ROUTE_PREFIX,
+  BACKUPS_ROUTE_PREFIX,
+  BACKUP_OPERATIONS_ROUTE_PREFIX,
   INTEGRATION_PLANS_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
@@ -215,6 +217,25 @@ import {
   validateRepositoryMovePreviewWire,
   validateGitAgentRepairQueryResultWire,
 } from './app-wire.js';
+import { validateDataBackupQueryResultWire } from './data-backup-wire.js';
+import type { DataBackupOperationQueryResult, DataBackupQueryResult } from 'shiploop-core/protocol';
+export type { DataBackupOperationQueryResult, DataBackupQueryResult };
+
+/** P07-3 / F-014：备份创建命令输入（global scope；target 缺省受控 default）。 */
+export interface SubmitDataBackupCreateInput {
+  readonly backupId: string;
+  readonly target?: string;
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+}
+
+/** P07-3 / F-014：备份只读核验命令输入（manifestDigest 绑定被核验包事实）。 */
+export interface SubmitDataBackupVerifyInput {
+  readonly backupId: string;
+  readonly manifestDigest: string;
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+}
 
 /* ------------------------------------------------------------------ *
  * 预算与重试策略（有限默认值，§15.6 登记）
@@ -856,6 +877,22 @@ export interface HostClientApplication {
   getProjectSettings(projectId: string): Promise<PublicSettingsState>;
   getEffectiveSettings(projectId: string): Promise<EffectiveSettings>;
   exportProjectSettings(projectId: string): Promise<ExportedSettings>;
+  /**
+   * P07-3 / F-014：备份创建命令（global scope + data.backup）。返回 accepted
+   * 回执（携带稳定 operationId）；实际导出由 Host 异步执行，完成状态经
+   * getBackupOperation/getBackup 查询持久结果；同 commandId 重放原回执，
+   * 连接丢失后不重复导出。
+   */
+  submitDataBackupCreate(input: SubmitDataBackupCreateInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P07-3 / F-014：备份只读核验命令。completed 回执的 result 携带核验报告
+   * （complete/incomplete/failed/rejected 如实呈现，不折算命令失败）。
+   */
+  submitDataBackupVerify(input: SubmitDataBackupVerifyInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** P07-3 / F-014：备份包持久事实查询（manifest 摘要/摘要视图或未完成报告）。 */
+  getBackup(backupId: string): Promise<DataBackupQueryResult>;
+  /** P07-3 / F-014：备份操作日志查询（稳定 operationId；完成状态收自持久结果）。 */
+  getBackupOperation(operationId: string): Promise<DataBackupOperationQueryResult>;
   getSnapshot(scope: { readonly kind: 'project'; readonly projectId: string }): Promise<ProjectSnapshotResult>;
   getSnapshot(scope: { readonly kind: 'global' }): Promise<GlobalSnapshotResult>;
   getSnapshot(scope: SettingsScope): Promise<SnapshotResult>;
@@ -3118,6 +3155,58 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const id = requireProjectId('settings.project.export', projectId);
       const json = await getJson('settings.project.export', `${PROJECTS_ROUTE}/${id}/settings/export`);
       return validateAppQueryResponse('settings.project.export', json);
+    },
+
+    /* ------------------------------------------------------------ *
+     * P07-3 / F-014 备份命令与查询（data.backup.* / backups.get）
+     * ------------------------------------------------------------ */
+
+    async submitDataBackupCreate(
+      input: SubmitDataBackupCreateInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['backupId', 'target', 'commandId', 'issuedAt']);
+      const backupId = requireStableIdInput('data.backup.create', object.backupId, 'backupId');
+      const target = object.target === undefined ? 'default' : requireStableIdInput('data.backup.create', object.target, 'target');
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'data.backup.create',
+        scope: { kind: 'global' },
+        payload: { backupId, target },
+      }, options);
+    },
+
+    async submitDataBackupVerify(
+      input: SubmitDataBackupVerifyInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['backupId', 'manifestDigest', 'commandId', 'issuedAt']);
+      const backupId = requireStableIdInput('data.backup.verify', object.backupId, 'backupId');
+      const manifestDigest = requireStableIdInput('data.backup.verify', object.manifestDigest, 'manifestDigest');
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'data.backup.verify',
+        scope: { kind: 'global' },
+        payload: { backupId, manifestDigest },
+      }, options);
+    },
+
+    async getBackup(backupId: string): Promise<DataBackupQueryResult> {
+      const op = 'backups.get';
+      const id = requireStableIdInput(op, backupId, 'backupId');
+      const json = await getJson(op, `${BACKUPS_ROUTE_PREFIX}${encodeURIComponent(id)}`);
+      return validateDataBackupQueryResultWire(json, op) as DataBackupQueryResult;
+    },
+
+    async getBackupOperation(operationId: string): Promise<DataBackupOperationQueryResult> {
+      const op = 'backup.operations.get';
+      const id = requireStableIdInput(op, operationId, 'operationId');
+      const json = await getJson(op, `${BACKUP_OPERATIONS_ROUTE_PREFIX}${encodeURIComponent(id)}`);
+      return validateDataBackupQueryResultWire(json, op) as DataBackupOperationQueryResult;
     },
 
     getSnapshot,

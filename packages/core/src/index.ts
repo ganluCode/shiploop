@@ -136,6 +136,7 @@ export * from './ports/command-process.js';
 export * from './ports/execution-stop.js';
 export * from './ports/execution-stop-manual.js';
 export * from './ports/data-lifecycle.js';
+export * from './ports/data-backup.js';
 export * from './ports/data-maintenance.js';
 export * from './ports/backup-package.js';
 export * from './ports/backup-verification.js';

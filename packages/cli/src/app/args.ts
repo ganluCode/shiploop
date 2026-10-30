@@ -50,6 +50,8 @@ export const APP_CLI_COMMANDS = [
   'workspace',
   'git',
   'integration',
+  'backup',
+  'restore',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -173,7 +175,14 @@ export type AppCliCommandId =
   | 'git.operation'
   | 'git.repairs'
   | 'git.repair'
-  | 'integration.plan';
+  | 'integration.plan'
+  | 'backup.create'
+  | 'backup.verify'
+  | 'backup.get'
+  | 'backup.operation'
+  | 'restore.verify'
+  | 'restore.prepare'
+  | 'restore.confirm';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.resource-source-register',
@@ -289,6 +298,13 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'git.repairs',
   'git.repair',
   'integration.plan',
+  'backup.create',
+  'backup.verify',
+  'backup.get',
+  'backup.operation',
+  'restore.verify',
+  'restore.prepare',
+  'restore.confirm',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -356,6 +372,7 @@ export type AppCliParseReason =
   | 'invalid_input_file'
   | 'invalid_repository_path'
   | 'repository_path_requires_cwd'
+  | 'invalid_absolute_path'
   | 'invalid_name'
   | 'invalid_description'
   | 'empty_label'
@@ -446,6 +463,7 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_command_id: 'commandId 必须是 UUID v4',
   invalid_input_file: 'input 必须是非空文件路径',
   invalid_repository_path: '仓库路径必须是非空字符串',
+  invalid_absolute_path: '路径必须是 POSIX 绝对路径（且不是文件系统根）',
   repository_path_requires_cwd: '相对仓库路径需要以绝对 cwd 为基准解析为绝对输入',
   invalid_name: 'name 不能为空',
   invalid_description: 'description 不合法',
@@ -1118,6 +1136,15 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['integrationId'],
   },
+  // P07-3 / F-014：备份命令（HTTP：create/verify 经 HostClient；get/operation 只读查询）。
+  'backup.create': { command: 'backup', commandId: 'backup.create', valueFlags: ['--backup-id', '--target', '--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'backup.verify': { command: 'backup', commandId: 'backup.verify', valueFlags: ['--backup-id', '--manifest-digest', '--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'backup.get': { command: 'backup', commandId: 'backup.get', valueFlags: [], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['backupId'] },
+  'backup.operation': { command: 'backup', commandId: 'backup.operation', valueFlags: [], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['operationId'] },
+  // P07-3 / F-014：隔离恢复维护入口（离线：不发现/启动 Host，不经 HTTP）。
+  'restore.verify': { command: 'restore', commandId: 'restore.verify', valueFlags: ['--data-root', '--package', '--expected-backup-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'restore.prepare': { command: 'restore', commandId: 'restore.prepare', valueFlags: ['--data-root', '--package', '--operation-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'restore.confirm': { command: 'restore', commandId: 'restore.confirm', valueFlags: ['--data-root', '--operation-id', '--confirmation-file'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'feature.final-approve': {
     command: 'feature',
     commandId: 'feature.final-approve',
@@ -1762,7 +1789,20 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       repairs: 'git.repairs',
       repair: 'git.repair',
     },
-    integration: { plan: 'integration.plan' },
+    integration: {
+      plan: 'integration.plan',
+    },
+    backup: {
+      create: 'backup.create',
+      verify: 'backup.verify',
+      get: 'backup.get',
+      operation: 'backup.operation',
+    },
+    restore: {
+      verify: 'restore.verify',
+      prepare: 'restore.prepare',
+      confirm: 'restore.confirm',
+    },
   });
 
 const COMMON_VALUE_FLAGS = ['--data-root', '--start-timeout-ms'] as const;
@@ -3916,6 +3956,87 @@ export type ParsedProjectResource =
   | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-import'; readonly revision: number; readonly explicitCommandId: string; readonly sourceId: string; readonly sourceDigest: string; readonly candidateId: string; readonly candidateDigest: string })
   | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-enable' | 'project.resource-disable' | 'project.resource-revoke'; readonly revision: number; readonly explicitCommandId: string; readonly resourceId: string });
 
+/* ------------------------------------------------------------------ *
+ * P07-3 / F-014：备份与隔离恢复命令（backup.* 经 HostClient；restore.* 离线）
+ * ------------------------------------------------------------------ */
+
+export interface ParsedBackupCreate {
+  readonly kind: 'command';
+  readonly command: 'backup';
+  readonly commandId: 'backup.create';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly backupId: string;
+  readonly target: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedBackupVerify {
+  readonly kind: 'command';
+  readonly command: 'backup';
+  readonly commandId: 'backup.verify';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly backupId: string;
+  readonly manifestDigest: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedBackupGet {
+  readonly kind: 'command';
+  readonly command: 'backup';
+  readonly commandId: 'backup.get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly backupId: string;
+}
+
+export interface ParsedBackupOperation {
+  readonly kind: 'command';
+  readonly command: 'backup';
+  readonly commandId: 'backup.operation';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly operationId: string;
+}
+
+export interface ParsedRestoreVerify {
+  readonly kind: 'command';
+  readonly command: 'restore';
+  readonly commandId: 'restore.verify';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot: string;
+  readonly packagePath: string;
+  readonly expectedBackupId?: string;
+}
+
+export interface ParsedRestorePrepare {
+  readonly kind: 'command';
+  readonly command: 'restore';
+  readonly commandId: 'restore.prepare';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot: string;
+  readonly packagePath: string;
+  readonly operationId: string;
+}
+
+export interface ParsedRestoreConfirm {
+  readonly kind: 'command';
+  readonly command: 'restore';
+  readonly commandId: 'restore.confirm';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot: string;
+  readonly operationId: string;
+  readonly confirmationFile: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectResource
   | ParsedPlanningStart
@@ -4010,7 +4131,14 @@ export type ParsedAppCliCommand =
   | ParsedGitOperations
   | ParsedGitOperationGet
   | ParsedGitRepairs
-  | ParsedGitRepairGet;
+  | ParsedGitRepairGet
+  | ParsedBackupCreate
+  | ParsedBackupVerify
+  | ParsedBackupGet
+  | ParsedBackupOperation
+  | ParsedRestoreVerify
+  | ParsedRestorePrepare
+  | ParsedRestoreConfirm;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -5707,6 +5835,123 @@ function buildPlanEntity(
 }
 
 /**
+ * 备份命令（P07-3 / F-014）：create/verify 经 HostClient 提交（accepted/
+ * completed 回执）；get/operation 只读查询持久结果。解析层零 I/O。
+ */
+function buildBackup(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  switch (spec.commandId) {
+    case 'backup.create': {
+      const backupId = requirePlanIdOption(scan, '--backup-id', state, 'backup-id');
+      const targetRaw = takeOption(scan, '--target');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'backup',
+        commandId: 'backup.create',
+        backupId,
+        target: targetRaw === undefined ? 'default' : requirePlanId(targetRaw, state, 'target'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'backup.verify': {
+      const backupId = requirePlanIdOption(scan, '--backup-id', state, 'backup-id');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'backup',
+        commandId: 'backup.verify',
+        backupId,
+        manifestDigest: requireSha256Option(scan, '--manifest-digest', state, 'manifest-digest'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'backup.get': {
+      return {
+        ...base,
+        command: 'backup',
+        commandId: 'backup.get',
+        backupId: requirePlanId(scan.positionals[0] as string, state, 'backupId'),
+      };
+    }
+    case 'backup.operation': {
+      return {
+        ...base,
+        command: 'backup',
+        commandId: 'backup.operation',
+        operationId: requireOperationId(scan.positionals[0] as string, state),
+      };
+    }
+    default:
+      return fail(state, 'unknown_subcommand');
+  }
+}
+
+/** 离线恢复维护入口的绝对路径选项（owner 显式选择；不发现/启动 Host）。 */
+function requireAbsolutePathOption(scan: ScanResult, name: string, state: ParseState, field: string): string {
+  const raw = requireOption(scan, name, state, field);
+  if (raw.length === 0 || raw.includes('\0') || !raw.startsWith('/') || raw === '/') {
+    fail(state, 'invalid_absolute_path', field);
+  }
+  return raw;
+}
+
+/**
+ * 隔离恢复维护入口（P07-3 / F-014）：verify/prepare/confirm 全部离线执行
+ * （持有目标数据根 writer 锁的独立维护入口）；解析层零 I/O，且 --data-root
+ * 为必填（不经环境覆盖发现）。
+ */
+function buildRestore(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  const dataRoot = requireAbsolutePathOption(scan, '--data-root', state, 'data-root');
+  switch (spec.commandId) {
+    case 'restore.verify': {
+      const expected = takeOption(scan, '--expected-backup-id');
+      return {
+        ...base,
+        command: 'restore',
+        commandId: 'restore.verify',
+        dataRoot,
+        packagePath: requireAbsolutePathOption(scan, '--package', state, 'package'),
+        ...(expected === undefined ? {} : { expectedBackupId: requirePlanId(expected, state, 'expected-backup-id') }),
+      };
+    }
+    case 'restore.prepare': {
+      return {
+        ...base,
+        command: 'restore',
+        commandId: 'restore.prepare',
+        dataRoot,
+        packagePath: requireAbsolutePathOption(scan, '--package', state, 'package'),
+        operationId: requirePlanIdOption(scan, '--operation-id', state, 'operation-id'),
+      };
+    }
+    case 'restore.confirm': {
+      return {
+        ...base,
+        command: 'restore',
+        commandId: 'restore.confirm',
+        dataRoot,
+        operationId: requirePlanIdOption(scan, '--operation-id', state, 'operation-id'),
+        confirmationFile: requireAbsolutePathOption(scan, '--confirmation-file', state, 'confirmation-file'),
+      };
+    }
+    default:
+      return fail(state, 'unknown_subcommand');
+  }
+}
+
+/**
  * Git 操作查询命令（P03-8 / F-011）：意图/实际提交/操作回执只读查询。
  * 解析层零 I/O；CLI 不打开状态库、不直接执行 Git。
  */
@@ -5915,6 +6160,10 @@ export function parseAppCliArgs(
       return buildWorkspace(scan, state, spec);
     case 'git':
       return buildGit(scan, state, spec);
+    case 'backup':
+      return buildBackup(scan, state, spec);
+    case 'restore':
+      return buildRestore(scan, state, spec);
     case 'integration':
       return buildPlanEntity(scan, state, spec);
     default:

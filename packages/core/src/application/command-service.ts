@@ -142,6 +142,11 @@ import {
   isProjectArchiveEnvelope,
   isProjectRestoreEnvelope,
 } from '../ports/project-lifecycle.js';
+import {
+  DATA_BACKUP_CREATE_OPERATION,
+  DATA_BACKUP_VERIFY_OPERATION,
+} from '../ports/data-backup.js';
+import type { DataBackupCommandPort } from '../ports/data-backup.js';
 import type { ProjectResourceService } from './project-resource-service.js';
 import type { ProjectResourceStore } from '../ports/project-resource-store.js';
 import type { ProjectResourceCandidate } from '../ports/project-resources.js';
@@ -276,6 +281,12 @@ export interface CommandServiceOptions {
   };
   /** P07-3 / F-008：项目软归档/显式恢复命令句柄（缺省时两命令 unsupported，不冒充能力）。 */
   readonly projectLifecycle?: ProjectLifecycleCommandHandler;
+  /**
+   * P07-3 / F-014：备份创建/核验命令端口（缺省时两命令 unsupported，不冒充
+   * 能力）。装配者：composition 根；实际导出编排由 dataBackupExecution
+   * （Host 分流 data.backup.create）在回执事务提交后驱动。
+   */
+  readonly dataBackup?: DataBackupCommandPort;
   readonly nowUtcMs?: () => number;
 }
 
@@ -373,6 +384,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const projectDeletePreview = options.projectDeletePreview;
   const projectResources = options.projectResources;
   const projectLifecycle = options.projectLifecycle;
+  const dataBackup = options.dataBackup;
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
@@ -796,6 +808,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'project.register' && repositoryInspector === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P07-3 / F-014：备份命令端口缺席时 unsupported（不冒装备份能力；
+        // 重放仍可取回既有 accepted/completed 回执，与项目生命周期同一纪律）。
+        if ((envelope.operation === DATA_BACKUP_CREATE_OPERATION || envelope.operation === DATA_BACKUP_VERIFY_OPERATION)
+          && dataBackup === undefined) {
+          const digest = computeCommandRequestDigest(envelope);
+          const receipt = store.transact(operation, transaction =>
+            replay(principal, transaction.findReceipt(principal.principalId, envelope.commandId), digest, operation));
+          if (receipt) return receipt;
+          checkTiming(envelope, nowUtcMs());
+          throw new PublicError('unsupported', operation);
+        }
         if (envelope.operation === 'project.profile.detect' && options.projectProfileDetection === undefined) {
           throw new PublicError('unsupported', operation);
         }
@@ -878,6 +901,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           || envelope.operation === 'project.resource.disable' || envelope.operation === 'project.resource.revoke') {
           if (projectResources === undefined) throw new PublicError('unsupported', operation);
         }
+        // P07-3 / F-014：备份创建/核验命令（data.backup.restore 不经 HTTP 执行：
+        // 实际发布只在独立受锁维护入口，保持 catch-all unsupported）。
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.profile.detect' &&
@@ -924,6 +949,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'project.resource.enable' &&
           envelope.operation !== 'project.resource.disable' &&
           envelope.operation !== 'project.resource.revoke' &&
+          envelope.operation !== DATA_BACKUP_CREATE_OPERATION &&
+          envelope.operation !== DATA_BACKUP_VERIFY_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -1088,6 +1115,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             envelope.payload.candidateId,
             envelope.payload.candidateDigest,
           );
+        }
+
+        // P07-3 / F-014：备份命令的事务外准备（目标引用解析/占用预检/只读包核验，
+        // 仅对新命令执行）；事务内只持久化回执（accepted/completed）。
+        let dataBackupCreatePrepared: import('../ports/data-backup.js').PreparedDataBackupCreate | undefined;
+        let dataBackupVerifyPrepared: import('../ports/data-backup.js').PreparedDataBackupVerify | undefined;
+        if (envelope.operation === DATA_BACKUP_CREATE_OPERATION && existing === undefined) {
+          dataBackupCreatePrepared = await dataBackup!.prepareCreate(principal, envelope.payload as Readonly<Record<string, unknown>>);
+        }
+        if (envelope.operation === DATA_BACKUP_VERIFY_OPERATION && existing === undefined) {
+          dataBackupVerifyPrepared = await dataBackup!.prepareVerify(principal, envelope.payload as Readonly<Record<string, unknown>>);
         }
 
         // 写事务之外），事务内只重核身份并解除暂停。
@@ -1727,6 +1765,47 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             });
             transaction.saveReceipt(receipt);
             return receipt;
+          }
+          if (envelope.operation === DATA_BACKUP_CREATE_OPERATION) {
+            // P07-3 / F-014：备份创建——事务外已完成目标引用/占用预检；事务内
+            // 只持久化 accepted 回执（稳定 operationId）。实际导出由 Host 分流
+            // 的执行编排在事务提交后运行（重放返回原回执，不重复导出）。
+            if (dataBackupCreatePrepared === undefined) {
+              throw new TypeError('备份创建缺少事务外准备结果');
+            }
+            return dataBackup!.submitCreate(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: DATA_BACKUP_CREATE_OPERATION,
+                scope: envelope.scope as { kind: 'global' },
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              dataBackupCreatePrepared,
+              transaction,
+              now,
+            );
+          }
+          if (envelope.operation === DATA_BACKUP_VERIFY_OPERATION) {
+            // P07-3 / F-014：备份核验——只读命令；事务外已完成包核验，事务内只
+            // 持久化 completed 回执（报告如实携带核验状态，不折算失败）。
+            if (dataBackupVerifyPrepared === undefined) {
+              throw new TypeError('备份核验缺少事务外准备结果');
+            }
+            return dataBackup!.submitVerify(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: DATA_BACKUP_VERIFY_OPERATION,
+                scope: envelope.scope as { kind: 'global' },
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              dataBackupVerifyPrepared,
+              transaction,
+              now,
+            );
           }
           if (envelope.operation === 'project.repository.rebind') {
             return submitRepositoryRebind(principal, envelope, digest, transaction, now);

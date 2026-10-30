@@ -66,6 +66,7 @@ import {
   WORKSPACE_STATUSES,
   WORK_ACCEPTED_SCHEMA_VERSION,
   PLANNING_ACCEPTED_SCHEMA_VERSION,
+  DATA_BACKUP_ACCEPTED_SCHEMA_VERSION,
   PLANNING_CANDIDATE_QUERY_STATES,
   PLANNING_CONTEXT_DECISIONS,
   PLANNING_CONTEXT_STATUSES,
@@ -538,7 +539,9 @@ export function validateCommandReceiptWire(
     !(value.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION &&
       value.operation === 'execution.start' && value.status === 'accepted') &&
     !(value.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION &&
-      value.operation === 'planning.start' && value.status === 'accepted')
+      value.operation === 'planning.start' && value.status === 'accepted') &&
+    !(value.schemaVersion === DATA_BACKUP_ACCEPTED_SCHEMA_VERSION &&
+      value.operation === 'data.backup.create' && value.status === 'accepted')
   ) {
     unsupportedVersion(operation, 'schemaVersion');
   }

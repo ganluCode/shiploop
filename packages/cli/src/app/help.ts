@@ -1059,6 +1059,128 @@ const FEATURE_FINALIZE_HELP = [
   '',
 ].join('\n');
 
+const BACKUP_HELP = [
+  'usage: shiploop backup <create|verify|get|operation> [options]',
+  '',
+  '数据备份 owner 管理入口（data.backup.*；global scope + data.backup 能力位）：',
+  '  backup create --backup-id <id> [--target default]   创建受控备份（accepted + 稳定 operationId）',
+  '  backup verify --backup-id <id> --manifest-digest <sha256>   只读核验包内容与摘要绑定',
+  '  backup get <backupId>                                备份包持久事实（manifest 摘要/摘要视图）',
+  '  backup operation <operationId>                       备份操作日志（完成状态取自持久结果）',
+  '',
+  '长操作返回 accepted；完成状态经 backup operation / backup get 查询。连接丢失后',
+  '以原 commandId 或 operationId 查询，不重复导出。实际隔离恢复使用 shiploop restore',
+  '（离线受锁维护入口），不经 HTTP 替换 Host 数据库。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BACKUP_CREATE_HELP = [
+  'usage: shiploop backup create --backup-id <id> [--target default] [--command-id <uuid>]',
+  '                             [--data-root <abs>] [--json]',
+  '',
+  '创建受控备份包（data.backup.create）：目标固定为数据根内受管 backups/ 根，',
+  '返回 accepted 回执与稳定 operationId；实际导出由 Host 异步执行，完成状态经',
+  'backup operation <operationId> 查询持久结果。同 commandId 重放原回执。',
+  '',
+  '选项：',
+  '  --backup-id <id>     备份身份（必填，稳定 ID）',
+  '  --target default     受控目标引用（当前仅 default）',
+  '  --command-id <uuid>  显式命令身份（幂等重放）',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BACKUP_VERIFY_HELP = [
+  'usage: shiploop backup verify --backup-id <id> --manifest-digest <sha256>',
+  '                             [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '只读核验备份包（data.backup.verify）：数据库完整性/迁移摘要/正文哈希/引用核对，',
+  'manifest 摘要必须与请求一致。completed 回执携带核验报告；status != complete 时',
+  'CLI 以非成功退出码输出同一报告（缺正文/高版本/损坏如实呈现）。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BACKUP_GET_HELP = [
+  'usage: shiploop backup get <backupId> [--data-root <abs>] [--json]',
+  '',
+  '读取备份包持久事实（backups.get）：complete 返回 manifestDigest 与摘要视图；',
+  '未完成/失败返回持久报告。查询只读，不触发导出或恢复。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BACKUP_OPERATION_HELP = [
+  'usage: shiploop backup operation <operationId> [--data-root <abs>] [--json]',
+  '',
+  '按稳定 operationId 读取备份操作日志（backup.operations.get）：running/completed/',
+  'failed 与持久报告摘要；完成状态不来自进程内存。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RESTORE_HELP = [
+  'usage: shiploop restore <verify|prepare|confirm> --data-root <abs> [options]',
+  '',
+  '隔离数据恢复维护入口（核验→确认→发布；全部离线，不发现/启动目标 Host）：',
+  '  restore verify --package <abs> [--expected-backup-id <id>]   只读核验备份包',
+  '  restore prepare --package <abs> --operation-id <id>   生成绑定目标身份的确认文档',
+  '  restore confirm --operation-id <id> --confirmation-file <file>   发布已核验 staging',
+  '',
+  '确认绑定核验报告摘要、备份身份与目标数据根身份；发布持有目标数据根 writer 锁，',
+  '仅在空目标执行，不自动启动 Host，也不经 HTTP 替换任何运行中 Host 的数据库。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RESTORE_VERIFY_HELP = [
+  'usage: shiploop restore verify --data-root <abs> --package <abs>',
+  '                              [--expected-backup-id <id>] [--json]',
+  '',
+  '离线只读核验备份包（不连接 Host）。status != complete 时退出码非 0 并输出同一',
+  '报告（缺正文/高版本/损坏如实呈现）；--data-root 仅用于受管 staging 布局。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RESTORE_PREPARE_HELP = [
+  'usage: shiploop restore prepare --data-root <abs> --package <abs> --operation-id <id> [--json]',
+  '',
+  '在空目标数据根准备隔离恢复（持有 writer 锁）：核验包、staging 受控文件并输出',
+  '确认文档（backupId/manifestDigest/verificationDigest/targetDataRootId）。确认文档',
+  '交由负责人审阅后用于 restore confirm。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RESTORE_CONFIRM_HELP = [
+  'usage: shiploop restore confirm --data-root <abs> --operation-id <id> --confirmation-file <file> [--json]',
+  '',
+  '按确认文档发布已核验 staging 到目标数据根（持有 writer 锁；目标必须仍为空且身份',
+  '一致）。发布后目标进入恢复隔离：需重新核验外部事实后才允许执行；不自动启动 Host。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const GIT_HELP = [
   'usage: shiploop git <operations|operation> [options]',
   '',
@@ -2350,6 +2472,15 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'git.repair': GIT_OPERATION_HELP,
   integration: INTEGRATION_PLAN_HELP,
   'integration.plan': INTEGRATION_PLAN_HELP,
+  backup: BACKUP_HELP,
+  'backup.create': BACKUP_CREATE_HELP,
+  'backup.verify': BACKUP_VERIFY_HELP,
+  'backup.get': BACKUP_GET_HELP,
+  'backup.operation': BACKUP_OPERATION_HELP,
+  restore: RESTORE_HELP,
+  'restore.verify': RESTORE_VERIFY_HELP,
+  'restore.prepare': RESTORE_PREPARE_HELP,
+  'restore.confirm': RESTORE_CONFIRM_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

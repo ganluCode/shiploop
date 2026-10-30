@@ -19,6 +19,7 @@ import { PROJECT_DELETE_MIGRATION_SQL } from './project-delete-migration.js';
 import { PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL } from './project-delete-checkpoint-migration.js';
 import { WORK_RECORDING_V32_JSON_GUARDS_SQL } from './work-recording-constraints.js';
 import { RETENTION_CLEANUP_MIGRATION_SQL } from './retention-cleanup-migration.js';
+import { BACKUP_RECEIPT_MIGRATION_SQL } from './backup-receipt-migration.js';
 
 export interface SqliteMigration {
   /** 唯一递增的迁移版本（≥1），与 schema_migrations.version 一致。 */
@@ -4373,4 +4374,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 56, sql: PROJECT_DELETE_MIGRATION_SQL, checksum: sha256Hex(PROJECT_DELETE_MIGRATION_SQL) },
   { version: 57, sql: PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL, checksum: sha256Hex(PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL) },
   { version: 58, sql: RETENTION_CLEANUP_MIGRATION_SQL, checksum: sha256Hex(RETENTION_CLEANUP_MIGRATION_SQL), foreignKeysOff: true },
+  { version: 59, sql: BACKUP_RECEIPT_MIGRATION_SQL, checksum: sha256Hex(BACKUP_RECEIPT_MIGRATION_SQL), foreignKeysOff: true },
 ];

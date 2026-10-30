@@ -140,6 +140,12 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'project.resource.enable',
   'project.resource.disable',
   'project.resource.revoke',
+  // P07-3 / F-014：备份创建/核验经既有 POST /v1/commands 通用路由接线（创建
+  // 分流到执行编排，accepted 后驱动导出；核验只读返回 completed 报告）。
+  // data.backup.restore 不宣告：实际发布只在持有目标数据根 writer 锁的独立
+  // 维护入口执行，不经 HTTP 替换任何 Host 已打开的数据库。
+  'data.backup.create',
+  'data.backup.verify',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
@@ -244,6 +250,10 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // P07-3 / F-012：保留评估只读查询（受控数据根磁盘阈值/保留候选量；
   // 能力位复用 settings.global.read，与 Core RETENTION_EVALUATION_OPERATION 同源）。
   'retention.evaluation.get',
+  // P07-3 / F-014：备份包/操作只读查询（能力位复用 data.backup，与 Core
+  // DATA_BACKUP_QUERY_OPERATIONS 同步，不漂移）。
+  'backups.get',
+  'backup.operations.get',
 ] as const;
 
 /**

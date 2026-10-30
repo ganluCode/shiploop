@@ -65,6 +65,9 @@ import {
   BASELINE_COMPARE_ROUTE,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
+  BACKUPS_ROUTE,
+  BACKUPS_ROUTE_PREFIX,
+  BACKUP_OPERATIONS_ROUTE_PREFIX,
   DISPATCH_QUEUE_ROUTE,
   EXECUTION_RESOURCES_ROUTE,
   EVENTS_ROUTE,
@@ -161,6 +164,10 @@ export type ApplicationOperation =
   | 'settings.project.effective'
   | 'settings.project.export'
   | 'retention.evaluation.get'
+  // P07-3 / F-014：备份包/操作只读查询（与 Core DATA_BACKUP_QUERY_OPERATIONS
+  // 同源；能力位复用 data.backup，owner 管理面）。
+  | 'backups.get'
+  | 'backup.operations.get'
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
@@ -237,7 +244,7 @@ export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'integrationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'integrationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId' | 'backupId';
     readonly value: string;
   };
 }
@@ -280,6 +287,13 @@ export interface HostApplicationContext {
    */
   readonly retentionEvaluationService?: Pick<import('shiploop-core').RetentionEvaluationService, 'evaluate'>;
   /**
+   * P07-3 / F-014：备份创建执行编排（data.backup.create 经 /v1/commands 分流，
+   * accepted 后驱动实际导出）；未装配时 501 unsupported（不冒装备份能力）。
+   */
+  readonly dataBackupExecutionService?: Pick<import('shiploop-core').DataBackupExecutionPort, 'submit'>;
+  /** P07-3 / F-014：备份包/操作只读查询（授权在 Core，复用 data.backup 能力位）。 */
+  readonly dataBackupQueryService?: Pick<import('shiploop-core').DataBackupQueryService, 'getBackup' | 'getOperation'>;
+  /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
    */
@@ -319,12 +333,38 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       return { operation: 'settings.global.export', method: 'GET' };
     case RETENTION_EVALUATION_ROUTE:
       return { operation: 'retention.evaluation.get', method: 'GET' };
+    case BACKUPS_ROUTE:
+      // 集合根无列表语义（owner 按显式 backupId 查询）；避免歧义直接未匹配。
+      return undefined;
     case SNAPSHOT_ROUTE:
       return { operation: 'snapshot.get', method: 'GET' };
     case EVENTS_ROUTE:
       return { operation: 'events.subscribe', method: 'GET' };
     default:
       break;
+  }
+  // P07-3 / F-014：备份包/操作只读查询（单段路径参数；其他形态未匹配）。
+  if (path.startsWith(BACKUPS_ROUTE_PREFIX)) {
+    const segment = path.slice(BACKUPS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'backups.get',
+        method: 'GET',
+        pathParam: { name: 'backupId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  if (path.startsWith(BACKUP_OPERATIONS_ROUTE_PREFIX)) {
+    const segment = path.slice(BACKUP_OPERATIONS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'backup.operations.get',
+        method: 'GET',
+        pathParam: { name: 'operationId', value: segment },
+      };
+    }
+    return undefined;
   }
   // P03-5 / F-011：GET /v1/workspaces（集合根 + projectId/可选 featureId/分页
   // 查询参数）与单段路径参数 GET /v1/workspaces/:featureId；其他形态未匹配。
@@ -956,6 +996,9 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'git.repairs.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'git.repairs.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  // P07-3 / F-014：备份包/操作查询不接受查询参数（身份全部在路径参数）。
+  'backups.get': Object.freeze({ allowed: [], repeatable: [] }),
+  'backup.operations.get': Object.freeze({ allowed: [], repeatable: [] }),
   // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
   'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'features.report.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
@@ -1193,6 +1236,8 @@ async function handleCommandSubmit(
   // P02-3 / F-014（§5.3）：baseline.run 提交到执行编排（accepted 回执提交后
   // 异步启动检查进程）；其余命令仍走 commandService。信封结构已在上方通过
   // 校验（deferred 分支已拒绝），此处仅按已验证的操作名分流。
+  // P07-3 / F-014：data.backup.create 同一分流纪律（accepted 后驱动实际导出；
+  // 实际恢复 data.backup.restore 不经 HTTP，保持 unsupported）。
   let envelopeOperation: string | undefined;
   try {
     envelopeOperation = validateCommandEnvelope(parsedBody).operation;
@@ -1202,7 +1247,11 @@ async function handleCommandSubmit(
   const receipt =
     envelopeOperation === 'baseline.run'
       ? await app.baselineExecutionService.submit(app.principal, parsedBody)
-      : await app.commandService.submit(app.principal, parsedBody);
+      : envelopeOperation === 'data.backup.create'
+        ? app.dataBackupExecutionService === undefined
+          ? reject(501, 'unsupported', 'commands.submit', '备份创建未在本装配中启用', { reason: 'data_backup_unsupported' })
+          : await app.dataBackupExecutionService.submit(app.principal, parsedBody)
+        : await app.commandService.submit(app.principal, parsedBody);
   // §5.3：accepted → 202（F-008 首次启用，仅 baseline.run authorize）；
   // completed → 200；业务 rejected → 按 §5.7 唯一映射，响应体仍是回执。
   const status =
@@ -1448,6 +1497,20 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         reject(501, 'unsupported', operation, '保留评估未在本装配中启用', { reason: 'retention_evaluation_unsupported' });
       }
       result = await app.retentionEvaluationService.evaluate(app.principal);
+      break;
+    }
+    case 'backups.get': {
+      if (app.dataBackupQueryService === undefined) {
+        reject(501, 'unsupported', operation, '备份查询未在本装配中启用', { reason: 'data_backup_unsupported' });
+      }
+      result = await app.dataBackupQueryService.getBackup(app.principal, pathParam?.value ?? '');
+      break;
+    }
+    case 'backup.operations.get': {
+      if (app.dataBackupQueryService === undefined) {
+        reject(501, 'unsupported', operation, '备份查询未在本装配中启用', { reason: 'data_backup_unsupported' });
+      }
+      result = await app.dataBackupQueryService.getOperation(app.principal, pathParam?.value ?? '');
       break;
     }
     case 'snapshot.get':

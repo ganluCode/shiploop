@@ -239,6 +239,11 @@ import type {
 import type {
   WorkspaceDiscardPreview,
 } from 'shiploop-host';
+import {
+  createOfflineBackupVerificationService,
+  createOfflineRestoreService,
+} from 'shiploop-host';
+import { CLI_EXIT_REJECTED } from './host/output.js';
 import { formatTaskStrategyReapplicationPreview, formatTaskStrategyReapplicationResult } from './app/task-strategy-reapplication.js';
 import type { TaskStrategyReapplicationInput, TaskStrategyReapplicationResult } from 'shiploop-host';
 import { getAppCliHelp } from './app/help.js';
@@ -339,6 +344,9 @@ const SUPPORTED_PLATFORM = 'darwin';
 
 /** 命令操作/回执的窄类型（避免 CLI 直接依赖 Core 协议类型）。 */
 type CommandReceipt = Awaited<ReturnType<HostClient['submitCommand']>>;
+type AcceptedReceipt = Extract<CommandReceipt, { status: 'accepted' }>;
+type BackupQueryResult = Awaited<ReturnType<HostClient['getBackup']>>;
+type BackupOperationResult = Awaited<ReturnType<HostClient['getBackupOperation']>>;
 type CompletedReceipt = Extract<CommandReceipt, { status: 'completed' }>;
 type ProjectDetailResult = Awaited<ReturnType<HostClient['getProject']>>;
 type ProjectListResult = Awaited<ReturnType<HostClient['listProjects']>>;
@@ -2579,6 +2587,8 @@ function emitControlFailure(
  * ------------------------------------------------------------------ */
 
 type ParsedGitCommand = Extract<ParsedAppCliCommand, { command: 'git' }>;
+type ParsedBackupCommand = Extract<ParsedAppCliCommand, { command: 'backup' }>;
+type ParsedRestoreCommand = Extract<ParsedAppCliCommand, { command: 'restore' }>;
 
 async function executeGitCommand(
   io: AppCliIo,
@@ -2625,6 +2635,274 @@ type ParsedWorkspaceCommand = Extract<ParsedAppCliCommand, { command: 'workspace
 
 interface WorkspaceCommandInputs {
   readonly discardPayload?: WorkspaceDiscardConfirmPayload;
+}
+
+/* ------------------------------------------------------------------ *
+ * P07-3 / F-014：备份 owner 命令与隔离恢复维护入口
+ * ------------------------------------------------------------------ */
+
+function buildBackupCreateAcceptedView(
+  commandId: string,
+  replayed: boolean,
+  receipt: AcceptedReceipt,
+  backupId: string,
+): Record<string, unknown> {
+  return {
+    commandId,
+    replayed,
+    status: 'accepted',
+    operationId: receipt.operationId,
+    backupId,
+    note: '备份导出已受理；完成状态经 backup operation <operationId> 查询持久结果，不重复导出。',
+  };
+}
+
+async function executeBackupCommand(
+  io: AppCliIo,
+  command: ParsedBackupCommand,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'backup.create': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.submitDataBackupCreate(
+        {
+          backupId: command.backupId,
+          ...(command.target === 'default' ? {} : { target: command.target }),
+          ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+          ...(issuedAt !== undefined ? { issuedAt } : {}),
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      if (receipt.status === 'rejected') {
+        return emitFailure(io, command.json, {
+          exitCode: exitCodeForReceiptStatus('rejected'),
+          command: command.commandId,
+          code: receipt.error.code,
+          message: receipt.error.message,
+          commandId: receipt.commandId,
+          ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+        });
+      }
+      if (receipt.status !== 'accepted') {
+        throw new HostProtocolError('response_malformed', 'commands.submit', undefined, {
+          details: { reason: 'backup_create_receipt_invalid' },
+        });
+      }
+      const view = buildBackupCreateAcceptedView(receipt.commandId, receipt.replayed === true, receipt, command.backupId);
+      const human = `shiploop backup create: accepted backup=${command.backupId} operation=${receipt.operationId}` +
+        `${receipt.replayed === true ? '（replayed）' : ''}\n完成状态：shiploop backup operation ${receipt.operationId}\n`;
+      return emitSuccess(io, command, view, human);
+    }
+    case 'backup.verify': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.submitDataBackupVerify(
+        {
+          backupId: command.backupId,
+          manifestDigest: command.manifestDigest,
+          ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+          ...(issuedAt !== undefined ? { issuedAt } : {}),
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      if (receipt.status === 'rejected') {
+        return emitFailure(io, command.json, {
+          exitCode: exitCodeForReceiptStatus('rejected'),
+          command: command.commandId,
+          code: receipt.error.code,
+          message: receipt.error.message,
+          commandId: receipt.commandId,
+          ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+        });
+      }
+      if (receipt.status !== 'completed') {
+        throw new HostProtocolError('response_malformed', 'commands.submit', undefined, {
+          details: { reason: 'backup_verify_receipt_invalid' },
+        });
+      }
+      const report = receipt.result as { status?: string };
+      if (report.status !== 'complete') {
+        // 核验未通过不是命令失败折算：如实输出同一报告并以非成功退出码结束。
+        return emitFailure(io, command.json, {
+          exitCode: CLI_EXIT_REJECTED,
+          command: command.commandId,
+          code: `backup_verification_${String(report.status)}`,
+          message: '备份核验未通过（报告见 details.report；不修改任何数据）',
+          commandId: receipt.commandId,
+          details: { report: receipt.result },
+        });
+      }
+      const view = { commandId: receipt.commandId, replayed: receipt.replayed === true, report: receipt.result };
+      const human = `shiploop backup verify: complete backup=${command.backupId}` +
+        `${receipt.replayed === true ? '（replayed）' : ''}\n`;
+      return emitSuccess(io, command, view, human);
+    }
+    case 'backup.get': {
+      const result: BackupQueryResult = await client.getBackup(command.backupId);
+      return emitSuccess(io, command, result, formatBackupFactsView(command.commandId, result));
+    }
+    case 'backup.operation': {
+      const result: BackupOperationResult = await client.getBackupOperation(command.operationId);
+      return emitSuccess(io, command, result, formatBackupOperationView(command.commandId, result));
+    }
+    default:
+      throw new TypeError('未知备份子命令');
+  }
+}
+
+function formatBackupFactsView(commandId: string, result: BackupQueryResult): string {
+  if (result.status === 'complete') {
+    const summary = result.manifestSummary!;
+    return [
+      `shiploop ${commandId}: complete backup=${result.backupId} manifestDigest=${result.manifestDigest}`,
+      `  schema=v${summary.schemaVersion} package=v${summary.packageVersion} createdAt=${summary.createdAtUtc}`,
+      `  projects=${summary.projectCount} files=${summary.fileCount} native=${summary.nativeRecordCount} external=${summary.externalDependencyCount}`,
+      '',
+    ].join('\n');
+  }
+  const report = result.report;
+  const reasons = report === undefined ? '' : ` reasons=${report.reasons.join(',')}`;
+  return `shiploop ${commandId}: ${result.status} backup=${result.backupId}${reasons}\n`;
+}
+
+function formatBackupOperationView(commandId: string, result: BackupOperationResult): string {
+  const lines = [
+    `shiploop ${commandId}: ${result.status} operation=${result.operationId} backup=${result.backupId} kind=${result.kind}`,
+  ];
+  if (result.manifestDigest !== undefined) lines.push(`  manifestDigest=${result.manifestDigest}`);
+  if (result.reason !== undefined) lines.push(`  reason=${result.reason}`);
+  if (result.report !== undefined) {
+    lines.push(`  report: status=${result.report.status} projects=${result.report.scannedProjects}` +
+      ` artifacts=${result.report.scannedArtifacts} files=${result.report.copiedFiles}` +
+      ` bytes=${result.report.totalBytes} durationMs=${result.report.durationMs}` +
+      `${result.report.reasons.length === 0 ? '' : ` reasons=${result.report.reasons.join(',')}`}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+/** 离线维护入口错误 → 受控失败信封（不回显堆栈/绝对路径；reason 受控映射）。 */
+function restoreFailureOf(error: unknown): { code: string; message: string } {
+  if (error !== null && typeof error === 'object' && typeof (error as { reason?: unknown }).reason === 'string') {
+    const reason = (error as { reason: string }).reason;
+    return { code: `restore_${reason}`, message: `隔离恢复维护入口拒绝（${reason}）` };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /data\.restore: ([A-Za-z0-9_.:-]+)/.exec(message);
+  if (match !== null) {
+    return { code: `restore_${match[1]}`, message: `隔离恢复维护入口拒绝（${match[1]}）` };
+  }
+  return { code: 'restore_failed', message: '隔离恢复维护入口执行失败（已脱敏）' };
+}
+
+function readRestoreConfirmationDocument(
+  command: Extract<ParsedRestoreCommand, { commandId: 'restore.confirm' }>,
+): Record<string, unknown> {
+  const state = { command: command.command, commandId: command.commandId, json: command.json };
+  let handle: number | undefined;
+  try {
+    handle = openSync(command.confirmationFile, 'r');
+    const buffer = Buffer.alloc(MAX_APP_BODY_BYTES + 1);
+    const bytesRead = readSync(handle, buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_APP_BODY_BYTES) {
+      throw new AppCliParseError('invalid_input', 'input_file_too_large', state, 'confirmation-file');
+    }
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead));
+    return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
+  } catch (error) {
+    if (error instanceof AppCliParseError) throw error;
+    throw new AppCliParseError('invalid_input', 'invalid_input_file', state, 'confirmation-file');
+  } finally {
+    if (handle !== undefined) {
+      try { closeSync(handle); } catch { /* 关闭失败不改变读取结论 */ }
+    }
+  }
+}
+
+/** P07-3 / F-014：核验→确认→隔离恢复的离线维护入口（不发现/启动 Host）。 */
+async function executeRestoreCommand(
+  io: AppCliIo,
+  command: ParsedRestoreCommand,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'restore.verify': {
+      const verification = createOfflineBackupVerificationService({ dataRoot: command.dataRoot });
+      let report: Awaited<ReturnType<typeof verification.verify>>;
+      try {
+        report = await verification.verify({
+          packagePath: command.packagePath,
+          ...(command.expectedBackupId === undefined ? {} : { expectedBackupId: command.expectedBackupId }),
+        });
+      } catch (error) {
+        const failure = restoreFailureOf(error);
+        return emitFailure(io, command.json, {
+          exitCode: CLI_EXIT_REJECTED,
+          command: command.commandId,
+          code: failure.code,
+          message: failure.message,
+        });
+      }
+      if (report.status !== 'complete') {
+        return emitFailure(io, command.json, {
+          exitCode: CLI_EXIT_REJECTED,
+          command: command.commandId,
+          code: `backup_verification_${report.status}`,
+          message: '备份核验未通过（报告见 details.report；不修改任何数据）',
+          details: { report },
+        });
+      }
+      return emitSuccess(io, command, report, `shiploop restore verify: complete backup=${String(report.backupId)}\n`);
+    }
+    case 'restore.prepare': {
+      const service = createOfflineRestoreService({ dataRoot: command.dataRoot });
+      let preview: Awaited<ReturnType<typeof service.prepare>>;
+      try {
+        preview = await service.prepare({ operationId: command.operationId, packagePath: command.packagePath });
+      } catch (error) {
+        const failure = restoreFailureOf(error);
+        return emitFailure(io, command.json, {
+          exitCode: CLI_EXIT_REJECTED,
+          command: command.commandId,
+          code: failure.code,
+          message: failure.message,
+        });
+      }
+      const human = [
+        `shiploop restore prepare: prepared operation=${preview.operationId} backup=${preview.backupId}`,
+        `  targetDataRootId=${preview.confirmation.targetDataRootId}`,
+        `  manifestDigest=${preview.confirmation.manifestDigest}`,
+        `  verificationDigest=${preview.confirmation.verificationDigest}`,
+        '确认文档已输出（--json 读取 result.confirmation）；审阅后执行 restore confirm。',
+        '',
+      ].join('\n');
+      return emitSuccess(io, command, preview, human);
+    }
+    case 'restore.confirm': {
+      const confirmation = readRestoreConfirmationDocument(command);
+      const service = createOfflineRestoreService({ dataRoot: command.dataRoot });
+      let receipt: Awaited<ReturnType<typeof service.confirm>>;
+      try {
+        receipt = await service.confirm({ operationId: command.operationId, confirmation });
+      } catch (error) {
+        const failure = restoreFailureOf(error);
+        return emitFailure(io, command.json, {
+          exitCode: CLI_EXIT_REJECTED,
+          command: command.commandId,
+          code: failure.code,
+          message: failure.message,
+        });
+      }
+      const human = [
+        `shiploop restore confirm: ${receipt.status} operation=${receipt.operationId} backup=${receipt.backupId}`,
+        `  execution=${receipt.execution} cleanup=${receipt.cleanup}`,
+        '目标进入恢复隔离；重新核验外部事实前不自动启动 Host 或恢复执行。',
+        '',
+      ].join('\n');
+      return emitSuccess(io, command, receipt, human);
+    }
+    default:
+      throw new TypeError('未知恢复子命令');
+  }
 }
 
 async function executeWorkspaceCommand(
@@ -3830,6 +4108,12 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     });
   }
 
+  // P07-3 / F-014：隔离恢复维护入口完全离线（持有目标数据根 writer 锁的独立
+  // 入口）——在任何 Host 发现/启动之前分派，绝不经 HTTP 替换运行中 Host 数据库。
+  if (command.command === 'restore') {
+    return await executeRestoreCommand(io, command);
+  }
+
   // F-015/F-016/F-017 范围：project.*、config.*、receipt.get、baseline.* 与 events
   // 观察全部经 HostClient 接线；未知顶层命令已在纯解析层拒绝，不会到达这里。
   // events 观察预算覆盖（受信装配/测试注入）在连接 Host 之前校验：非法注入
@@ -4221,6 +4505,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
     if (command.command === 'git') {
       return await executeGitCommand(io, command, client);
+    }
+    if (command.command === 'backup') {
+      return await executeBackupCommand(io, command, client);
     }
     return await executeProjectCommand(io, command, client, profilePayload, repositoryMovePreview);
   } catch (error) {

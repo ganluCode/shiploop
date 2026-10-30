@@ -353,6 +353,8 @@ export const commandReceipts = sqliteTable('command_receipts', {
   /** P05-1 / F-003（迁移 v36）：planning.start accepted v7 的 planning Task/候选身份；其余恒 NULL。 */
   planningTaskId: text('planning_task_id'),
   candidateId: text('candidate_id'),
+  /** P07-3 / F-014（迁移 v59）：data.backup.create accepted v8 的 owner 备份身份；其余恒 NULL。 */
+  backupId: text('backup_id'),
   /** completed：有界业务结果 JSON（序列化 ≤ 16384 字节）。 */
   resultJson: text('result_json'),
   /** completed：不透明结果引用（v1.+43 字符 base64url；全库唯一）。 */

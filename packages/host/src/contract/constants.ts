@@ -80,6 +80,10 @@ export const SETTINGS_GLOBAL_ROUTE = '/v1/settings/global';
 export const SETTINGS_GLOBAL_EXPORT_ROUTE = '/v1/settings/global/export';
 /** P07-3 / F-012：保留评估只读路由（受控数据根磁盘阈值/保留候选量观测）。 */
 export const RETENTION_EVALUATION_ROUTE = '/v1/retention/evaluation';
+// P07-3 / F-014：备份包/操作只读查询路由（单段路径参数；授权复用 data.backup）。
+export const BACKUPS_ROUTE = '/v1/backups';
+export const BACKUPS_ROUTE_PREFIX = '/v1/backups/';
+export const BACKUP_OPERATIONS_ROUTE_PREFIX = '/v1/backup-operations/';
 export const SNAPSHOT_ROUTE = '/v1/snapshot';
 export const EVENTS_ROUTE = '/v1/events';
 /** P02-3 / F-014 §3.2：基线分页/详情/证据正文路由（全部 GET + Bearer）。 */
