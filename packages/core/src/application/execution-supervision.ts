@@ -5,7 +5,7 @@ import { RuntimeError } from '../ports/runtime-execution.js';
 import type { RuntimeControlFacts, RuntimeTimeoutFact } from '../ports/runtime-settlement.js';
 import type { RuntimeSettlementInput, RuntimeSettlementService } from './runtime-settlement.js';
 import type { AttemptApplicationResult } from '../ports/attempt-lifecycle.js';
-import { WorkEvidenceRecordingError, type WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
+import { WorkEvidenceRecordingError, recordingRequiresStop, type WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import type { WorkspaceRetentionReason } from '../ports/workspace-retention.js';
 
 export interface ExecutionCompletion {
@@ -106,9 +106,7 @@ export function superviseExecution(input: {
   });
   const timer = setTimeout(() => stop(input.timeoutReason, timeoutFact(elapsed())), Math.max(1, input.timeoutMs));
   void input.recording.then(outcome => {
-    const bestEffort = outcome.status === 'fulfilled' ? outcome.value.recordingMode === 'best_effort'
-      : outcome.reason instanceof WorkEvidenceRecordingError && outcome.reason.recordingMode === 'best_effort';
-    if (!bestEffort && (outcome.status === 'rejected' || outcome.value.status !== 'complete')) stop('recording_failed');
+    if (recordingRequiresStop(outcome)) stop('recording_failed');
   });
   void input.result.then(outcome => {
     if (outcome.status === 'rejected' || outcome.value.terminal === 'failed') stop('runtime_failed');
@@ -146,6 +144,9 @@ export function superviseExecution(input: {
       const result = observations?.[0] ?? await observeWithin(input.result, 1)
         ?? { status: 'rejected' as const, reason: new RuntimeError('process', 'runtime_result_unobserved') };
       const recording = observations?.[1] ?? await observeWithin(input.recording, 1) ?? null;
+      const cleanupConfirmed = confirmed && !(recording?.status === 'rejected'
+        && recording.reason instanceof WorkEvidenceRecordingError && recording.reason.cleanupStatus === 'cleanup_unconfirmed');
+      if (!cleanupConfirmed) input.quarantine();
       const recordingFlushed = recording?.status === 'fulfilled';
       // The controller's reason augments raw observations, preserving known usage and unknown fields.
       const control: RuntimeControlFacts | undefined = reason === null ? undefined : {
@@ -167,10 +168,11 @@ export function superviseExecution(input: {
       if (!receipt.resultSaved) throw new Error('result_not_saved');
       persisted = true;
       let retained = false;
-      const routed = confirmed && receipt.status === 'failed' && receipt.disposition === 'applied'
+      const routed = cleanupConfirmed && receipt.status === 'failed' && receipt.disposition === 'applied'
+        && recording !== null && !recordingRequiresStop(recording)
         && await input.options.routeFailure?.({ request: input.request, result, recording,
           stopped: stopped ?? null, receipt, ...(control ? { control } : {}) }) === true;
-      if (confirmed && receipt.status !== 'verifying' && !routed) {
+      if (cleanupConfirmed && receipt.status !== 'verifying' && !routed) {
         const evidenceRef = input.evidenceRef();
         if (evidenceRef === null) throw new Error('missing_settlement_evidence');
         const retentionReason: WorkspaceRetentionReason = receipt.status === 'cancelled' ? 'cancelled'
@@ -184,7 +186,7 @@ export function superviseExecution(input: {
           featureId: input.request.featureId, reason: retentionReason, evidenceRef });
         retained = true;
       }
-      return { stopConfirmed: confirmed, persisted: true, retained, error: null,
+      return { stopConfirmed: confirmed, persisted: true, retained, error: cleanupConfirmed ? null : 'cleanup_unconfirmed',
         recordingFlushed: recordingFlushed || persisted,
         exitCode: observedExit, signal: observedSignal, forced: observedForced };
     } catch {

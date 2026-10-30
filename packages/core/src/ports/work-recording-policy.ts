@@ -20,9 +20,10 @@
  * | 累计磁盘写入（公开正文） | publish.maxTotalBytes（每条消息） | 262_144 | 8_388_608 |
  * | 队列事件数/字节（Runner 通道） | PI_RUNNER_BUFFER_EVENTS / PI_RUNNER_BUFFER_BYTES（协议常量） | 64 / 65_536 | 固定 |
  * | 队列字节（发布器排队） | publish.maxQueueBytes | 8_192 | 1_048_576 |
- * | 采集期限（尾部等待） | recorder.tailWaitMs | 2_000 | 600_000 |
+ * | 整体采集/发布期限 | request.timeoutMs（从 record 开始，共用单调绝对期限） | 装配按预算给出 | 86_400_000 |
+ * | 尾部等待期限 | recorder.tailWaitMs（不得越过整体期限） | 2_000 | 600_000 |
  * | 发布期限（Artifact staging） | artifactPublication.timeoutMs | 30_000 | 有限安全整数 |
- * | 失败收尾期限 | 由 tailWaitMs 派生（取消等待 min(tailWaitMs,250)、best_effort 排空 tailWaitMs、停止观察 tailWaitMs） | — | tailWaitMs 上限 |
+ * | 失败收尾期限 | 一次 tailWaitMs 保留预算，包含取消等待、排空、未完成发布清理与失败 Manifest | — | tailWaitMs 上限 |
  *
  * 限制间关系（启动前校验，违约即拒绝装配）：
  * - recorder.maxEventBodyBytes ≤ recorder.chunkMaxBytes ≤ recorder.maxTotalBytes；

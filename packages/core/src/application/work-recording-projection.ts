@@ -39,12 +39,13 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
   return {
     get watermark() { return watermark; },
     get gaps() { return [...publicationGaps]; },
-    async prepare(events: readonly { readonly event: RuntimeEvent; readonly redacted: boolean }[]): Promise<void> {
+    async prepare(events: readonly { readonly event: RuntimeEvent; readonly redacted: boolean }[], signal?: AbortSignal): Promise<void> {
       if (events.length > WORK_RECORDING_MAX_BATCH_MESSAGES || pending.length !== 0) throw new Error('recording_batch_limit');
       // A batch is admitted only after every body has been published and verified.
       // On failure, ready bodies remain evidence; no partial batch advances its watermark.
       const batch: WorkRecordingMessageRecord[] = [];
       for (const entry of events) {
+        signal?.throwIfAborted();
         const { event } = entry;
         const payload = event.payload;
         const tool = payload.kind === 'tool_started' || payload.kind === 'tool_finished';
@@ -54,11 +55,13 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
         const body = await deps.publisher.publishBody({ projectId: request.projectId, kind: kind === 'message' ? 'message' : kind,
           mediaType: 'application/json', locator: `sessions/${request.sessionId}/messages/${event.sequence}.json`,
           expectedHash: createHash('sha256').update(content).digest('hex'),
-          ...(storageBudget === undefined ? {} : { budget: storageBudget }),
+          ...(storageBudget === undefined ? {} : { budget: storageBudget }), signal,
           content: (function* () { for (let offset = 0; offset < content.length; offset += 1024) yield content.subarray(offset, offset + 1024); })() });
+        signal?.throwIfAborted();
         for (const gap of body.gapReasons) if (publicationGaps.size < 16) publicationGaps.add(gap);
         if (body.ref === null || body.status !== 'complete') throw new Error('recording_body_publication_failed');
         await check(body.ref);
+        signal?.throwIfAborted();
         truncation ||= body.truncated;
         redaction ||= body.redacted || entry.redacted;
         const timestamp = nowUtcMs();
@@ -69,6 +72,7 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
           toolCallId: tool ? payload.toolCallId : null, parentToolCallId: tool ? payload.parentToolCallId ?? null : null,
           source: 'live', sourceRefs: [event.eventId], attachments: [], truncated: body.truncated, redacted: body.redacted || entry.redacted }));
       }
+      signal?.throwIfAborted();
       pending = batch;
     },
     commit(input: { sessionRevision: number; watermark: number | null; gaps: readonly string[];

@@ -131,9 +131,9 @@ for (const mode of ['required', 'best_effort'] as const) {
         attempts: createSqliteAttemptAccess(f.session), dag: createSqliteTaskDagStore(f.session) });
       const receipt = await settlement.settle({ request: f.request, result: { status: 'fulfilled', value: validateRuntimeExecutionResult(await handle.result) },
         stopped: { status: 'fulfilled', value: validateRuntimeStopEvidence(await handle.stopped) }, recording: recording[0] });
-      expect(receipt).toMatchObject({ status: 'verifying', runtimeCompleted: true, stopConfirmed: true,
-        waitingFor: mode === 'required' ? 'recording_required' : 'verification_not_assembled' });
-      expect(f.query('SELECT status FROM tasks WHERE id = ?', 't-1')).toEqual({ status: 'running' });
+      expect(receipt).toMatchObject({ status: mode === 'required' ? 'failed' : 'verifying', runtimeCompleted: true, stopConfirmed: true,
+        waitingFor: mode === 'required' ? null : 'verification_not_assembled' });
+      expect(f.query('SELECT status FROM tasks WHERE id = ?', 't-1')).toEqual({ status: mode === 'required' ? 'failed' : 'running' });
       expect(f.query('SELECT status FROM tasks WHERE id = ?', 't-2')).toEqual({ status: 'pending' });
     } finally { f.close(); }
   });

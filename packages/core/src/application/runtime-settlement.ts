@@ -17,7 +17,7 @@ import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import type { RuntimeSettlementFacts, RuntimeControlFacts } from '../ports/runtime-settlement.js';
 import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
-import { WorkEvidenceRecordingError } from './work-evidence-recorder.js';
+import { WorkEvidenceRecordingError, recordingRequiresStop } from './work-evidence-recorder.js';
 
 export interface RuntimeSettlementInput {
   readonly request: RuntimeExecutionRequest;
@@ -122,6 +122,11 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     } else if (input.control?.reason === 'recording_failed' && (executionFailure === null || result?.terminal === 'cancelled')) {
       executionFailure = { kind: 'protocol', reason: 'recording_failed' };
     }
+    const recordingBlocksExecution = input.recording !== null && recordingRequiresStop(input.recording);
+    if (recordingBlocksExecution && executionFailure === null
+        && input.control?.reason !== 'user_cancelled' && input.control?.reason !== 'service_close') {
+      executionFailure = { kind: 'protocol', reason: 'recording_failed' };
+    }
     const recovery = recording?.recovery
       ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.recovery : undefined)
       ?? recoveryRecordingForRequest(request, undefined, deps.sessions);
@@ -161,6 +166,7 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
         } : null },
       recording: { ...(recordingMode === 'best_effort' ? { mode: recordingMode } : {}),
         complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
+        cleanupStatus: recordingError instanceof WorkEvidenceRecordingError ? recordingError.cleanupStatus : 'confirmed',
         gaps: (recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : ['recording_unobserved'])).slice(0, 32).map(token),
         watermark: recording?.watermark ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.watermark : null) },
       stop: { evidence: stopped, failure: stopFailure }, ...(input.control ? { control: input.control } : {}) }, redact), 'utf8');

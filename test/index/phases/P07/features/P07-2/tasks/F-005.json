@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p07-2-f005-recording-supervision.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f005-recording-process.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f005-recording-host.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-runtime-settlement.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-stopping.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-process-stopping.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f004-storage-budget.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f002-runner-bounds.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-3-runtime-retry-settlement.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/p07-2-f003-artifact-deadline.test.ts", "all": true }
+    ]
+  }]
+}

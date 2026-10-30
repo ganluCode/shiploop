@@ -84,7 +84,7 @@ describe('P03-6 F-009 Runtime fenced settlement', () => {
       const receipt = await f.settlement.settle({ ...input, request, stopped: null,
         result: input.result.status === 'fulfilled' ? { status: 'fulfilled', value: { ...input.result.value, providerSessionId: 'native-current' } } : input.result,
         recording: input.recording.status === 'fulfilled' ? { status: 'fulfilled', value: { ...input.recording.value, status: 'partial' } } : input.recording });
-      expect(receipt).toMatchObject({ waitingFor: 'execution_uncertain', stopConfirmed: false });
+      expect(receipt).toMatchObject({ status: 'failed', waitingFor: null, stopConfirmed: false });
       const session = f.sessions.getWorkSession(f.projectId, current.id);
       expect(session).toMatchObject({ status: 'ended', recordingWatermark: current.recordingWatermark, providerSessionId: 'native-current' });
       expect(session.recordingGaps).toEqual(expect.arrayContaining(['recovery:source_watermark_unknown', 'recording_required', 'stop_unconfirmed']));
@@ -236,7 +236,7 @@ describe('P03-6 F-009 Runtime fenced settlement', () => {
     try {
       const input = await f.input();
       input.recording = { status: 'rejected', reason: new Error('sensitive-test-value') };
-      expect(await f.settlement.settle(input)).toMatchObject({ status: 'verifying', waitingFor: 'recording_required', runtimeCompleted: true });
+      expect(await f.settlement.settle(input)).toMatchObject({ status: 'failed', waitingFor: null, runtimeCompleted: true });
       assertOccupied(f);
     } finally { f.close(); }
   });
