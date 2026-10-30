@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-013",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/retention/p07-3-f013-evidence-retention.test.ts", "all": true },
+      { "file": "test/modules/retention/p07-3-f012-retention-evaluation.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f003-sqlite-backup.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f005-backup-verification.test.ts", "all": true }
+    ]
+  }]
+}

@@ -122,6 +122,9 @@ const SCHEMA_TABLES = [
   ['phase_delivery_approvals', schema.phaseDeliveryApprovals],
   // P07-3 / F-002：Core/Host 共享维护占用 fencing（迁移 v55）。
   ['maintenance_occupancy', schema.maintenanceOccupancy],
+  // P07-3 / F-013：清理/轮换的持久操作与逐项检查点（迁移 v58）。
+  ['retention_operations', schema.retentionOperations],
+  ['retention_operation_items', schema.retentionOperationItems],
   ['project_delete_operations', schema.projectDeleteOperations],
   ['project_delete_steps', schema.projectDeleteSteps],
   ['project_delete_receipts', schema.projectDeleteReceipts],

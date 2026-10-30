@@ -50,12 +50,15 @@ import type { ConfigurationService } from '../application/configuration-service.
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createRetentionEvaluationService } from '../application/retention-evaluation.js';
+import { createRetentionCleanupService } from '../application/evidence-retention.js';
 import type { RetentionEvaluationService } from '../application/retention-evaluation.js';
+import type { RetentionCleanupService } from '../application/evidence-retention.js';
 import {
   createBackupCatalogReader,
   createDiskUsageObserver,
   createManagedAreaScanner,
 } from './fs/disk-observation.js';
+import { createSqliteRetentionCleanupStore } from './sqlite/evidence-retention.js';
 import { createCommandService } from '../application/command-service.js';
 import { createProjectLifecycleCommandHandler } from '../application/project-lifecycle.js';
 import type { ProjectLifecycleCommandHandler as ProjectLifecycleHandler } from '../ports/project-lifecycle.js';
@@ -448,6 +451,8 @@ export interface CoreApplication {
    * 磁盘阈值/保留候选量观测；零写入、零清理，未知观测显式呈现。
    */
   readonly retentionEvaluationService: RetentionEvaluationService;
+  /** P07-3 / F-013：受引用保护的有界证据清理与备份轮换。 */
+  readonly retentionCleanupService: RetentionCleanupService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
@@ -779,6 +784,17 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       managedScan: createManagedAreaScanner({ dataRoot: basePathService.dataRoot() }),
       backups: createBackupCatalogReader({
         backupRoot: join(basePathService.dataRoot(), 'backups'),
+      }),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const retentionCleanupService = createRetentionCleanupService({
+      store: createSqliteRetentionCleanupStore({
+        session,
+        dataRoot: basePathService.dataRoot(),
+        backupRoot: join(basePathService.dataRoot(), 'backups'),
+        maintenanceGate,
+        disk: createDiskUsageObserver({ dataRoot: basePathService.dataRoot() }),
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
       }),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
@@ -1624,6 +1640,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       projectService,
       configurationService,
       retentionEvaluationService,
+      retentionCleanupService,
       projectResourceService,
       maintenanceGate,
       commandReceiptStore,

@@ -218,6 +218,8 @@ export * from './application/configuration-service.js';
 // P07-3 / F-012：保留评估只读服务与端口契约（retention.evaluation.get）。
 export * from './ports/retention-evaluation.js';
 export * from './application/retention-evaluation.js';
+export * from './ports/evidence-retention.js';
+export * from './application/evidence-retention.js';
 export * from './application/command-receipts-service.js';
 export * from './application/command-service.js';
 export * from './application/query-service.js';

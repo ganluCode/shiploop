@@ -2915,6 +2915,36 @@ export const maintenanceOccupancy = sqliteTable('maintenance_occupancy', {
 ]);
 
 /** P07-3 / F-010: retained identities deliberately have no project FK. */
+export const retentionOperations = sqliteTable('retention_operations', {
+  id: text('id').primaryKey(), revision: integer('revision').notNull().default(1),
+  createdAt: integer('created_at').notNull(), updatedAt: integer('updated_at').notNull(),
+  operationKind: text('operation_kind').notNull().default('cleanup'), status: text('status').notNull(),
+  policyDigest: text('policy_digest').notNull(), snapshotRevision: text('snapshot_revision').notNull(),
+  nextIndex: integer('next_index').notNull().default(0), itemsExamined: integer('items_examined').notNull().default(0),
+  itemsDeleted: integer('items_deleted').notNull().default(0), bytesDeleted: integer('bytes_deleted').notNull().default(0),
+  lastError: text('last_error'), inputJson: text('input_json').notNull(), resultJson: text('result_json'),
+}, table => [
+  check('retention_operations_status_check', sql`${table.status} IN ('planned','running','paused','failed','completed','unknown')`),
+  check('retention_operations_kind_check', sql`${table.operationKind} = 'cleanup'`),
+  check('retention_operations_policy_digest_check', sql`length(${table.policyDigest}) = 64 AND ${table.policyDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('retention_operations_input_json_check', sql`json_valid(${table.inputJson}) AND json_type(${table.inputJson}) = 'object'`),
+  check('retention_operations_result_json_check', sql`${table.resultJson} IS NULL OR (json_valid(${table.resultJson}) AND json_type(${table.resultJson}) = 'object')`),
+  check('retention_operations_counts_check', sql`${table.nextIndex} >= 0 AND ${table.itemsExamined} >= 0 AND ${table.itemsDeleted} >= 0 AND ${table.bytesDeleted} >= 0`),
+]);
+
+export const retentionOperationItems = sqliteTable('retention_operation_items', {
+  operationId: text('operation_id').notNull(),
+  itemIndex: integer('item_index').notNull(), objectKind: text('object_kind').notNull(), objectId: text('object_id').notNull(),
+  objectRevision: integer('object_revision').notNull(), status: text('status').notNull(), bytes: integer('bytes').notNull().default(0),
+  identityJson: text('identity_json').notNull(), reason: text('reason'),
+}, table => [
+  primaryKey({ columns: [table.operationId, table.itemIndex] }),
+  check('retention_operation_items_status_check', sql`${table.status} IN ('pending','deleted','retained','isolated','skipped','failed')`),
+  check('retention_operation_items_identity_check', sql`json_valid(${table.identityJson}) AND json_type(${table.identityJson}) = 'object'`),
+  check('retention_operation_items_counts_check', sql`${table.itemIndex} >= 0 AND ${table.bytes} >= 0`),
+  index('retention_operation_items_object_index').on(table.objectKind, table.objectId),
+]);
+
 export const projectDeleteOperations = sqliteTable('project_delete_operations', {
   id: text('id').primaryKey().notNull(),
   targetProjectId: text('target_project_id').notNull().unique(),
