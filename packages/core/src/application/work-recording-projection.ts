@@ -100,6 +100,14 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
       }
       const partial = source?.coverage !== 'complete' || missing.length > 0 || truncation;
       const finalSequence = source?.finalEventSequence ?? null;
+      // Keep observed facts in the existing bounded diagnostics schema. A cancel
+      // request or a finalized manifest is never evidence that a process stopped.
+      const observations = source === undefined ? [] : [
+        ...(source.recordingMode === undefined ? [] : [`recording_mode_${source.recordingMode}`]),
+        source.stop?.status === 'observed' && source.stop.evidence !== null
+          ? source.stop.evidence.confirmed ? 'stop_observed_confirmed' : 'stop_observed_unconfirmed'
+          : 'stop_observation_unknown',
+      ];
       // A mismatching producer terminal behind already durable content is retained
       // in the evidence manifest, never forced into an invalid index manifest.
       const manifest: WorkRecordingManifestRecord = validateWorkRecordingManifest({ ...recordIdentity,
@@ -110,7 +118,8 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
         coverage: source?.coverage === 'failed' ? 'failed' : partial ? 'partial' : 'complete', source: hasRecoveredSource ? 'mixed' : 'live',
         scope: { covers: ['public_events', 'public_messages', 'public_tools', 'final_result', 'minimal_diagnostics'],
           excludes: [...WORK_RECORDING_REQUIRED_EXCLUSIONS, 'unexposed_sdk_content'] },
-        missingReasons: [...new Set(missing)].slice(0, 32), diagnostics: source?.diagnostics ?? [],
+        missingReasons: [...new Set(missing)].slice(0, 32),
+        diagnostics: [...observations, ...(source?.diagnostics ?? [])].slice(0, 32),
         truncation: { applied: truncation, reasons: truncation ? ['body_truncated'] : [] },
         redaction: { applied: redaction || (source?.redaction.secretValueCount ?? 0) > 0,
           reasons: redaction || (source?.redaction.secretValueCount ?? 0) > 0 ? ['configured_literal_redaction'] : [] },

@@ -249,6 +249,8 @@ export interface CoreApplicationOptions {
   readonly workStartupRecoveryRequired?: boolean;
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  /** Explicit trusted recording policy; omitted means required. Never supplied by Work tools. */
+  readonly workRecordingMode?: 'required' | 'best_effort';
   /** Trusted delivery adapters; absent until explicitly assembled. */
   readonly batchDeliveryFactory?: BatchDeliveryFactory;
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
@@ -446,6 +448,7 @@ export interface CoreApplication {
 const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
   'workRuntimeFactory',
+  'workRecordingMode',
   'batchDeliveryFactory',
   'featureDeliveryFactory',
   'integrationPlanFactory',
@@ -544,6 +547,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     throw validationError(context, 'workStartupRecoveryRequired', 'Expected boolean');
   }
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
+  if (object.workRecordingMode !== undefined && object.workRecordingMode !== 'required' && object.workRecordingMode !== 'best_effort') {
+    throw validationError(context, 'workRecordingMode', 'required_or_best_effort');
+  }
   if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
     throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
   }
@@ -1202,7 +1208,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
-      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
+      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined,
+      recordingMode: object.workRecordingMode as CoreApplicationOptions['workRecordingMode'], nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
         finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
       }),

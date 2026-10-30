@@ -345,7 +345,7 @@ export type {
   WorkSessionQueryOperation,
   WorkSessionQueryState,
 } from './ports/work-session-query.js';
-export { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION } from './ports/work-recording-query.js';
+export { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION, isPublicWorkRecordingDetailCode } from './ports/work-recording-query.js';
 export type { WorkRecordingPage, WorkRecordingBody, WorkRecordingTarget, WorkRecordingRecordType,
   PublicWorkRecordingArtifactRef } from './ports/work-recording-query.js';
 // P04-5 / F-007 公开记录行的冻结词汇（wire 校验与 Core 同源，不漂移）。

@@ -51,12 +51,39 @@ const PUBLIC_DETAIL_CODES = new Set([
   'foreign_event', 'stop_evidence_unavailable', 'best_effort_partial', 'partial_evidence_flush_failed',
   'public_events', 'public_messages', 'public_tools', 'attachments', 'final_result', 'minimal_diagnostics',
   'hidden_reasoning', 'native_private_storage', 'unified_audit', 'unexposed_sdk_content',
+  'recording_detail_redacted', 'queue_limit', 'chunk_limit', 'session_storage_quota',
+  'publication_timeout', 'publication_file_error', 'publication_storage_error', 'publication_failed',
+  'cancelled', 'artifact_not_ready', 'cleanup_unconfirmed', 'evidence_unrecoverable',
+  'evidence_metadata_unpersisted', 'mcp_audit_gap', 'gaps_overflow',
+  'recording_mode_required', 'recording_mode_best_effort',
+  'stop_observed_confirmed', 'stop_observed_unconfirmed', 'stop_observation_unknown',
+  'recording_session_not_stopped', 'recording_recovery_scan_limit',
+  'recording_artifact_corrupt', 'recording_artifact_untrusted', 'recording_artifact_missing',
+  'recording_artifact_verification_failed', 'recording_artifact_index_missing',
+  'recording_artifact_pending', 'recording_artifact_failed', 'recording_artifact_read_limit',
+  'recording_artifact_body_invalid', 'recording_message_identity_mismatch', 'recording_sequence_gap',
+  'recording_watermark_unverified', 'recording_watermark_artifact_unverified',
+  'recording_manifest_identity_mismatch', 'recording_manifest_version_unknown',
+  'recording_manifest_unpublished', 'recording_manifest_incomplete', 'recording_manifest_watermark_ahead',
+  'recording_manifest_watermark_mismatch', 'recording_native_cannot_fill_live_gap',
+  'recording_resume_unsupported', 'manifest_version_gap',
+  ...[
+    'validation', 'session_mismatch', 'stale_execution_identity', 'event_stream_failed',
+    'event_publish_failed', 'event_queue_backpressure', 'event_write_timeout', 'event_storage_exhausted',
+    'event_file_write_failed', 'manifest_publish_failed', 'manifest_write_timeout',
+    'manifest_storage_exhausted', 'manifest_file_write_failed', 'watermark_progress_failed',
+    'recording_scope_incomplete', 'total_event_limit_exceeded', 'total_bytes_limit_exceeded',
+    'recording_deadline_exceeded', 'aborted',
+  ].map(reason => `recording_failed:${reason}`),
 ]);
 const PUBLIC_DETAIL_PREFIXES = new Set([
   'missing_sequences', 'event_body_too_large', 'event_identity_conflict', 'late_event_beyond_window',
   'late_event', 'sequence_identity_conflict', 'invalid_event', 'result_invalid', 'final_sequence_mismatch',
   'unknown_events', 'unknown_event', 'foreign_events', 'recording_failed', 'recovery',
 ]);
+export function isPublicWorkRecordingDetailCode(value: unknown): value is string {
+  return typeof value === 'string' && (PUBLIC_DETAIL_CODES.has(value) || PUBLIC_DETAIL_PREFIXES.has(value));
+}
 const codes = (values: readonly string[]) => values.map(value => {
   if (PUBLIC_DETAIL_CODES.has(value)) return value;
   const prefix = value.split(':', 1)[0];

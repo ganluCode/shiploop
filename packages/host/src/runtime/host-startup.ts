@@ -91,6 +91,7 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 const ALLOWED_OPTION_KEYS = [
   'workToolAuthority',
   'workRuntimeFactory',
+  'workRecordingMode',
   'batchDeliveryFactory',
   'featureDeliveryFactory',
   'integrationPlanFactory',
@@ -117,6 +118,8 @@ export interface HostStartOptions {
   readonly workToolAuthority?: Pick<WorkToolChannelDeps, 'currentBinding' | 'candidateContext'>;
   /** Trusted code injection only; not accepted from CLI, environment or discovery. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  /** Explicit trusted recording policy; omitted means required. Not a request/env/CLI option. */
+  readonly workRecordingMode?: CoreApplicationOptions['workRecordingMode'];
   /** Static trusted adapters only; never read from argv, env or request fields. */
   readonly batchDeliveryFactory?: BatchDeliveryFactory;
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
@@ -217,6 +220,9 @@ function validateStartOptions(options: HostStartOptions): void {
     if (!(ALLOWED_OPTION_KEYS as readonly string[]).includes(key)) {
       throw invalidInput('unknown_option_key', { field: key });
     }
+  }
+  if (options.workRecordingMode !== undefined && options.workRecordingMode !== 'required' && options.workRecordingMode !== 'best_effort') {
+    throw invalidInput('required_or_best_effort', { field: 'workRecordingMode' });
   }
   if (options.workToolAuthority !== undefined && (options.workToolAuthority === null
     || typeof options.workToolAuthority.currentBinding !== 'function' || typeof options.workToolAuthority.candidateContext !== 'function')) {
@@ -389,6 +395,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
       ...(options.projectResourceSources === undefined ? {} : { projectResourceSources: options.projectResourceSources }),
       workRuntimeFactory: options.workRuntimeFactory,
+      workRecordingMode: options.workRecordingMode,
       batchDeliveryFactory: options.batchDeliveryFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
       integrationPlanFactory: options.integrationPlanFactory,

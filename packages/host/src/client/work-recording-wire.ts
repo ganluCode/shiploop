@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import {
   WIRE_MESSAGE_SCHEMA_VERSION,
+  isPublicWorkRecordingDetailCode,
   WORK_RECORDING_COVERAGES,
   WORK_RECORDING_MESSAGE_KINDS,
   WORK_RECORDING_MESSAGE_ROLES,
@@ -25,7 +26,7 @@ import type { WorkRecordingBody, WorkRecordingPage } from 'shiploop-core/protoco
 import { HostProtocolError, isPlainObject, MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES, type HostOperation } from '../contract/index.js';
 
 type Check = (value: unknown) => boolean;
-const text: Check = v => typeof v === 'string' && v.length > 0;
+const text: Check = isPublicWorkRecordingDetailCode;
 const id: Check = v => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(v);
 const natural: Check = v => typeof v === 'number' && Number.isSafeInteger(v) && Number(v) >= 0;
 const positive: Check = v => natural(v) && Number(v) > 0;
