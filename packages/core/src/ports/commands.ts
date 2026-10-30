@@ -24,6 +24,7 @@
  *   提权字段按未知键拒绝，永不成为可信身份来源。
  */
 import { validatePhaseMutationPayload } from './phase-lifecycle.js';
+import { DATA_LIFECYCLE_OPERATIONS, validateDataLifecycleCommandPayload, type DataLifecycleOperation } from './data-lifecycle.js';
 import { validateFeaturePhaseMovePayload } from './feature-phase.js';
 import { validateFeatureDagUpdatePayload } from './feature-dag-update.js';
 import type { FeatureDagUpdatePayload } from './feature-dag-update.js';
@@ -122,6 +123,10 @@ export const APP_CAPABILITIES = [
   // P03-5 / F-010：人工丢弃受管工作区能力位（独立预览+确认操作；预览与确认
   // 共用该能力位，授权与 F-008/F-009 自动清理授权互不通用）。
   'workspace.discard',
+  // P07-3：数据备份、恢复及项目生命周期管理能力；Work 使用独立白名单。
+  'data.backup',
+  'data.restore',
+  'project.lifecycle.write',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -265,6 +270,8 @@ export const COMMAND_OPERATIONS = [
   'workspace.discard.preview',
   // P06-3 / F-005：项目资源只允许经专用命令边界进行 CAS 变更；不复用 settings 写入。
   ...PROJECT_RESOURCE_COMMAND_OPERATIONS,
+  // P07-3：备份/恢复与项目生命周期命令；整库操作仅限 local-owner。
+  ...DATA_LIFECYCLE_OPERATIONS,
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -464,6 +471,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'project.resource.enable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
     'project.resource.disable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
     'project.resource.revoke': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    // P07-3：整库操作只限 local-owner，项目操作需管理能力及可见性。
+    'data.backup.create': { scopeKind: 'global', mutation: 'create', capability: 'data.backup' },
+    'data.backup.verify': { scopeKind: 'global', mutation: 'create', capability: 'data.backup' },
+    'data.backup.restore': { scopeKind: 'global', mutation: 'create', capability: 'data.restore' },
+    'project.archive': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
+    'project.restore': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
+    'project.delete.preview': { scopeKind: 'project', mutation: 'create', capability: 'project.lifecycle.write' },
+    'project.delete.confirm': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -583,6 +598,17 @@ export class PublicError extends Error {
     }
     return shape;
   }
+}
+
+/** P07-3 public lifecycle errors expose only a stable reason, never host paths or credentials. */
+export function createDataLifecycleError(
+  code: 'invalid_input' | 'conflict' | 'forbidden' | 'not_found' | 'resource_busy' | 'corrupt_state',
+  operation: string,
+  reason: string,
+  _internalDetails?: Readonly<Record<string, unknown>>,
+): PublicError {
+  const safeReason = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(reason) ? reason : 'invalid_reason';
+  return new PublicError(code, operation, undefined, { details: { reason: safeReason } });
 }
 
 export function isPublicError(value: unknown): value is PublicError;
@@ -1282,6 +1308,14 @@ export type ValidatedCommandEnvelope =
       readonly operation: 'workspace.discard.preview';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
+      readonly payload: Readonly<Record<string, unknown>>;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: DataLifecycleOperation;
+      readonly scope:
+        | { readonly kind: 'global' }
+        | { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number | null;
       readonly payload: Readonly<Record<string, unknown>>;
     })
   | (EnvelopeCommon & {
@@ -2607,6 +2641,28 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: normalizeBaselinePayload(object.payload) as Record<string, unknown>,
     };
+  }
+  if ((DATA_LIFECYCLE_OPERATIONS as readonly string[]).includes(operation)) {
+    const lifecycleOperation = operation as DataLifecycleOperation;
+    const isGlobal = lifecycleOperation.startsWith('data.');
+    if (isGlobal && scope.kind !== 'global') fail(operation, 'invalid_input', 'scope.kind', '数据管理命令必须使用 global scope');
+    if (!isGlobal && scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', '项目生命周期命令必须使用 project scope');
+    let payload: Readonly<Record<string, unknown>>;
+    try {
+      payload = validateDataLifecycleCommandPayload(lifecycleOperation, object.payload);
+    } catch (error) {
+      throw mapToPublicError(error, { operation });
+    }
+    if (scope.kind === 'project' && payload.projectId !== scope.projectId) {
+      fail(operation, 'invalid_input', 'payload.projectId', '必须与项目 scope 一致');
+    }
+    return {
+      ...base,
+      operation: lifecycleOperation,
+      scope,
+      expectedRevision,
+      payload,
+    } as ValidatedCommandEnvelope;
   }
   if (operation === 'project.resource.import' || operation === 'project.resource.enable'
     || operation === 'project.resource.disable' || operation === 'project.resource.revoke') {

@@ -357,6 +357,12 @@ export function authorizeCommand(
   envelope: ValidatedCommandEnvelope,
 ): void {
   assertTrustedPrincipal(principal);
+  if ((envelope.operation === 'data.backup.create' || envelope.operation === 'data.backup.verify'
+    || envelope.operation === 'data.backup.restore') && principal.principalId !== LOCAL_OWNER_PRINCIPAL_ID) {
+    throw new PublicError('forbidden', envelope.operation, undefined, {
+      details: { reason: 'local_owner_required' },
+    });
+  }
   const spec = COMMAND_OPERATION_SPECS[envelope.operation];
   requireCapability(principal, spec.capability, envelope.operation);
   if (envelope.scope.kind === 'project') {

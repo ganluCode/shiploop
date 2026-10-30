@@ -30,6 +30,8 @@ export type StorageEntityType =
   /** P06-3：项目获准资源配置。 */
   | 'project_resource'
   | 'artifact'
+  /** P07-3：版本化备份包及其恢复清单。 */
+  | 'backup'
   | 'migration'
   /** P02-2 / F-006：幂等命令回执（command_receipts，迁移 v3）。 */
   | 'command_receipt'
