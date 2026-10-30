@@ -28,6 +28,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  CURRENT_SCHEMA_VERSION,
   HostProtocolError,
   acquireWriterLock,
   computeStopRequestDigest,
@@ -552,7 +553,7 @@ describe('F-008 客户端断开与 SIGTERM 安全收尾', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 5,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
           protocolVersion: 1,
           hostInstanceId: host.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,
