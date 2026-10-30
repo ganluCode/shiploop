@@ -620,15 +620,31 @@ function messageStopReason(message: unknown): string | undefined {
 }
 
 class EventChannel implements AsyncIterable<unknown> {
-  private readonly pending: unknown[] = [];
+  private readonly pending: Array<{ value: unknown; bytes: number }> = [];
   private readonly waiters: Array<(result: IteratorResult<unknown>) => void> = [];
+  private bufferedBytes = 0;
   private done = false;
+  private abandoned = false;
 
-  push(value: unknown): void {
-    if (this.done) return;
+  constructor(
+    private readonly maxEvents: number,
+    private readonly maxBytes: number,
+    private readonly onAbandon: () => void,
+  ) {}
+
+  push(value: unknown): boolean {
+    if (this.done) return false;
+    const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
+    if (bytes > this.maxBytes) return false;
     const waiter = this.waiters.shift();
-    if (waiter !== undefined) waiter({ done: false, value });
-    else this.pending.push(value);
+    if (waiter !== undefined) {
+      waiter({ done: false, value });
+      return true;
+    }
+    if (this.pending.length >= this.maxEvents || this.bufferedBytes + bytes > this.maxBytes) return false;
+    this.pending.push({ value, bytes });
+    this.bufferedBytes += bytes;
+    return true;
   }
 
   close(): void {
@@ -639,10 +655,21 @@ class EventChannel implements AsyncIterable<unknown> {
   [Symbol.asyncIterator](): AsyncIterator<unknown> {
     return {
       next: async (): Promise<IteratorResult<unknown>> => {
-        const value = this.pending.shift();
-        if (value !== undefined) return { done: false, value };
+        const item = this.pending.shift();
+        if (item !== undefined) {
+          this.bufferedBytes -= item.bytes;
+          return { done: false, value: item.value };
+        }
         if (this.done) return { done: true, value: undefined };
         return new Promise((resolve) => this.waiters.push(resolve));
+      },
+      return: async (): Promise<IteratorResult<unknown>> => {
+        if (!this.abandoned) {
+          this.abandoned = true;
+          this.onAbandon();
+        }
+        this.close();
+        return { done: true, value: undefined };
       },
     };
   }
@@ -766,8 +793,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           nativeSdkMessageUsage = sdk.VERSION === PI_SDK_VERSION && sdk.VERSION === '1.0.4' && session instanceof sdk.AgentSession;
         } catch { /* Unknown/custom sessions retain unknown accounting. */ }
       }
-      const events = new EventChannel();
+      let events!: EventChannel;
       let sequence = 0;
+      let acceptedSequence: number | null = null;
+      let eventBufferOverflow = false;
       let lastUsage: RuntimeUsageReport | null = null;
       let terminal: 'completed' | 'failed' | 'cancelled' | 'timed_out' = 'completed';
       let terminalReason: string | null = null;
@@ -797,6 +826,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         });
         return cancelPromise;
       };
+      events = new EventChannel(64, 64 * 1024, () => { void cancel(); });
       requestMcpStop = () => { void cancel(); };
       let messageOrdinal = 0;
       let identityGapReported = false;
@@ -812,12 +842,20 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const startedAt = Date.now();
       const publish = (kind: RuntimeEvent['kind'], payload: RuntimeEvent['payload']): RuntimeEvent => {
         sequence += 1;
-        if (kind === 'usage') {
-          lastUsage = (payload as Extract<RuntimeEvent['payload'], { readonly kind: 'usage' }>).usage;
-        }
         const emitted = runtimeEvent(request, sequence, kind, payload);
         if (kind === 'diagnostic' && diagnosticRefs.length < 32) diagnosticRefs.push(emitted.eventId);
-        events.push(emitted);
+        const accepted = events.push(emitted);
+        if (!accepted && !eventBufferOverflow) {
+          eventBufferOverflow = true;
+          terminal = 'failed';
+          terminalReason = 'event_queue_backpressure';
+          void cancel();
+        } else if (accepted && !eventBufferOverflow) {
+          acceptedSequence = emitted.sequence;
+          if (kind === 'usage') {
+            lastUsage = (payload as Extract<RuntimeEvent['payload'], { readonly kind: 'usage' }>).usage;
+          }
+        }
         return emitted;
       };
       const objectId = (value: unknown): string | undefined => {
@@ -1029,8 +1067,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           if (observed === 'stop_timeout') diagnostic('sdk_stop_timeout', 'SDK idle was not confirmed before the stop deadline');
           if (cancelRequested) {
             await cancelPromise;
-            terminal = stopReason === 'timed_out' ? 'timed_out' : 'cancelled';
-            terminalReason = stopReason;
+            if (!eventBufferOverflow) {
+              terminal = stopReason === 'timed_out' ? 'timed_out' : 'cancelled';
+              terminalReason = stopReason;
+            }
           } else if (!terminalObserved) {
             terminal = 'failed';
             terminalReason = 'missing_terminal';
@@ -1039,8 +1079,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         } catch (error) {
           if (cancelRequested) {
             await cancelPromise;
-            terminal = stopReason === 'timed_out' ? 'timed_out' : 'cancelled';
-            terminalReason = stopReason;
+            if (!eventBufferOverflow) {
+              terminal = stopReason === 'timed_out' ? 'timed_out' : 'cancelled';
+              terminalReason = stopReason;
+            }
           } else {
             const failure = classifyPiFailure(error, 'model_error');
             terminal = 'failed';
@@ -1081,7 +1123,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           signal: null,
           durationMs: Date.now() - startedAt,
           usage: lastUsage,
-          lastEventSequence: sequence === 0 ? null : sequence,
+          lastEventSequence: acceptedSequence,
           providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),
           diagnosticRefs,
         };

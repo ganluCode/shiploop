@@ -157,13 +157,16 @@ export class PiRunnerEventChannel implements AsyncIterable<RuntimeEvent> {
   constructor(onAbandon: () => void) { this.onAbandon = onAbandon; }
   push(event: RuntimeEvent): boolean {
     if (this.closed) return false;
+    const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
+    // A waiting consumer is still handed one bounded event. It must not bypass
+    // the byte ceiling merely because it is not stored in the queue array.
+    if (bytes > PI_RUNNER_BUFFER_BYTES) return false;
     if (this.waiter) {
       const wake = this.waiter;
       this.waiter = undefined;
       wake({ value: event, done: false });
       return true;
     }
-    const bytes = Buffer.byteLength(JSON.stringify(event));
     if (this.queue.length >= PI_RUNNER_BUFFER_EVENTS || this.bufferedBytes + bytes > PI_RUNNER_BUFFER_BYTES) return false;
     this.queue.push({ event, bytes });
     this.bufferedBytes += bytes;

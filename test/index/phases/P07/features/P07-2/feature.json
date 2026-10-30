@@ -5,6 +5,7 @@
   "feature": "P07-2",
   "scope": "P07-2 Recorder/Runner bounded recording policy, effective limits and structured failure contracts",
   "tasks": [
-    { "task_id": "F-001", "index": "test/index/phases/P07/features/P07-2/tasks/F-001.json" }
+    { "task_id": "F-001", "index": "test/index/phases/P07/features/P07-2/tasks/F-001.json" },
+    { "task_id": "F-002", "index": "test/index/phases/P07/features/P07-2/tasks/F-002.json" }
   ]
 }

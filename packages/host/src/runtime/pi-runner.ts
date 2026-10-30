@@ -58,11 +58,16 @@ async function executeStarted(request: RuntimeExecutionRequest, options: PiWorkR
   let writes = Promise.resolve();
   const publish = (body: PiRunnerBody): Promise<void> => {
     // Serialize control receipts with data frames, including under backpressure.
+    // A sink that never drains is a protocol failure, not permission to retain
+    // an unbounded chain of pending writes.
     const write = writes.then(async () => {
       const bytes = encodePiRunnerMessage(piRunnerMessage(request, ++sequence, body));
       outputBytes += bytes.byteLength;
       if (outputBytes > request.limits.maxOutputBytes) throw runnerProtocolError('runner_output_overflow');
-      await options.write(bytes);
+      const observed = await observePiWithin(Promise.resolve().then(() => options.write(bytes)), PI_STOP_WAIT_MS);
+      if (observed.status !== 'fulfilled') {
+        throw runnerProtocolError(observed.status === 'timeout' ? 'runner_write_timeout' : 'runner_write_failed');
+      }
     });
     writes = write;
     return write;
@@ -109,7 +114,7 @@ async function executeStarted(request: RuntimeExecutionRequest, options: PiWorkR
   } catch (error) {
     // Do not print arbitrary SDK exceptions or raw input. Host retains typed protocol/process evidence.
     cancel();
-    await cancelPromise?.catch(() => {});
+    if (cancelPromise) await observePiWithin(cancelPromise.catch(() => {}), PI_ABORT_WAIT_MS + PI_STOP_WAIT_MS);
     await observePiWithin(stopped, PI_STOP_WAIT_MS);
     if (error instanceof RuntimeError) throw error;
     throw new RuntimeError('process', 'runner_channel_failed');

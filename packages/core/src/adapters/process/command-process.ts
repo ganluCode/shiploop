@@ -284,8 +284,12 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
       };
       const capture = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
         if (finished) return;
-        const remaining = Math.min(chunk.length, request.maxOutputBytes - outputBytes);
-        const keep = state === 'stopping' && buffered >= BUFFER_LIMIT ? 0 : remaining;
+        const remaining = Math.max(0, request.maxOutputBytes - outputBytes);
+        const available = Math.max(0, BUFFER_LIMIT - buffered);
+        // A data callback may contain more than the queue budget. Retain only
+        // the bounded prefix; while running, turn the unrepresentable remainder
+        // into a controlled overflow instead of keeping a second hidden buffer.
+        const keep = Math.min(chunk.length, remaining, available);
         droppedOutputBytes += chunk.length - keep;
         if (keep > 0) {
           queue.push({ stream, bytes: new Uint8Array(chunk.subarray(0, keep)) });
@@ -293,7 +297,7 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
           outputBytes += keep;
           wake();
         }
-        if (chunk.length > remaining) stop('output_overflow');
+        if (chunk.length > remaining || (state === 'running' && chunk.length > available)) stop('output_overflow');
         if (state === 'running' && buffered >= BUFFER_LIMIT) streams.forEach((s) => s.pause());
       };
       child.stdout!.on('data', (chunk: Buffer) => capture('stdout', chunk));

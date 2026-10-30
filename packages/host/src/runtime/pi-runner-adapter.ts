@@ -99,6 +99,7 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
   resourceProof: PiRunnerAdapterOptions['resourceStop']): PiRunnerHandle {
   let failure: PiRunnerSnapshot['failure'] = null;
   let lastMessageSequence = 0, lastEventSequence: number | null = null;
+  let observedEventSequence: number | null = null;
   let usage: RuntimeUsageReport | null = null;
   let candidate: RuntimeExecutionResult | null = null;
   let recoveryObserved = false;
@@ -143,7 +144,6 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
       for await (const output of process.output) {
         outputBytes += output.bytes.byteLength;
         if (outputBytes > request.limits.maxOutputBytes) fail('protocol', 'runner_output_overflow');
-        if (failure || settled) continue; // Keep draining supervised pipes after a controlled failure or settlement.
         if (output.stream === 'stderr') {
           // Never retain arbitrary SDK stderr: it can contain prompt text, paths or secrets.
           diagnose('runner_stderr_omitted');
@@ -152,6 +152,32 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
         for (const value of decoder.push(output.bytes)) {
           const message = validatePiRunnerMessage(value, request, lastMessageSequence);
           lastMessageSequence = message.sequence;
+          // Once the first failure is fixed, keep decoding only the bounded control
+          // tail. This observes cancel/result/stop receipts without admitting more
+          // events or replacing the first structured failure.
+          if (failure || settled) {
+            switch (message.kind) {
+              case 'recovery':
+                if (!recoveryObserved) { recoveryObserved = true; resolveRecovery(message.body); }
+                break;
+              case 'result':
+                if (!candidate) {
+                  candidate = message.body;
+                  if (candidate.usage !== null) usage = candidate.usage;
+                }
+                break;
+              case 'stopped':
+                if (!runnerStop) runnerStop = message.body;
+                break;
+              case 'cancel_receipt':
+                if (!cancelReceipt) { cancelReceipt = message.body; resolveReceipt(message.body); }
+                break;
+              case 'event':
+              case 'diagnostic':
+                break;
+            }
+            continue;
+          }
           switch (message.kind) {
             case 'recovery':
               if (recoveryObserved || lastEventSequence !== null || candidate !== null) throw new RuntimeError('protocol', 'runner_recovery_order');
@@ -162,11 +188,20 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
               break;
             case 'event': {
               if (candidate) throw new RuntimeError('protocol', 'runner_event_after_result');
-              if (message.body.sequence !== (lastEventSequence ?? 0) + 1) throw new RuntimeError('protocol', 'runner_event_sequence');
-              if (++eventCount > request.limits.maxEvents) throw new RuntimeError('protocol', 'runner_event_overflow');
-              lastEventSequence = message.body.sequence;
+              if (message.body.sequence !== (observedEventSequence ?? 0) + 1) throw new RuntimeError('protocol', 'runner_event_sequence');
+              observedEventSequence = message.body.sequence;
+              if (++eventCount > request.limits.maxEvents) {
+                fail('protocol', 'runner_event_overflow');
+                break;
+              }
               if (message.body.payload.kind === 'usage') usage = message.body.payload.usage;
-              if (!channel.push(wireEvent(message.body))) throw new RuntimeError('protocol', 'runner_buffer_overflow');
+              if (!channel.push(wireEvent(message.body))) {
+                // Keep the last watermark at the last event accepted by the
+                // Recorder. The overflowing event belongs to the explicit gap.
+                fail('protocol', 'runner_buffer_overflow');
+                break;
+              }
+              lastEventSequence = message.body.sequence;
               break;
             }
             case 'result':
