@@ -313,6 +313,13 @@ export function createSqliteCommandReceiptAccess(
     }
   }
 
+  function findMinimalReceipt(column: 'command_id' | 'result_ref', value: string, principalId?: string): CommandReceipt | undefined {
+    if (!session.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_delete_receipts'").get()) return undefined;
+    const row = session.database.prepare(`SELECT receipt_json FROM project_delete_receipts WHERE ${column} = ?${principalId === undefined ? '' : ' AND principal_id = ?'}`)
+      .get(...(principalId === undefined ? [value] : [value, principalId])) as { receipt_json: string } | undefined;
+    return row === undefined ? undefined : validatePersistableCommandReceipt(parseJsonColumn(row.receipt_json, RECEIPT_READ_OPERATION, 'invalid_minimal_receipt'), RECEIPT_READ_OPERATION);
+  }
+
   function findReceiptByCommandId(
     principalId: unknown,
     commandId: unknown,
@@ -331,7 +338,7 @@ export function createSqliteCommandReceiptAccess(
         `SELECT ${SELECT_COLUMNS} FROM command_receipts WHERE principal_id = ? AND command_id = ?`,
       )
       .get(principalId, commandId) as CommandReceiptSqlRow | undefined;
-    return mapRow(row, operation);
+    return mapRow(row, operation) ?? findMinimalReceipt('command_id', commandId, principalId);
   }
 
   const store: CommandReceiptStore = {
@@ -356,7 +363,7 @@ export function createSqliteCommandReceiptAccess(
           `SELECT ${SELECT_COLUMNS} FROM command_receipts WHERE result_ref = ?`,
         )
         .get(resultRef) as CommandReceiptSqlRow | undefined;
-      return mapRow(row, operation);
+      return mapRow(row, operation) ?? findMinimalReceipt('result_ref', resultRef);
     },
   };
   return { store, saveReceiptInTransaction, findReceiptByCommandId };

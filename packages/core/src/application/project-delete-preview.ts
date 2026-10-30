@@ -55,6 +55,7 @@ function parseModifiedTrackedPaths(statusPorcelainBase64: string): string[] {
 
 export interface ProjectDeletePreviewService {
   preview(raw: unknown): Promise<ProjectDeletePreviewPage>;
+  captureForConfirmation(raw: unknown, expiresAtUtcMs: number): Promise<{ page: ProjectDeletePreviewPage; inventory: ProjectDeleteInventory }>;
 }
 
 export function createProjectDeletePreviewService(options: {
@@ -139,7 +140,7 @@ export function createProjectDeletePreviewService(options: {
   return Object.freeze({
     async preview(raw: unknown): Promise<ProjectDeletePreviewPage> {
       try {
-        return await previewInternal(raw);
+        return (await previewInternal(raw)).page;
       } catch (error) {
         // 入参校验（游标结构等）折算为公开 invalid_input；其余错误原样上抛。
         if (isStorageError(error) && (error as StorageError).kind === 'validation') {
@@ -150,9 +151,10 @@ export function createProjectDeletePreviewService(options: {
         throw error;
       }
     },
+    captureForConfirmation: (raw: unknown, expiresAtUtcMs: number) => previewInternal(raw, expiresAtUtcMs),
   });
 
-  async function previewInternal(raw: unknown): Promise<ProjectDeletePreviewPage> {
+  async function previewInternal(raw: unknown, confirmationExpiry?: number): Promise<{ page: ProjectDeletePreviewPage; inventory: ProjectDeleteInventory }> {
     const input = validateProjectDeletePreviewInput(raw);
       const observedAtUtcMs = now();
       let inventory: ProjectDeleteInventory;
@@ -190,7 +192,7 @@ export function createProjectDeletePreviewService(options: {
       let cursor: ProjectDeletePreviewCursor | undefined;
       let expiresAtUtcMs: number;
       if (input.cursor === undefined) {
-        expiresAtUtcMs = observedAtUtcMs + ttlMs;
+        expiresAtUtcMs = confirmationExpiry ?? observedAtUtcMs + ttlMs;
       } else {
         cursor = decodeProjectDeletePreviewCursor(input.cursor);
         expiresAtUtcMs = cursor.expiresAtUtcMs;
@@ -251,7 +253,7 @@ export function createProjectDeletePreviewService(options: {
         summary,
         expiresAtUtcMs,
       }, observedAtUtcMs);
-      return {
+      return { inventory: inventoried, page: {
         schemaVersion: 1 as const,
         projectId: inventoried.projectId,
         projectRevision: inventoried.projectRevision,
@@ -267,6 +269,6 @@ export function createProjectDeletePreviewService(options: {
         inventoryReasons: [...inventoried.reasons],
         blockers: verdict.blockers,
         confirmable: verdict.confirmable,
-      };
+      } };
   }
 }

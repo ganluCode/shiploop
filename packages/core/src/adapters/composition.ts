@@ -227,6 +227,9 @@ import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createSqliteProjectLifecycleAccess } from './sqlite/project-lifecycle.js';
 import { createSqliteProjectDeleteInventory } from './sqlite/project-delete-inventory.js';
 import { createProjectDeletePreviewService } from '../application/project-delete-preview.js';
+import type { ProjectDeleteStore } from '../ports/project-delete.js';
+import { createProjectDeleteCommandHandler } from '../application/project-delete.js';
+import { createSqliteProjectDeleteStore } from './sqlite/project-delete.js';
 import { createSqliteMaintenanceWriteGate } from './sqlite/data-maintenance.js';
 import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
@@ -360,6 +363,8 @@ export interface CoreApplication {
   readonly commandReceiptStore: CommandReceiptStore;
   /** P07-3 / F-008：项目软归档/显式恢复命令句柄与收尾只读快照。 */
   readonly projectLifecycle: ProjectLifecycleHandler;
+  /** P07-3 / F-010：可信内部删除执行/续核端口，不直接暴露给客户端。 */
+  readonly projectDeleteStore: ProjectDeleteStore;
   /** P07-3 / F-009：项目删除只读预览服务（命令面 project.delete.preview 同一能力）。 */
   readonly projectDeletePreview: ProjectDeletePreviewService;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
@@ -1367,7 +1372,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       inspectorFor: async projectId => workspaceInspectorForCall(projectId),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
+    const projectDeleteStore = createSqliteProjectDeleteStore(session, { nowUtcMs, maintenanceGate });
+    const projectDelete = createProjectDeleteCommandHandler({ store: projectDeleteStore, preview: projectDeletePreview, nowUtcMs });
     const commandService = createCommandService({
+      projectDelete,
       maintenanceGate,
       atomicStore,
       projectLifecycle,
@@ -1582,6 +1590,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptsService,
       commandService,
       projectLifecycle,
+      projectDeleteStore,
       projectDeletePreview,
       integrationPlanGeneration,
       integrationPlanControl,

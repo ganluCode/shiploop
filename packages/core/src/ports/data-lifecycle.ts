@@ -559,9 +559,15 @@ export function validateDataLifecycleCommandPayload(operation: DataLifecycleOper
     return result;
   }
   if (operation === 'project.delete.confirm') {
-    exact(item, ['projectId', 'previewDigest', 'confirmed'], operation, 'payload');
+    exact(item, ['projectId', 'previewDigest', 'confirmed', 'expiresAtUtcMs', 'cursor'], operation, 'payload');
     if (item.confirmed !== true) throw validationError(context(operation, { type: 'project' }), 'payload.confirmed', '必须明确为 true');
-    return { projectId: validateStableId(item.projectId, context(operation, { type: 'project' }), 'payload.projectId'), previewDigest: digest(item.previewDigest, operation, 'payload.previewDigest', { type: 'project' }), confirmed: true };
+    const expiresAtUtcMs = nonNegativeInteger(item.expiresAtUtcMs, operation, 'payload.expiresAtUtcMs');
+    if (expiresAtUtcMs < 1) throw validationError(context(operation), 'payload.expiresAtUtcMs', '必须是正整数');
+    if (item.cursor !== undefined && (typeof item.cursor !== 'string' || item.cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(item.cursor))) {
+      throw validationError(context(operation), 'payload.cursor', '必须是有效的分页游标');
+    }
+    return { projectId: validateStableId(item.projectId, context(operation, { type: 'project' }), 'payload.projectId'), previewDigest: digest(item.previewDigest, operation, 'payload.previewDigest', { type: 'project' }), confirmed: true,
+      expiresAtUtcMs, ...(item.cursor === undefined ? {} : { cursor: item.cursor }) };
   }
   exact(item, ['projectId'], operation, 'payload');
   return { projectId: validateStableId(item.projectId, context(operation, { type: 'project' }), 'payload.projectId') };

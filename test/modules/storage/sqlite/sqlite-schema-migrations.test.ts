@@ -122,6 +122,9 @@ const SCHEMA_TABLES = [
   ['phase_delivery_approvals', schema.phaseDeliveryApprovals],
   // P07-3 / F-002：Core/Host 共享维护占用 fencing（迁移 v55）。
   ['maintenance_occupancy', schema.maintenanceOccupancy],
+  ['project_delete_operations', schema.projectDeleteOperations],
+  ['project_delete_steps', schema.projectDeleteSteps],
+  ['project_delete_receipts', schema.projectDeleteReceipts],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -554,6 +557,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
       // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键
       // 与 P02-3 / F-007 基线四表的同项目复合外键/制品引用外键。
       const expectedFks = new Set([
+        'project_delete_steps:(operation_id)->project_delete_operations.(id)',
         'verification_processes:(batch_id)->verification_batches.(id)',
         'projects:(repository_binding_id)->repository_bindings.(id)',
         'projects:(id,repository_binding_id)->repository_bindings.(project_id,id)',

@@ -2913,3 +2913,54 @@ export const maintenanceOccupancy = sqliteTable('maintenance_occupancy', {
     OR (${table.state} = 'blocked' AND ${table.operation} IS NOT NULL AND ${table.operationId} IS NOT NULL AND ${table.ownerId} IS NOT NULL AND ${table.hostInstanceId} IS NOT NULL AND ${table.blockedReason} IS NOT NULL)
   )`),
 ]);
+
+/** P07-3 / F-010: retained identities deliberately have no project FK. */
+export const projectDeleteOperations = sqliteTable('project_delete_operations', {
+  id: text('id').primaryKey().notNull(),
+  targetProjectId: text('target_project_id').notNull().unique(),
+  principalId: text('principal_id').notNull(),
+  commandId: text('command_id').notNull(),
+  requestDigest: text('request_digest').notNull(),
+  status: text('status').notNull(),
+  ownerId: text('owner_id'),
+  fence: integer('fence').notNull().default(0),
+  manifestDigest: text('manifest_digest').notNull(),
+  manifestJson: text('manifest_json'),
+  failedStep: text('failed_step'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, table => [
+  uniqueIndex('project_delete_operations_principal_command_unique').on(table.principalId, table.commandId),
+  check('project_delete_operations_request_digest_check', sql`length(${table.requestDigest}) = 64`),
+  check('project_delete_operations_status_check', sql`${table.status} IN ('intent','running','failed','purging','completed')`),
+  check('project_delete_operations_fence_check', sql`typeof(${table.fence}) = 'integer' AND ${table.fence} >= 0`),
+  check('project_delete_operations_manifest_digest_check', sql`length(${table.manifestDigest}) = 64`),
+  check('project_delete_operations_manifest_json_check', sql`${table.manifestJson} IS NULL OR json_valid(${table.manifestJson})`),
+  check('project_delete_operations_failed_step_check', sql`${table.failedStep} IS NULL OR ${table.failedStep} IN ('artifact_bodies','artifact_staging','managed_worktrees','external_verification','database')`),
+  check('project_delete_operations_manifest_shape_check', sql`(${table.status} = 'completed' AND ${table.manifestJson} IS NULL AND ${table.failedStep} IS NULL) OR (${table.status} <> 'completed' AND ${table.manifestJson} IS NOT NULL)`),
+  check('project_delete_operations_owner_shape_check', sql`(${table.fence} = 0 AND ${table.ownerId} IS NULL AND ${table.status} = 'intent') OR (${table.fence} > 0 AND ${table.ownerId} IS NOT NULL)`),
+]);
+
+export const projectDeleteSteps = sqliteTable('project_delete_steps', {
+  operationId: text('operation_id').notNull().references(() => projectDeleteOperations.id, { onDelete: 'restrict' }),
+  step: text('step').notNull(),
+  status: text('status').notNull().default('pending'),
+  evidenceDigest: text('evidence_digest'),
+}, table => [
+  primaryKey({ columns: [table.operationId, table.step] }),
+  check('project_delete_steps_step_check', sql`${table.step} IN ('artifact_bodies','artifact_staging','managed_worktrees')`),
+  check('project_delete_steps_status_check', sql`${table.status} IN ('pending','completed','failed')`),
+  check('project_delete_steps_evidence_digest_check', sql`${table.evidenceDigest} IS NULL OR length(${table.evidenceDigest}) = 64`),
+  check('project_delete_steps_evidence_shape_check', sql`(${table.status} = 'pending' AND ${table.evidenceDigest} IS NULL) OR (${table.status} <> 'pending' AND ${table.evidenceDigest} IS NOT NULL)`),
+]);
+
+export const projectDeleteReceipts = sqliteTable('project_delete_receipts', {
+  principalId: text('principal_id').notNull(),
+  commandId: text('command_id').notNull(),
+  targetProjectId: text('target_project_id').notNull(),
+  resultRef: text('result_ref').unique(),
+  receiptJson: text('receipt_json').notNull(),
+}, table => [
+  primaryKey({ columns: [table.principalId, table.commandId] }),
+  check('project_delete_receipts_json_check', sql`json_valid(${table.receiptJson})`),
+]);

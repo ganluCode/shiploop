@@ -152,6 +152,8 @@ export interface ProjectDeleteRetainedFact {
 
 /** 只读清点结果（数据库一致读 + 受管文件区/正文现场事实）。 */
 export interface ProjectDeleteInventory {
+  /** Internal snapshot token; never included in public preview responses. */
+  readonly databaseDigest?: string;
   readonly projectId: string;
   readonly projectRevision: number;
   readonly projectStatus: ProjectStatus;
@@ -268,6 +270,7 @@ export function computeProjectDeletePreviewDigest(
 ): string {
   return hashStable({
     schemaVersion: PROJECT_DELETE_PREVIEW_SCHEMA_VERSION,
+    databaseDigest: inventory.databaseDigest ?? null,
     projectId: inventory.projectId,
     projectRevision: inventory.projectRevision,
     projectStatus: inventory.projectStatus,

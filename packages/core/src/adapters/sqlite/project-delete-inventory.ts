@@ -11,6 +11,7 @@
  * - 活动占用复用 F-008 readProjectArchiveCloseoutInDatabase 的同一口径；
  * - 本模块零写入、零进程副作用。
  */
+import { computeProjectDeleteDatabaseDigest, projectDeleteOwnershipPredicate } from './project-delete-snapshot.js';
 import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import type { Database } from 'better-sqlite3';
@@ -147,6 +148,7 @@ interface ArtifactRow {
 }
 
 interface DatabaseInventory {
+  readonly databaseDigest: string;
   readonly projectId: string;
   readonly projectRevision: number;
   readonly projectStatus: ProjectStatus;
@@ -171,7 +173,7 @@ function tableExists(db: Database, name: string): boolean {
 }
 
 function countProjectRows(db: Database, table: string, projectId: string): number {
-  const row = db.prepare<[string], { n: unknown }>(`SELECT COUNT(*) AS n FROM ${table} WHERE project_id = ?`).get(projectId);
+  const row = db.prepare<[string], { n: unknown }>(`SELECT COUNT(*) AS n FROM ${table} WHERE ${projectDeleteOwnershipPredicate(table)}${table === 'command_receipts' ? " AND operation <> 'project.delete.preview'" : ''}`).get(projectId);
   const value = row?.n;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new StorageError('corrupt', OPERATION, `表 ${table} 的项目行计数超出契约形态`, { details: { reason: 'invalid_object_count' } });
@@ -262,7 +264,7 @@ export function createSqliteProjectDeleteInventory(options: {
         let cursor: string | undefined;
         do {
           const page = db.prepare<[string, string, number], Row>(
-            `SELECT ${spec.cursorColumn} AS object_id FROM ${table} WHERE project_id = ? AND ${spec.cursorColumn} > ? ORDER BY ${spec.cursorColumn} LIMIT ?`,
+            `SELECT ${spec.cursorColumn} AS object_id FROM ${table} WHERE ${projectDeleteOwnershipPredicate(table)} AND ${spec.cursorColumn} > ?${table === 'command_receipts' ? " AND operation <> 'project.delete.preview'" : ''} ORDER BY ${spec.cursorColumn} LIMIT ?`,
           ).all(projectId, cursor ?? '', limits.pageSize) as Row[];
           for (const row of page) {
             const id = row.object_id;
@@ -380,6 +382,7 @@ export function createSqliteProjectDeleteInventory(options: {
         baseCommit: String(row.base_commit),
       }));
       return {
+        databaseDigest: computeProjectDeleteDatabaseDigest(db, projectId),
         projectId, projectRevision, projectStatus,
         objects: [...objects].sort((left, right) => (left.kind === right.kind ? (left.id < right.id ? -1 : 1) : (left.kind < right.kind ? -1 : 1))),
         totalObjects, artifactRows, artifactIds, repositoryBindings, workspaceRows, workspaceInspectionInputs,
@@ -535,6 +538,7 @@ export function createSqliteProjectDeleteInventory(options: {
         inspection: { unavailableReason: 'workspace_inspection_pending' },
       }));
       return {
+        databaseDigest: database.databaseDigest,
         projectId,
         projectRevision: database.projectRevision,
         projectStatus: database.projectStatus,

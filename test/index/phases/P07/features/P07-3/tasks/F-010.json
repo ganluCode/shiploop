@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/commands/p07-3-f010-project-delete.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f010-project-delete-schema.test.ts", "all": true },
+      { "file": "test/modules/commands/p07-3-f009-project-delete-preview.test.ts", "all": true },
+      { "file": "test/modules/commands/command-receipts-store.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts", "all": true },
+      { "file": "test/modules/storage/p07-3-f002-maintenance-gate.test.ts", "all": true },
+      { "file": "test/modules/storage/data-lifecycle-contract.test.ts", "all": true }
+    ]
+  }]
+}

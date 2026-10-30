@@ -112,6 +112,7 @@ import {
 import type {
   WorkspaceDiscardPreview,
 } from '../ports/workspace-discard.js';
+import type { ProjectDeleteCommandHandler } from '../ports/project-delete.js';
 import { PROJECT_DELETE_PREVIEW_OPERATION } from '../ports/project-delete-preview.js';
 import type { ProjectDeletePreviewPage } from '../ports/project-delete-preview.js';
 import type { ProjectDeletePreviewService } from './project-delete-preview.js';
@@ -258,6 +259,7 @@ export interface CommandServiceOptions {
    * unsupported，不冒充能力）。预览事务外只读清点，事务内仅持久化 completed
    * 回执（零业务状态/文件变更；与 workspace.discard.preview 同一纪律）。
    */
+  readonly projectDelete?: ProjectDeleteCommandHandler;
   readonly projectDeletePreview?: ProjectDeletePreviewService;
   /**
    * F-012：人工批准后的授权显式验证继续依赖（同库只读 Attempt/批次访问 +
@@ -769,6 +771,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             throw new PublicError('unsupported', operation);
           }
           return await delivery.submit(principal, envelope, digest);
+        }
+        if (envelope.operation === 'project.delete.confirm') {
+          if (!options.projectDelete) throw new PublicError('unsupported', operation);
+          return await options.projectDelete.submit(principal, envelope, computeCommandRequestDigest(envelope));
         }
         if (envelope.operation === 'project.archive' || envelope.operation === 'project.restore') {
           const digest = computeCommandRequestDigest(envelope);
