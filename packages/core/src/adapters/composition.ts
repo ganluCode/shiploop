@@ -50,6 +50,8 @@ import type { ConfigurationService } from '../application/configuration-service.
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
+import { createProjectLifecycleCommandHandler } from '../application/project-lifecycle.js';
+import type { ProjectLifecycleCommandHandler as ProjectLifecycleHandler } from '../ports/project-lifecycle.js';
 import { createExecutionStopControl } from '../application/execution-stop-control.js';
 import { createVerificationStopControl } from '../application/verification-stop-control.js';
 import type { VerificationStopControl } from '../ports/verification-stop.js';
@@ -221,6 +223,7 @@ import { openUpgradedSqliteStorage } from './sqlite/startup-upgrade.js';
 import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
+import { createSqliteProjectLifecycleAccess } from './sqlite/project-lifecycle.js';
 import { createSqliteMaintenanceWriteGate } from './sqlite/data-maintenance.js';
 import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
@@ -352,6 +355,8 @@ export interface CoreApplication {
   readonly maintenanceGate?: MaintenanceWriteGate;
   /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
   readonly commandReceiptStore: CommandReceiptStore;
+  /** P07-3 / F-008：项目软归档/显式恢复命令句柄与收尾只读快照。 */
+  readonly projectLifecycle: ProjectLifecycleHandler;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
   readonly commandService: CommandService;
   /**
@@ -1337,9 +1342,19 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       batches: integrationPlanFacts.batches,
       predecessors: integrationPlanFacts.predecessors,
     });
+    // P07-3 / F-008：项目软归档/显式恢复命令句柄（收尾只读快照来自同一 SQLite 会话；
+    // 等待预算默认值见端口常量，Host/CLI 可后续按需装配更小预算）。
+    const projectLifecycleCloseouts = createSqliteProjectLifecycleAccess(session);
+    const projectLifecycle = createProjectLifecycleCommandHandler({
+      atomicStore,
+      maintenanceGate,
+      readCloseout: projectLifecycleCloseouts.readProjectArchiveCloseout,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
     const commandService = createCommandService({
       maintenanceGate,
       atomicStore,
+      projectLifecycle,
       batchDelivery,
       featureDelivery,
       repositoryInspector,
@@ -1549,6 +1564,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptStore,
       commandReceiptsService,
       commandService,
+      projectLifecycle,
       integrationPlanGeneration,
       integrationPlanControl,
       gitAgentRepair,

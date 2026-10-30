@@ -64,6 +64,7 @@ import {
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from './state-store.js';
 import type { StateEventAggregateType } from './state-store.js';
+import { PROJECT_STATUS_CHANGED_EVENT_TYPE } from './project-lifecycle.js';
 import { ATTEMPT_EXECUTION_STAGES } from './attempt-store.js';
 import { WORKSPACE_EVENT_TYPE, WORKSPACE_OPERATION_STATUSES } from './workspace.js';
 import { GIT_OPERATION_TERMINAL_STATUSES } from './git-operations.js';
@@ -132,6 +133,7 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   PROJECT_REGISTERED_EVENT_TYPE,
   PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
+  PROJECT_STATUS_CHANGED_EVENT_TYPE,
   SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
   SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
@@ -212,6 +214,7 @@ type EventPayloadKind =
   | 'registered'
   | 'repositoryRebound'
   | 'changedFields'
+  | 'projectStatus'
   | 'settingsSummary'
   | 'baselineAuthorized'
   | 'baselineStarted'
@@ -329,6 +332,12 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'project',
     scopeKind: 'project',
     payloadKind: 'changedFields',
+  }),
+  // P07-3 / F-008：项目生命周期迁移事件（active→archiving→archived、archived→active）。
+  [PROJECT_STATUS_CHANGED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'projectStatus',
   }),
   [SETTINGS_GLOBAL_CREATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'global_settings',
@@ -670,6 +679,21 @@ function exactPayloadKeys(
       corrupt(operation, 'event_payload_violation');
     }
   }
+}
+
+/** P07-3 / F-008：project.status_changed payload 只含 from/to 两个状态枚举。 */
+const PROJECT_STATUS_EVENT_STATUSES = ['active', 'archiving', 'archived', 'deleting'] as const;
+
+function validateProjectStatusChangedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['from', 'to']);
+  if (!requireEventEnum(payload.from, PROJECT_STATUS_EVENT_STATUSES)
+    || !requireEventEnum(payload.to, PROJECT_STATUS_EVENT_STATUSES)) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { from: payload.from, to: payload.to };
 }
 
 function validateChangedFieldsPayload(
@@ -1210,6 +1234,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateGitOperationSettledPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'projectStatus') {
+    payload = validateProjectStatusChangedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {
     payload = validateBaselineAuthorizedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineStarted') {

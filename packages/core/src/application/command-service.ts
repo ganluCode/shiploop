@@ -133,6 +133,11 @@ import {
   submitTaskStrategyReapplication,
 } from './task-strategy-reapply.js';
 import type { ProjectProfileService } from './project-profile-service.js';
+import type { ProjectLifecycleCommandHandler } from '../ports/project-lifecycle.js';
+import {
+  isProjectArchiveEnvelope,
+  isProjectRestoreEnvelope,
+} from '../ports/project-lifecycle.js';
 import type { ProjectResourceService } from './project-resource-service.js';
 import type { ProjectResourceStore } from '../ports/project-resource-store.js';
 import type { ProjectResourceCandidate } from '../ports/project-resources.js';
@@ -258,6 +263,8 @@ export interface CommandServiceOptions {
     readonly service: ProjectResourceService;
     readonly store: ProjectResourceStore;
   };
+  /** P07-3 / F-008：项目软归档/显式恢复命令句柄（缺省时两命令 unsupported，不冒充能力）。 */
+  readonly projectLifecycle?: ProjectLifecycleCommandHandler;
   readonly nowUtcMs?: () => number;
 }
 
@@ -269,6 +276,8 @@ function maintenanceWriteKind(operation: string): MaintenanceWriteKind | null {
   if (operation.startsWith('settings.') || operation === 'project.metadata.update' || operation === 'project.register' || operation === 'project.repository.rebind') return 'configuration';
   if (operation === WORKSPACE_DISCARD_OPERATION || operation === WORKSPACE_DISCARD_PREVIEW_OPERATION) return 'cleanup';
   if (operation === 'project.resource.import' || operation === 'project.resource.enable' || operation === 'project.resource.disable' || operation === 'project.resource.revoke') return 'configuration';
+  // P07-3 / F-008：项目生命周期状态写入与项目元数据同一维护类别。
+  if (operation === 'project.archive' || operation === 'project.restore') return 'configuration';
   return null;
 }
 
@@ -351,6 +360,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
   const projectResources = options.projectResources;
+  const projectLifecycle = options.projectLifecycle;
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
@@ -749,6 +759,23 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             throw new PublicError('unsupported', operation);
           }
           return await delivery.submit(principal, envelope, digest);
+        }
+        if (envelope.operation === 'project.archive' || envelope.operation === 'project.restore') {
+          const digest = computeCommandRequestDigest(envelope);
+          if (projectLifecycle === undefined) {
+            const receipt = store.transact(operation, transaction =>
+              replay(principal, transaction.findReceipt(principal.principalId, envelope.commandId), digest, operation));
+            if (receipt) return receipt;
+            checkTiming(envelope, nowUtcMs());
+            throw new PublicError('unsupported', operation);
+          }
+          if (isProjectArchiveEnvelope(envelope)) {
+            return await projectLifecycle.submitArchive(principal, envelope, digest);
+          }
+          if (isProjectRestoreEnvelope(envelope)) {
+            return await projectLifecycle.submitRestore(principal, envelope, digest);
+          }
+          throw new PublicError('unsupported', operation);
         }
         if (envelope.operation === 'project.register' && repositoryInspector === undefined) {
           throw new PublicError('unsupported', operation);

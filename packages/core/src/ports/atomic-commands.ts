@@ -86,6 +86,15 @@ export interface CommandTransaction {
   createProjectSettings(projectId: string, input: unknown): ProjectSettingsRecord;
   /** F-009：项目配置 CAS 更新 + consistency 核对 + 既有 settings.project_updated 事件。 */
   updateProjectSettings(projectId: string, input: unknown): ProjectSettingsRecord;
+  /**
+   * P07-3 / F-008：项目生命周期受控迁移（同一事务内核对 revision CAS 与迁移起点，
+   * 随状态写入追加唯一一条 project.status_changed 脱敏事件）。输入为 F-001
+   * ProjectLifecycleRequest（operation/projectId/expectedRevision）；归档收尾
+   * 占用检查不在本原语内（由归档命令用例以 readProjectArchiveCloseout 核对）。
+   */
+  transitionProjectStatus(input: unknown): ProjectRecord;
+  /** P07-3 / F-008：项目归档收尾占用只读快照（同一 BEGIN IMMEDIATE 内权威读）。 */
+  readProjectArchiveCloseout(projectId: string): import('./project-lifecycle.js').ProjectLifecycleCloseout;
   /* ---------------------------------------------------------------- *
    * P02-3 / F-007 基线原语（§10 窄存储端口；同一事务内原子生效）
    * ---------------------------------------------------------------- */

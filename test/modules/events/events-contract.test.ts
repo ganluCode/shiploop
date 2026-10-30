@@ -26,6 +26,7 @@ import {
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from '../../../packages/core/src/ports/state-store.ts';
+import { PROJECT_STATUS_CHANGED_EVENT_TYPE } from '../../../packages/core/src/ports/project-lifecycle.ts';
 import {
   BASELINE_AUTHORIZED_EVENT_TYPE,
   BASELINE_CANCELLED_EVENT_TYPE,
@@ -142,6 +143,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       'project.registered',
       'project.repository_rebound',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
+      PROJECT_STATUS_CHANGED_EVENT_TYPE,
       SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
       SETTINGS_PROJECT_CREATED_EVENT_TYPE,
       GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
@@ -216,6 +218,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       'work.recovery.blocked',
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
+    expect(PROJECT_STATUS_CHANGED_EVENT_TYPE).toBe('project.status_changed');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
     expect(SETTINGS_PROJECT_CREATED_EVENT_TYPE).toBe('settings.project_created');
     expect(BASELINE_AUTHORIZED_EVENT_TYPE).toBe('baseline.authorized');
@@ -276,6 +279,7 @@ describe('F-003 mapStateEvent：持久行列 → 公开封套', () => {
     const cases: ReadonlyArray<[string, string, string | null, RowInput]> = [
       ['project.registered', 'project', PROJECT_A, { registered: true }],
       [PROJECT_METADATA_UPDATED_EVENT_TYPE, 'project', PROJECT_A, { changedFields: ['labels'] }],
+      [PROJECT_STATUS_CHANGED_EVENT_TYPE, 'project', PROJECT_A, { from: 'active', to: 'archiving' }],
       [SETTINGS_GLOBAL_CREATED_EVENT_TYPE, 'global_settings', null, summaryPayload()],
       [SETTINGS_PROJECT_CREATED_EVENT_TYPE, 'project_settings', PROJECT_A, summaryPayload()],
       [GLOBAL_SETTINGS_UPDATED_EVENT_TYPE, 'global_settings', null, summaryPayload()],

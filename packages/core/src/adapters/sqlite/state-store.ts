@@ -54,6 +54,11 @@ import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
+  projectLifecycleTransition,
+  validateProjectLifecycleRequest,
+} from '../../ports/data-lifecycle.js';
+import { PROJECT_STATUS_CHANGED_EVENT_TYPE } from '../../ports/project-lifecycle.js';
+import {
   validateStateEventPageRequest,
   validateStateEventSequenceLookup,
   type PersistedStateEventRow,
@@ -240,6 +245,13 @@ function buildProjectListQuery(
     conditions.push(visible.condition);
     params.push(...visible.params);
   }
+  // P07-3 / F-008：缺省隐藏 archived；'all' 不加条件；具体状态精确筛选。
+  if (valid.status === 'visible') {
+    conditions.push("status <> 'archived'");
+  } else if (valid.status !== 'all') {
+    conditions.push('status = ?');
+    params.push(valid.status);
+  }
   if (valid.labels.length > 0) {
     const placeholders = valid.labels.map(() => '?').join(', ');
     if (valid.match === 'any') {
@@ -262,14 +274,15 @@ function buildProjectListQuery(
   };
 }
 
-/** 项目层标签去重计数 SELECT 构建（同一项目同标签只计一次）+ F-010 可见范围下推。 */
+/** 项目层标签去重计数 SELECT 构建（同一项目同标签只计一次）+ F-010 可见范围下推；P07-3 / F-008 缺省与 listProjects 一致隐藏 archived。 */
 function buildProjectLabelCountsQuery(visibility: PrincipalScope): BoundQuery {
   const visible = visibilityCondition(visibility, 'projects.id');
-  const where = visible.condition === undefined ? '' : ` WHERE ${visible.condition}`;
+  const conditions = ["status <> 'archived'"];
+  if (visible.condition !== undefined) conditions.push(visible.condition);
   return {
     sql:
       'SELECT jt.value AS label, COUNT(DISTINCT projects.id) AS project_count ' +
-      `FROM projects, json_each(projects.labels) AS jt${where} ` +
+      `FROM projects, json_each(projects.labels) AS jt WHERE ${conditions.join(' AND ')} ` +
       'GROUP BY jt.value ORDER BY jt.value',
     params: visible.params,
   };
@@ -430,6 +443,8 @@ export function createSqliteStateAccess(
   getProject(projectId: string): ProjectRecord;
   getRepositoryBinding(projectId: string): RepositoryBindingRecord;
   updateProjectInTransaction(projectId: string, input: unknown, timestamp?: number): ProjectRecord;
+  /** P07-3 / F-008：生命周期受控迁移原语（archive/archiveComplete/restore/delete）；调用方必须已持有写事务。 */
+  transitionProjectStatusInTransaction(input: unknown, timestamp?: number): ProjectRecord;
   /**
    * F-008：项目 + 绑定 +（可选）project.registered 创建事件的原子创建原语；
    * 仅供适配器内部组合（原子命令事务），调用方必须已持有本会话写事务。
@@ -1253,6 +1268,62 @@ export function createSqliteStateAccess(
     return updated;
   }
 
+  /**
+   * P07-3 / F-008：项目生命周期受控迁移原语（active→archiving→archived、
+   * archived→active、archived→deleting；调用方必须已持有本会话写事务）。
+   *
+   * 输入经 F-001 validateProjectLifecycleRequest 校验，迁移合法性复用
+   * PROJECT_LIFECYCLE_TRANSITIONS 单一权威：revision CAS 先核（不匹配 →
+   * conflict），当前状态不在迁移起点 → conflict(invalid_project_transition)；
+   * 成功时同一短事务内更新 status/revision/updated_at 并追加唯一一条
+   * project.status_changed 脱敏事件（payload 只含 from/to）。本原语不向普通
+   * 元数据更新暴露，也不做收尾占用检查（占用检查在归档命令用例内完成）。
+   */
+  function transitionProjectStatusInTransaction(input: unknown, timestamp = nowUtcMs()): ProjectRecord {
+    const operation = 'StateStore.transitionProjectStatus';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('项目生命周期迁移必须位于写事务内');
+    const valid = validateProjectLifecycleRequest(input, operation);
+    const entity: StorageEntityRef = { type: 'project', id: valid.projectId };
+    const context: ValidationContext = { operation, entity };
+    const db = session.database;
+    const current = projectFromRow(selectProjectRow(db, valid.projectId, operation), context);
+    if (current.revision !== valid.expectedRevision) {
+      requireCasTarget(
+        db.prepare<[string], { revision: number } | undefined>('SELECT revision FROM projects WHERE id = ?').get(valid.projectId),
+        operation,
+        entity,
+        valid.expectedRevision,
+        `项目 ${valid.projectId} 不存在`,
+      );
+    }
+    const next = projectLifecycleTransition(valid.operation, current.status);
+    if (next === null) {
+      throw conflict(
+        operation,
+        '项目生命周期迁移不合法',
+        entity,
+        { reason: 'invalid_project_transition', lifecycleOperation: valid.operation, from: current.status },
+      );
+    }
+    const changed = db
+      .prepare('UPDATE projects SET status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?')
+      .run(next, timestamp, valid.projectId, valid.expectedRevision);
+    if (changed.changes !== 1) {
+      throw new Error('Project lifecycle CAS failed inside serialized transaction');
+    }
+    const updated = projectFromRow(selectProjectRow(db, valid.projectId, operation), context);
+    insertStateEventRow(db, timestamp, {
+      projectId: valid.projectId,
+      eventType: PROJECT_STATUS_CHANGED_EVENT_TYPE,
+      aggregateType: 'project',
+      aggregateId: valid.projectId,
+      aggregateRevision: updated.revision,
+      summary: { from: current.status, to: next },
+    });
+    return updated;
+  }
+
   /** already_exists 幂等复用：读胜者项目 + 绑定，不新增行、不覆盖元数据、不写事件。 */
   function alreadyExistsResult(
     db: Database.Database,
@@ -1688,6 +1759,7 @@ export function createSqliteStateAccess(
     getProject,
     getRepositoryBinding,
     updateProjectInTransaction,
+    transitionProjectStatusInTransaction,
     createProjectWithBindingInTransaction,
     rebindRepositoryInTransaction,
     listRepositoryBindingSnapshots,

@@ -226,6 +226,12 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
       const valid = validateProjectListFilter(filter, operation);
       const cursor = valid.cursor ?? '';
       const matches = (record: ProjectRecord): boolean => {
+        // P07-3 / F-008：与 SQLite 同一默认/显式状态筛选语义。
+        if (valid.status === 'visible') {
+          if (record.status === 'archived') return false;
+        } else if (valid.status !== 'all' && record.status !== valid.status) {
+          return false;
+        }
         if (valid.labels.length === 0) {
           return true;
         }
@@ -248,6 +254,8 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
     async countProjectLabels(): Promise<readonly ProjectLabelCount[]> {
       const projectIdsByLabel = new Map<string, Set<string>>();
       for (const record of projects.values()) {
+        // P07-3 / F-008：缺省与 listProjects 一致隐藏 archived。
+        if (record.status === 'archived') continue;
         for (const label of record.labels) {
           let ids = projectIdsByLabel.get(label);
           if (ids === undefined) {

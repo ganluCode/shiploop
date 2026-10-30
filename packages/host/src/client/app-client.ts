@@ -270,6 +270,8 @@ export interface ListProjectsInput {
   readonly cursor?: string;
   readonly labels?: readonly string[];
   readonly match?: 'any' | 'all';
+  /** P07-3 / F-008：状态筛选（缺省隐藏 archived；'all' 全量；具体状态精确筛选）。 */
+  readonly status?: 'visible' | 'all' | 'active' | 'archiving' | 'archived' | 'deleting';
 }
 
 /* ------------------------------------------------------------------ *
@@ -1372,7 +1374,9 @@ function freezeCommandEnvelope(input: SubmitCommandInput): FrozenEnvelope {
  * 查询输入校验（零网络拒绝）
  * ------------------------------------------------------------------ */
 
-const LIST_INPUT_KEYS = ['limit', 'cursor', 'labels', 'match'] as const;
+const LIST_INPUT_KEYS = ['limit', 'cursor', 'labels', 'match', 'status'] as const;
+
+const LIST_STATUS_VALUES = ['visible', 'all', 'active', 'archiving', 'archived', 'deleting'] as const;
 
 /** §7.1/§13：分页 1..200、标签 ≤50 个、match any/all；查询串键序冻结。 */
 function buildProjectListQuery(input: ListProjectsInput | undefined): string {
@@ -1424,6 +1428,13 @@ function buildProjectListQuery(input: ListProjectsInput | undefined): string {
       throw invalidInput('projects.list', 'invalid_match', 'match');
     }
     params.append('match', input.match);
+  }
+  if (input.status !== undefined) {
+    const status: unknown = input.status;
+    if (typeof status !== 'string' || !(LIST_STATUS_VALUES as readonly string[]).includes(status)) {
+      throw invalidInput('projects.list', 'invalid_status', 'status');
+    }
+    params.append('status', status);
   }
   return params.toString();
 }

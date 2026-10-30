@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/commands/p07-3-f008-project-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/events/events-contract.test.ts", "all": true },
+      { "file": "test/modules/storage/p07-3-f002-maintenance-gate.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-task-claim.test.ts", "all": true },
+      { "file": "test/modules/projects/project-tag-filter.test.ts", "all": true },
+      { "file": "test/modules/storage/storage-contracts.test.ts", "all": true },
+      { "file": "test/modules/storage/data-lifecycle-contract.test.ts", "all": true },
+      { "file": "test/modules/planning/p05-1-f003-planning-start-command.test.ts", "all": true },
+      { "file": "test/modules/planning/p05-1-f005-planning-dispatch-claim.test.ts", "all": true },
+      { "file": "test/modules/planning/p05-2-phase-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+      { "file": "test/modules/host/host-client-application.test.ts", "all": true },
+      { "file": "test/modules/authorization/authorized-queries.test.ts", "all": true },
+      { "file": "test/modules/authorization/authorization-contract.test.ts", "all": true },
+      { "file": "test/modules/onboarding/p02-3-inspect-overview.test.ts", "all": true }
+    ]
+  }]
+}

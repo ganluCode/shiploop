@@ -16,6 +16,7 @@ import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteWorkResourceAccess } from './work-resources.js';
+import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStorageSession } from './session.js';
 
 const operation = 'TaskClaim.claimTask';
@@ -99,6 +100,11 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
           }
           options.assertCanClaim?.();
           options.maintenanceGate?.assertCanWrite('work');
+          // P07-3 / F-008：项目进入 archiving/archived 后不再接受新 Attempt 认领；
+          // 已持回执的重放不经此分支（在途执行沿既有收尾路径完成）。
+          if (createSqliteStateAccess(session).getProject(valid.projectId).status !== 'active') {
+            fail('not_ready', { eligibility: 'project_not_active' });
+          }
           const now = clock();
           if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid claim clock');
           if (valid.leaseUntilUtcMs <= now) throw new StorageError('validation', operation, 'Expired new claim lease');

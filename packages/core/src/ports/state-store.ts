@@ -224,11 +224,21 @@ export function projectMetadataChangedFields(
  */
 export type ProjectLabelMatchMode = 'any' | 'all';
 
+/**
+ * P07-3 / F-008：项目列表状态筛选。
+ * - 缺省（'visible'）：隐藏 archived（历史归档项不进入默认列表/标签计数；
+ *   archiving/deleting 是进行中的管理状态，保持可见可查询）；
+ * - 'all'：显式返回全部状态；
+ * - 具体状态：仅返回该状态（如 'archived' 显式筛选历史归档项）。
+ */
+export type ProjectListStatusFilter = ProjectStatus | 'all' | 'visible';
+
 export interface ProjectListFilter {
   readonly match?: ProjectLabelMatchMode;
   readonly labels?: readonly string[];
   readonly limit?: number;
   readonly cursor?: string;
+  readonly status?: ProjectListStatusFilter;
 }
 
 /** 项目列表分页默认每页条目数与最大每页条目数（有限默认值 + 硬上限）。 */
@@ -240,6 +250,7 @@ export interface ValidatedProjectListFilter {
   readonly labels: string[];
   readonly limit: number;
   readonly cursor?: string;
+  readonly status: ProjectListStatusFilter;
 }
 
 /** 项目分页页：游标为下一页起始（上一页最后一条 id），无更多为 null。 */
@@ -262,10 +273,10 @@ export function validateProjectListFilter(
 ): ValidatedProjectListFilter {
   const context: ValidationContext = { operation };
   if (value === undefined) {
-    return { match: 'any', labels: [], limit: PROJECT_LIST_DEFAULT_LIMIT };
+    return { match: 'any', labels: [], limit: PROJECT_LIST_DEFAULT_LIMIT, status: 'visible' };
   }
   const object = requirePlainObject(value, context, 'filter');
-  rejectUnknownKeys(object, ['match', 'labels', 'limit', 'cursor'], context, 'filter');
+  rejectUnknownKeys(object, ['match', 'labels', 'limit', 'cursor', 'status'], context, 'filter');
   let match: ProjectLabelMatchMode = 'any';
   if (object.match !== undefined) {
     if (object.match !== 'any' && object.match !== 'all') {
@@ -296,10 +307,24 @@ export function validateProjectListFilter(
     }
     limit = object.limit;
   }
-  if (object.cursor !== undefined) {
-    return { match, labels, limit, cursor: validateStableId(object.cursor, context, 'filter.cursor') };
+  let status: ProjectListStatusFilter = 'visible';
+  if (object.status !== undefined) {
+    const rawStatus: unknown = object.status;
+    if (typeof rawStatus !== 'string'
+      || !(['visible', 'all', 'active', 'archiving', 'archived', 'deleting'] as const).includes(rawStatus as 'visible')) {
+      throw validationError(
+        context,
+        'filter.status',
+        "必须是 'visible'、'all' 或 active/archiving/archived/deleting 之一",
+        object.status,
+      );
+    }
+    status = rawStatus as ProjectListStatusFilter;
   }
-  return { match, labels, limit };
+  if (object.cursor !== undefined) {
+    return { match, labels, limit, cursor: validateStableId(object.cursor, context, 'filter.cursor'), status };
+  }
+  return { match, labels, limit, status };
 }
 
 interface SettingsRecordBase {

@@ -1027,6 +1027,11 @@ function buildProjectListFilter(
   if (labels.length > 0) {
     filter.labels = labels;
   }
+  // P07-3 / F-008：状态筛选不透明透传（visible/all/具体状态），取值由 Core 单一权威复核。
+  const status = params.get('status');
+  if (status !== null) {
+    filter.status = status;
+  }
   const cursor = params.get('cursor');
   if (cursor !== null) {
     filter.cursor = cursor;

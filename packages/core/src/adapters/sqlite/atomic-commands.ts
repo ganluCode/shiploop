@@ -13,6 +13,7 @@ import { createSqliteGitOperationStore } from './git-operations.js';
 import { createSqliteIntegrationPlanAccess } from './integration-plan-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqlitePlanningContextStore } from './planning-context-store.js';
+import { createSqliteProjectLifecycleAccess } from './project-lifecycle.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
@@ -29,6 +30,7 @@ export function createSqliteAtomicCommandStore(
   const gitOperations = createSqliteGitOperationStore(session, options);
   const planningContexts = createSqlitePlanningContextStore(session, options);
   const integrationPlans = createSqliteIntegrationPlanAccess(session, options);
+  const projectLifecycle = createSqliteProjectLifecycleAccess(session);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // P03-9 / F-003：停止 operation 的持久状态/证据引用读取（不进入写事务）。
@@ -110,6 +112,8 @@ export function createSqliteAtomicCommandStore(
           getProject: guarded(state.getProject),
           getRepositoryBinding: guarded(state.getRepositoryBinding),
           updateProjectMetadata: guarded(state.updateProjectInTransaction),
+          transitionProjectStatus: guarded(state.transitionProjectStatusInTransaction),
+          readProjectArchiveCloseout: guarded(projectLifecycle.readProjectArchiveCloseoutInTransaction),
           // F-008：命令路径新建项目时同事务写 project.registered 创建事件。
           registerProject: guarded((project: unknown, binding: unknown) =>
             state.createProjectWithBindingInTransaction(project, binding, {
