@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-2-f006-recording-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f016-host-kill-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-startup.test.ts", "all": true }
+    ]
+  }]
+}

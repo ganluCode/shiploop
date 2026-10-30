@@ -5,6 +5,7 @@ import type { GitOperationRecord } from './git-operations.js';
 import type { WorkStartupRecoveryEvidence } from './work-startup-recovery.js';
 import type { ManagedWorkspaceRecord, WorkspaceBaseline, WorkspaceOperationRecord } from './workspace.js';
 import type { WorkSessionRecord } from './work-session.js';
+import type { WorkRecordingManifestRecord, WorkRecordingMessageRecord } from './work-recording.js';
 import type { WorkResourceSnapshot } from './work-resources.js';
 
 /** P03-9 / F-006：恢复诊断证据的持久 JSON 身份。 */
@@ -18,6 +19,13 @@ export interface RecoveryGitReader {
   isAncestor(projectId: string, baseline: WorkspaceBaseline, ancestor: string, descendant: string): Promise<boolean>;
 }
 
+export interface WorkRecoveryRecordingSnapshot {
+  readonly messages: readonly WorkRecordingMessageRecord[];
+  readonly manifests: readonly WorkRecordingManifestRecord[];
+  readonly indexGaps?: readonly string[];
+  readonly indexLimited: boolean;
+}
+
 export interface WorkRecoveryReconciliationSnapshot {
   /** Original interrupted Attempt; recovery never creates another one. */
   readonly attempt: AttemptRecord;
@@ -29,7 +37,8 @@ export interface WorkRecoveryReconciliationSnapshot {
   readonly dispatchGaps?: readonly string[];
   readonly workspace: ManagedWorkspaceRecord | null;
   readonly session: WorkSessionRecord | null;
-  /** Read without the task execution-version equality gate that fencing intentionally revoked. */
+  /** Bounded immutable recording indexes captured with the same recovery read. */
+  readonly recording: WorkRecoveryRecordingSnapshot;
   readonly resources: WorkResourceSnapshot;
   readonly artifacts: readonly ArtifactRecord[];
   readonly pendingGitOperations: readonly GitOperationRecord[];
@@ -64,6 +73,11 @@ export interface WorkRecoveryReconciliationRecordingFacts {
   readonly watermark: number | null;
   readonly gaps: readonly string[];
   readonly artifactsChecked: number;
+  readonly verifiedThrough?: number | null;
+  readonly messageCount?: number;
+  readonly manifestCount?: number;
+  readonly continuation?: 'metadata_only' | 'none' | null;
+  readonly recoveryDiagnostics?: readonly string[];
 }
 
 /** Native archive references are inspected as immutable metadata, never opened for continuation. */

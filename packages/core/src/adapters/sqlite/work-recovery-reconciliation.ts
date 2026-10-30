@@ -2,6 +2,7 @@ import { createSqliteVerificationStore } from './verification-store.js';
 import { createSqliteDispatchRecovery, workRecoveryFingerprint } from './dispatch-recovery.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { createSqliteGitOperationStore, GIT_OPERATION_COLUMNS, gitOperationRecordFromRow } from './git-operations.js';
+import { messageFromRow, manifestFromRow } from './work-recording-store.js';
 import { SESSION_COLUMNS, workSessionRecordFromRow } from './work-session-store.js';
 import { mapManagedWorkspaceRow, mapWorkspaceOperationRow } from './workspace.js';
 import { transactSqliteConsistentRead } from './state-store.js';
@@ -24,6 +25,9 @@ interface ArtifactRow {
 const ARTIFACT_LIMIT = 64;
 const GIT_OPERATION_LIMIT = 16;
 const WORKSPACE_OPERATION_LIMIT = 16;
+const RECORDING_MESSAGE_LIMIT = 256;
+const RECORDING_MANIFEST_LIMIT = 64;
+const RECORDING_ARTIFACT_LIMIT = 256;
 
 function artifactFromRow(row: ArtifactRow, operation = 'WorkRecovery.artifacts'): ArtifactRecord {
   if (!['pending', 'ready', 'failed'].includes(row.status)) {
@@ -88,6 +92,38 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
       AND (run_id = ? ${workspaceId === null ? '' : 'OR workspace_id = ?'}) ORDER BY id LIMIT ${WORKSPACE_OPERATION_LIMIT}`)
       .all(projectId, runId, ...(workspaceId === null ? [] : [workspaceId])) as Record<string, unknown>[];
     return rows.map(row => mapWorkspaceOperationRow(row)!);
+  }
+
+  function loadRecording(projectId: string, sessionId: string | null) {
+    if (sessionId === null) return { messages: [], manifests: [], artifactIds: [], indexGaps: [], indexLimited: false };
+    const indexGaps: string[] = [];
+    const messageRows = db.prepare<[string, string], Record<string, string | number | null>>(
+      `SELECT * FROM session_messages WHERE project_id = ? AND session_id = ? ORDER BY sequence LIMIT ${RECORDING_MESSAGE_LIMIT + 1}`,
+    ).all(projectId, sessionId);
+    const manifestRows = db.prepare<[string, string], Record<string, string | number | null>>(
+      `SELECT * FROM recording_manifests WHERE project_id = ? AND session_id = ? ORDER BY version LIMIT ${RECORDING_MANIFEST_LIMIT + 1}`,
+    ).all(projectId, sessionId);
+    const recordingArtifactRows = db.prepare<[string, string], { id: string }>(
+      `SELECT id FROM artifacts WHERE project_id = ? AND storage_locator LIKE ? ORDER BY id LIMIT ${RECORDING_ARTIFACT_LIMIT + 1}`,
+    ).all(projectId, `sessions/${sessionId}/%`);
+    const messages = [] as ReturnType<typeof messageFromRow>[];
+    for (const row of messageRows.slice(0, RECORDING_MESSAGE_LIMIT)) {
+      try { messages.push(messageFromRow(row)); } catch { indexGaps.push('recording_message_index_corrupt'); }
+    }
+    const manifests = [] as ReturnType<typeof manifestFromRow>[];
+    for (const row of manifestRows.slice(0, RECORDING_MANIFEST_LIMIT)) {
+      try { manifests.push(manifestFromRow(row)); } catch { indexGaps.push('recording_manifest_index_corrupt'); }
+    }
+    const indexLimited = messageRows.length > RECORDING_MESSAGE_LIMIT
+      || manifestRows.length > RECORDING_MANIFEST_LIMIT || recordingArtifactRows.length > RECORDING_ARTIFACT_LIMIT;
+    if (indexLimited) indexGaps.push('recording_recovery_scan_limit');
+    const artifactIds = [...new Set([...messages.flatMap(message => [message.contentRef.artifactId, ...message.attachments.map(a => a.artifactId)]),
+      ...manifests.flatMap(manifest => manifest.manifestRef === null ? [] : [manifest.manifestRef.artifactId])])];
+    if (recordingArtifactRows.some(row => !artifactIds.includes(row.id))) indexGaps.push('recording_unindexed_artifact');
+    return {
+      messages, manifests, indexGaps: [...new Set(indexGaps)], indexLimited,
+      artifactIds: [...new Set([...artifactIds, ...recordingArtifactRows.map(row => row.id)])],
+    };
   }
 
   function assertSourceIdentity(source: WorkStartupRecoveryEvidence, attempt: ReturnType<typeof attempts.getAttempt>): void {
@@ -176,6 +212,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         if (run === undefined) fail('run_missing');
         const workspace = loadWorkspace(source.projectId, attempt.featureId);
         const sessionRecord = loadSession(attempt.id);
+        const recording = loadRecording(source.projectId, sessionRecord?.id ?? null);
         const resources: WorkResourceSnapshot = options.resources.readForRecovery({
           projectId: attempt.projectId, attemptId: attempt.id, owner: attempt.owner,
           hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion,
@@ -187,7 +224,8 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         // recovery verifies its own diagnosis, code and Recorder/result Artifacts.
         const refs = [attempt.codeRef, attempt.diagnosticRef,
           sessionRecord?.resultRef ?? null,
-          recoverySource?.nativeArchiveRef ?? null].filter((value): value is string => value !== null);
+          recoverySource?.nativeArchiveRef ?? null,
+          ...recording.artifactIds].filter((value): value is string => value !== null);
         const verificationGaps: string[] = [];
         const verification = createSqliteVerificationStore(session);
         const verificationBatches = verification.listAttemptVerificationBatches(source.projectId, attempt.id);
@@ -227,6 +265,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
           if (operation.result?.errorRef !== null && operation.result?.errorRef !== undefined) refs.push(operation.result.errorRef);
         }
         if (new Set(refs).size > 64) verificationGaps.push('verification_artifact_limit');
+        const artifacts = loadArtifacts(source.projectId, refs);
         const dispatchLink = dispatch.link(dispatchAttempt(attempt));
         const alreadyReconciled = pendingGitOperations.length === 0 && run.status === 'paused' && workspace?.status === 'retained'
           && resources.leases.length === 0 && dispatchLink.gaps.length === 0
@@ -238,8 +277,9 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         return {
           verificationGaps, verificationCodeDigests: verificationBatches.map(batch => batch.codeDigest),
           recoveryFingerprint: workRecoveryFingerprint(session, attempt.id), dispatchGaps: dispatchLink.gaps,
-          attempt, runStatus: run.status, workspace, session: sessionRecord, resources,
-          artifacts: loadArtifacts(source.projectId, refs),
+          attempt, runStatus: run.status, workspace, session: sessionRecord, recording,
+          resources,
+          artifacts,
           pendingGitOperations,
           settledTaskCommitOperationIds,
           pendingWorkspaceOperations: pendingWorkspace,

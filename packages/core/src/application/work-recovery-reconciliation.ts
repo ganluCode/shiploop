@@ -4,6 +4,7 @@ import type { ArtifactVerifier } from './artifact-verify.js';
 import { observeGitCommit } from './git-commit-observation.js';
 import { gitCommitSourceDigest } from './controlled-git-commit.js';
 import { readGitCommitInspection } from './git-commit-evidence.js';
+import { inspectWorkRecordingRecovery } from './work-recording-recovery.js';
 import type { GitOperationRecord } from '../ports/git-operations.js';
 import type { WorkResourceStopVerifier } from '../ports/work-resources.js';
 import type { WorkspaceInspection } from '../ports/workspace-inspector.js';
@@ -345,6 +346,22 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           addGap(gaps, 'artifact_verification_failed');
         }
       }
+      const recordingBound = snapshot.session !== null && attempt.sessionId === snapshot.session.id
+        && snapshot.resources.invocationId !== null;
+      const recordingRecovery = !recordingBound ? null : await inspectWorkRecordingRecovery({
+        identity: { projectId: attempt.projectId, sessionId: snapshot.session.id, runId: attempt.runId,
+          attemptId: attempt.id, invocationId: snapshot.resources.invocationId, executionVersion: attempt.executionVersion },
+        sessionStatus: snapshot.session.status,
+        sessionWatermark: snapshot.session.recordingWatermark,
+        sessionGaps: [...recordingGaps, ...(snapshot.recording.indexGaps ?? [])],
+        messages: snapshot.recording.messages, manifests: snapshot.recording.manifests,
+        artifacts: snapshot.artifacts, indexLimited: snapshot.recording.indexLimited,
+      }, options.artifacts);
+      if (recordingRecovery !== null) {
+        for (const gap of recordingRecovery.gaps) addGap(gaps, gap);
+        for (const diagnostic of recordingRecovery.diagnostics) addGap(gaps, diagnostic);
+      }
+
       const recoverySelection = attempt.inputSnapshot.rework?.recovery.selection;
       const recoverySource = recoverySelection !== undefined && recoverySelection.mode !== 'new'
         ? recoverySelection.source : undefined;
@@ -439,9 +456,14 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         recording: {
           sessionId: snapshot.session?.id ?? null,
           status: snapshot.session?.status ?? null,
-          watermark: snapshot.session?.recordingWatermark ?? null,
-          gaps: recordingGaps.slice(0, GAP_MAX),
-          artifactsChecked,
+          watermark: recordingRecovery?.watermark ?? snapshot.session?.recordingWatermark ?? null,
+          gaps: [...new Set([...recordingGaps, ...(recordingRecovery?.gaps ?? [])])].slice(0, GAP_MAX),
+          artifactsChecked: artifactsChecked + (recordingRecovery?.artifactsChecked ?? 0),
+          verifiedThrough: recordingRecovery?.verifiedThrough ?? null,
+          messageCount: recordingRecovery?.messageCount ?? snapshot.recording.messages.length,
+          manifestCount: recordingRecovery?.manifestCount ?? snapshot.recording.manifests.length,
+          continuation: recordingRecovery?.continuation ?? null,
+          recoveryDiagnostics: recordingRecovery?.diagnostics ?? [],
         },
         runtime,
         native,
