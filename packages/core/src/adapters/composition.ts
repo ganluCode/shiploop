@@ -40,7 +40,7 @@ export type { WorkRuntimeFactory, WorkRuntimeContext, WorkFailureRoutingAssembly
 import { existsSync, mkdirSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
 import { createProjectResourceService } from '../application/project-resource-service.js';
 import { createLocalProjectResourceSources } from './fs/project-resource-sources.js';
@@ -170,6 +170,7 @@ import { createSqliteExecutionResumeFactsReader } from './sqlite/execution-resum
 import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
+import type { BackupPackageService } from '../ports/backup-package.js';
 import type { BaselineEnvironmentDirectory } from '../ports/baseline.js';
 import type { CommandReceiptStore } from '../ports/command-receipts.js';
 import { StorageError } from '../ports/errors.js';
@@ -204,6 +205,7 @@ import { createRepositoryInspector } from './fs/repository-inspector.js';
 import type { RepositoryInspectorOptions } from './fs/repository-inspector.js';
 import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
+import { createBackupPackageService } from './sqlite/backup-package.js';
 import { createSqliteBaselineStore } from './sqlite/baseline-store.js';
 import type { BaselineStore } from '../ports/baseline-store.js';
 import { createSqliteVerificationStore } from './sqlite/verification-store.js';
@@ -330,6 +332,7 @@ export interface CoreApplication {
   readonly stateStore: StateStore;
   readonly artifactStore: ArtifactStore;
   readonly artifactFileStore: ArtifactFileStore;
+  readonly backupPackageService: BackupPackageService;
   readonly repositoryInspector: RepositoryInspector;
   /** F-003：跨数据根、跨 Host 共用的 Git common-dir 短操作锁。 */
   readonly gitPublicMetadataLock: GitPublicMetadataLock;
@@ -659,6 +662,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       nowUtcMs === undefined ? {} : { nowUtcMs },
     );
     const artifactFileStore = createArtifactFileStore({ dataRoot: basePathService.dataRoot() });
+    const backupPackageService = createBackupPackageService({
+      session,
+      dataRoot: basePathService.dataRoot(),
+      backupRoot: join(basePathService.dataRoot(), 'backups'),
+      files: artifactFileStore,
+      maintenanceGate,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
     const runtimeRecovery = createRuntimeRecoveryService({
       configuration: capabilityCatalog,
       capabilities: recoveryCatalog,
@@ -1511,6 +1522,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       stateStore,
       artifactStore,
       artifactFileStore,
+      backupPackageService,
       repositoryInspector,
       gitPublicMetadataLock,
       projectService,

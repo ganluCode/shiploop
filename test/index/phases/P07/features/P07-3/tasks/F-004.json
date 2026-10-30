@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/artifact-verify.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-recording-integration.test.ts", "all": true },
+      { "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts", "all": true }
+    ]
+  }]
+}
