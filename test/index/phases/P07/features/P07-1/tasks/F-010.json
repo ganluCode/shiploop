@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-1-f010-loop-verifier.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f010-loop-git-receipt.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f010-combined-isolation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f009-recovery-diagnostics.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f008-resume-resumption.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f007-host-git-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f006-verifier-recovery.test.ts", "all": true },
+      { "file": "test/modules/cli/control/p03-9-f015-cli-control.test.ts", "all": true },
+      { "file": "test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts", "all": true },
+      { "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts", "all": true }
+    ]
+  }]
+}
