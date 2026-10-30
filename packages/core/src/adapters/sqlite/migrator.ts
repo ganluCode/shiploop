@@ -231,6 +231,16 @@ function verifyAppliedAgainstProvided(
   return applied;
 }
 
+/** Read-only identity check, also used before opening a writable startup session. */
+export function inspectSqliteSchema(
+  db: Database.Database,
+  migrations: readonly SqliteMigration[] = SQLITE_MIGRATIONS,
+): { readonly fromVersion: number; readonly toVersion: number } {
+  verifyProvidedMigrations(migrations);
+  const applied = verifyAppliedAgainstProvided(db, migrations);
+  return { fromVersion: applied.length, toVersion: migrations.length };
+}
+
 /** 生成独立一致性备份并运行只读完整性核验；失败抛 step='backup' 证据错误。 */
 async function createVerifiedBackup(
   session: SqliteStorageSession,
@@ -278,10 +288,7 @@ export async function migrateSqliteStorage(
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   // 1. verify：清单合法性先于数据库接触；已应用记录核验先于任何写入。
-  verifyProvidedMigrations(migrations);
-  const applied = verifyAppliedAgainstProvided(session.database, migrations);
-  const fromVersion = applied.length;
-  const toVersion = migrations.length;
+  const { fromVersion, toVersion } = inspectSqliteSchema(session.database, migrations);
   const pending = migrations.slice(fromVersion);
   if (pending.length === 0) {
     return { fromVersion, toVersion, appliedVersions: [] };

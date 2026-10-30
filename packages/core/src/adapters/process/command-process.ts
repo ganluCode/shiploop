@@ -78,7 +78,7 @@ async function groupAbsent(groupId: number): Promise<boolean> {
   return !rows.trim().split('\n').some((row) => Number(row.trim().split(/\s+/)[1]) === groupId);
 }
 /** F-010 生产停止探测：真实 /bin/ps 身份行、成员清点、受控组信号与延时。 */
-const realStopProbe: StopEscalationProbe = {
+export const realStopProbe: StopEscalationProbe = {
   async readSupervisorRow(pid) {
     try {
       // ps -p exits nonzero for an absent PID; a successful full census distinguishes

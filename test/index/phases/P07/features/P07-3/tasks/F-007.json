@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/host/p07-3-f007-host-upgrade.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f007-startup-upgrade.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f005-backup-verification.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/host/host-startup.test.ts", "all": true },
+      { "file": "test/modules/host/host-writer-lock.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-3-f006-offline-restore.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-startup.test.ts", "all": true }
+    ]
+  }]
+}

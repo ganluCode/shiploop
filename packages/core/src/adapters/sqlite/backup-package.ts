@@ -11,6 +11,7 @@ import type { ArtifactFileStore } from '../../ports/artifact-files.js';
 import type { MaintenanceWriteGate } from '../../ports/data-maintenance.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteBackup } from './backup.js';
+import { assertBackupSchemaReadable } from './backup-schema.js';
 import { StorageError } from '../../ports/errors.js';
 
 const OPERATION = 'data.backup.create';
@@ -179,6 +180,7 @@ export function createBackupPackageService(options: BackupPackageServiceOptions)
       const packageDb = new Database(databasePath, { readonly: true, fileMustExist: true });
       let manifest: BackupManifest;
       try {
+        assertBackupSchemaReadable(snapshotDb);
         const integrity = packageDb.pragma('integrity_check', { simple: true });
         const foreignKeys = packageDb.pragma('foreign_key_check') as unknown[];
         if (integrity !== 'ok' || foreignKeys.length !== 0) throw new Error('snapshot_integrity_failed');

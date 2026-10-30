@@ -217,10 +217,9 @@ import type { BaselineStore } from '../ports/baseline-store.js';
 import { createSqliteVerificationStore } from './sqlite/verification-store.js';
 import type { VerificationStore } from '../ports/verification-store.js';
 import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
-import { migrateSqliteStorage } from './sqlite/migrator.js';
+import { openUpgradedSqliteStorage } from './sqlite/startup-upgrade.js';
 import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
-import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createSqliteMaintenanceWriteGate } from './sqlite/data-maintenance.js';
 import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
@@ -650,7 +649,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   const dataRestoreIsolation = inspectDataRestoreState(basePathService.dataRoot()).isolated;
   activateDataRestore(basePathService.dataRoot());
 
-  const session = openSqliteStorageSession({
+  const session = await openUpgradedSqliteStorage({
+    dataRoot: basePathService.dataRoot(),
     path: basePathService.databaseFilePath(),
     ...(object.busyTimeoutMs !== undefined ? { busyTimeoutMs: object.busyTimeoutMs as number } : {}),
     ...(object.busyRetryAttempts !== undefined
@@ -659,8 +659,6 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   });
 
   try {
-    await migrateSqliteStorage(session);
-
     const maintenanceGate = dataRestoreIsolation
       ? createMaintenanceWriteGate({ state: 'blocked', operation: 'restore', blockedReason: 'restored_data_requires_current_facts' })
       : (object.maintenanceGate as MaintenanceWriteGate | undefined) ?? createSqliteMaintenanceWriteGate(session);
