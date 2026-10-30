@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { createWorkEvidenceRecorder } from '../../../packages/core/src/application/work-evidence-recorder.ts';
+import { describe, expect, it, vi } from 'vitest';
+import { createWorkEvidenceRecorder, WorkEvidenceRecordingError } from '../../../packages/core/src/application/work-evidence-recorder.ts';
 import { createWorkRecordingPublisher } from '../../../packages/core/src/application/work-recording-publish.ts';
 import { createSqliteWorkRecordingStore } from '../../../packages/core/src/adapters/sqlite/work-recording-store.ts';
 import { createSqliteWorkSessionStore } from '../../../packages/core/src/adapters/sqlite/work-session-store.ts';
@@ -60,6 +60,36 @@ async function fixture(mode: RecordingMode = 'required') {
 }
 
 describe('P07-2 F-005 整体期限与监督结算', () => {
+  it('[case:shared-deadline-before-timer] 共享期限已到时 Recorder 抢先回执仍保留 Runtime 超时事实', async () => {
+    const f = await fixture();
+    let monotonic = 100;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+    try {
+      const recordingError = new WorkEvidenceRecordingError('recording_deadline_exceeded', 'deadline', {
+        watermark: null, gaps: ['recording_failed:recording_deadline_exceeded'], safeStopRequired: true,
+      });
+      let persisted!: RuntimeSettlementInput;
+      const runtime = f.handle({ async *[Symbol.asyncIterator]() {} });
+      const supervision = superviseExecution({ request: f.request, runtime: runtime as RuntimeSession,
+        controller: new AbortController(), result: settle(Promise.resolve(completed)), stopped: settle(Promise.resolve(stopped)),
+        recording: Promise.resolve({ status: 'rejected', reason: recordingError }),
+        settlement: { async settle(input) { persisted = input; return f.settlement.settle(input); } },
+        options: { stopWaitMs: 20, drainWaitMs: 100, closeWaitMs: 100, retain: async () => {} },
+        quarantine: () => {}, evidenceRef: () => f.sessions.getWorkSession(f.projectId, f.request.sessionId).resultRef,
+        timeoutMs: 1000, timeoutReason: 'runtime_timeout', timeoutLayer: 'session', timeoutLimitMs: 1000 });
+      // Advance only the monotonic observation: the timeout callback has not run.
+      // This forces the Recorder callback/cancel path to arrive first.
+      monotonic = 1100;
+      supervision.stop('recording_failed');
+      expect(await supervision.completion).toMatchObject({ persisted: true });
+      expect(persisted.control).toMatchObject({ reason: 'runtime_timeout',
+        timeout: { layer: 'session', stage: 'runtime', limitMs: 1000, elapsedMs: 1000 } });
+      expect(persisted.recording).toMatchObject({ status: 'rejected', reason: { reason: 'recording_deadline_exceeded' } });
+      expect(f.cancels()).toBe(1);
+      expect(f.query('SELECT count(*) AS n FROM attempt_notifications')).toEqual({ n: 1 });
+    } finally { clock.mockRestore(); f.close(); }
+  });
+
   for (const scenario of ['both-hang', 'small-events', 'body-hang', 'manifest-hang'] as const) {
     it(`[case:deadline-${scenario}] 采集与发布共用整体期限，失败收尾有界且迟到发布不推进水位`, async () => {
       const f = await fixture();

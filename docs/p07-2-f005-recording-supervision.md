@@ -46,10 +46,43 @@ Node 22.19.0 / npm 10.9.3。完整日志和退出码保存在 Harness
 - `test-2n4a3dia.log`：最终扩展的 supervision + Host 两文件、15 项全部通过；Host 两例真实 Runtime completed、工作区/槽位和清理已核对。
 - `test-hsbmmocf.log`：最终类型检查通过；`test-8pp24_b5.log`：边界检查通过，475 个生产源码文件、0 诊断。
 
-仓库 v2 索引 `test/index/phases/P07/features/P07-2/tasks/F-005.json` 登记 14 个文件；
+初次提交的仓库 v2 索引 `test/index/phases/P07/features/P07-2/tasks/F-005.json` 登记 14 个文件；
 Harness selection 只引用该索引。六个文件有本地执行证据，其余八个为独立 Verifier 的受影响
 回归选择（停止/进程、F-004 磁盘、Runner、恢复、fallback、dispatch settlement、Artifact 期限），
 未把它们记作本地通过。不运行全仓、Phase 验收或真实模型；本 Task 声明不代替 Nezha 独立验收。
 
 当前分支由编排者分配为 `feat/2026-10-29-21-59-22_p07-2-recorder`，和新分支命名规范不同；
 按 Runtime 禁止创建/改名/切换分支的约束原地工作，不擅自迁移。
+
+## F-005 首次独立验收后的返工
+
+原提交 `463ce05911239a9f550b6c43033e17cd33491852` 保留。独立验收
+`verifications/F-005/719f281e29594d4d88c77cedd0599e19/` 实际执行原 14 文件，
+162 项通过、4 项失败（没有超时或人工阻塞）；原日志与报告保持原样。
+
+- 两项 dispatch 失败：临时夹具未建立 P06 所需的已确认 Profile，尚未认领就被拒绝。
+  对需要真实认领的两例显式使用已有 `confirmProjectProfile: true`，经公开
+  `project.profile.detect/confirm` 建立测试前置；不修改生产准入、不解除真实项目人工门禁。
+  原暂停/继续、取消、占用释放和重复结算断言全部保留。
+- Pi 重试断言：Runtime completed 但 usage scope 未知的 partial 记录，在 required 策略下应
+  failed。更新旧 running 预期，新增原始 completed、usage_scope_unknown、recording_failed、
+  failed receipt 和空 waitingFor 的制品断言；保留请求轮数/Session/Attempt/扣账/重放断言。
+- 共享期限竞争：Recorder 先开始计时，可能抢在监督计时器前请求停止。ExecutionService
+  先安装监督再启动采集；监督收到 recording_failed 时复核真实单调耗时和绝对 deadline，
+  若执行期限已到则保留 runtime_timeout/parent_deadline 及 timeout fact。记录期限失败仍在
+  recording 字段保存。期限前的记录失败继续为 recording_failed，不改变有限预算或停止证明。
+  新增 `shared-deadline-before-timer` 屏障用例：只推进单调观察、不运行 timer 回调，强制
+  Recorder/cancel 先到，断言超时层/上限/耗时、记录失败事实、单次取消和单条结算通知。
+
+本轮日志均绑定当前 invocation，位于同一 `runtime-logs/`：
+
+- `test-hvn2asrm.log`：三个已知失败文件定向复现，27 passed / 3 failed；真实进程超时竞争当轮未复现。
+- `test-a758zcw1.log`：单个派发用例诊断，确认 claim_rejected，尚无认领/槽位/Attempt。
+- `test-arwpffrs.log`：新增确定性期限竞争用例 RED；修复后由下组验证。
+- `test-71c331z2.log`：期限新用例及三个失败文件，4 文件、44 项全部通过（无跳过）。
+- `test-_5fjtts_.log`：受影响 ExecutionService、uncertainty、真实写入进程及默认 Host，4 文件、51 项全部通过（无跳过）。两组不重叠，共 8 文件、95 项。
+- `test-fatn8unp.log` 类型检查通过；`test-ftbrlpnn.log` 边界检查通过（475 文件、0 诊断）。
+
+当前索引保留原 14 文件并追加直接修改的 ExecutionService 测试，共 15 文件；Harness
+selection 继续只引用该索引。除上述 8 文件外，余下 7 文件交 Nezha 独立复验，不宣称本轮运行通过。
+未运行全仓、Phase 或真实模型，未改官方 Task/Feature 元数据或覆盖原失败结论。

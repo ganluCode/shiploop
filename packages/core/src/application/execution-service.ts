@@ -360,7 +360,10 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
         ...workIdentity, sessionId: reservedSession.id,
         expectedRevision: reservedSession.revision, kind: 'started', executionStage: 'runtime',
       });
-      recording = settled(deps.recorder.record({ request: bound.request, handle: recordingHandle, eventIdentityPrefix, signal: controller.signal }));
+      // Install supervision (including its execution deadline) before collection
+      // starts, so the Recorder's equal budget cannot precede the outer one.
+      recording = settled(Promise.resolve().then(() => deps.recorder.record({ request: bound.request,
+        handle: recordingHandle, eventIdentityPrefix, signal: controller.signal })));
     } catch (error) {
       // Keep the handle and stop observation even when post-start persistence fails.
       recording = Promise.resolve({ status: 'rejected', reason: error });

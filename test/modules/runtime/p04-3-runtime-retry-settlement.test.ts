@@ -119,11 +119,18 @@ describe('F-003 real Pi Session, recording and fenced settlement', () => {
       expect(events.filter(event => event.payload?.code === 'pi.retry.success')).toHaveLength(1);
       const input = { request: started.context.request, result, recording, stopped };
       const first = await f.settlement.settle(input);
-      expect(first).toMatchObject({ disposition: 'applied', stopConfirmed: false });
+      expect(first).toMatchObject({ disposition: 'applied', status: 'failed', waitingFor: null, stopConfirmed: false });
+      expect(recording.value).toMatchObject({ status: 'partial', gaps: expect.arrayContaining(['usage_scope_unknown']) });
+      const settlementSession = f.sessions.getAttemptWorkSession(f.projectId, f.claim.receipt.attempt.id)!;
+      expect(await f.json(settlementSession.resultRef!)).toMatchObject({ execution: {
+        result: { terminal: 'completed' }, failure: { kind: 'protocol', reason: 'recording_failed' } },
+        recording: { complete: false, gaps: expect.arrayContaining(['usage_scope_unknown']) } });
       const before = f.query('SELECT COUNT(*) AS count FROM state_events');
       expect(await f.settlement.settle(input)).toMatchObject({ disposition: 'replayed' });
       expect(f.query('SELECT COUNT(*) AS count FROM state_events')).toEqual(before);
-      expect(f.query('SELECT status FROM tasks WHERE id = ?', 't-1')).toEqual({ status: 'running' });
+      // Runtime retry success does not satisfy required recording: unknown usage
+      // scope is retained as a visible gap and blocks verification/delivery.
+      expect(f.query('SELECT status FROM tasks WHERE id = ?', 't-1')).toEqual({ status: 'failed' });
       expect(f.query('SELECT COUNT(*) AS count FROM workspace_leases')).toEqual({ count: 3 });
       expect(manifest.result.lastEventSequence).toBeGreaterThan(0);
     } finally { await f.service.close(); f.close(); }

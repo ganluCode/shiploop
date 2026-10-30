@@ -303,7 +303,9 @@ const idle = (core: CoreApplication) =>
 
 describe('F-006 Work 组合根的暂停/取消与派发结算', () => {
   it('暂停意图提交后立即阻止新认领；补扫不复活；显式继续后只追加 resume 代次', async () => {
-    const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
+    // Real dispatch uses the P06 confirmed Profile gate; establish it through
+    // the fixture's public detect/confirm commands before testing pause/resume.
+    const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true, confirmProjectProfile: true });
     fixtures.push(fixture);
     const core = await openFakeCoreApplication({ dataRoot: fixture.box.dataRoot, capabilityCatalog: fakeCatalog(),
       nowUtcMs: () => BINDING_NOW,
@@ -328,7 +330,9 @@ describe('F-006 Work 组合根的暂停/取消与派发结算', () => {
     const resume = await core.commandService.submit(OWNER,
       commandEnvelope('execution.resume', fixture.projectId, fixture.runId, readRun(fixture).revision) as never);
     expect(resume.status).toBe('completed');
-    expect((await core.workExecution.scan()).runs).toMatchObject([{ claimed: true }]);
+    const resumedScan = await core.workExecution.scan();
+    expect(resumedScan.runs, JSON.stringify({ scan: resumedScan, run: readRun(fixture),
+      dispatch: core.workExecution.dispatchState(fixture.projectId, fixture.runId) })).toMatchObject([{ claimed: true }]);
     await idle(core);
     expect(count(fixture, 'SELECT COUNT(*) AS n FROM attempts')).toBe(1);
     expect(readRun(fixture).status).not.toBe('succeeded');
@@ -356,7 +360,7 @@ describe('F-006 Work 组合根的暂停/取消与派发结算', () => {
   }, 120_000);
 
   it('取消停止当前执行并保留现场，停止确认后释放认领与槽位；重复结算幂等', async () => {
-    const fixture = await openBindingFixture();
+    const fixture = await openBindingFixture({ confirmProjectProfile: true });
     fixtures.push(fixture);
     const hold = createFakeRuntimeGate();
     const core = await openFakeCoreApplication({ dataRoot: fixture.box.dataRoot, capabilityCatalog: fakeCatalog(),

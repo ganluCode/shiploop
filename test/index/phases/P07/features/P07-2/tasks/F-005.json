@@ -10,6 +10,7 @@
       { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
       { "file": "test/modules/runtime/p03-6-runtime-settlement.test.ts", "all": true },
       { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-service.test.ts", "all": true },
       { "file": "test/modules/runtime/p03-6-execution-stopping.test.ts", "all": true },
       { "file": "test/modules/runtime/p03-6-execution-process-stopping.test.ts", "all": true },
       { "file": "test/modules/runtime/p07-2-f004-storage-budget.test.ts", "all": true },

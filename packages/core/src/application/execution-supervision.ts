@@ -79,6 +79,13 @@ export function superviseExecution(input: {
   const observedFromMs = performance.now();
   const stop = (value: ExecutionStopReason, fact?: RuntimeTimeoutFact) => {
     if (finished || reason !== null) return;
+    // Recorder and Runtime share a finite execution budget. If recording's
+    // callback wins after that boundary, preserve the timeout fact even when
+    // the event loop has not delivered the supervisor's timer yet.
+    if (value === 'recording_failed' && (performance.now() - observedFromMs >= input.timeoutMs || deadlineReached())) {
+      value = input.timeoutReason;
+      fact = timeoutFact(elapsed());
+    }
     reason = value;
     if (fact !== undefined) timeout = fact;
     // Abort only this Attempt's collection; cancellation remains independent of stop evidence.
