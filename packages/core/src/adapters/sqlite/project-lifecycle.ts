@@ -107,3 +107,11 @@ export function createSqliteProjectLifecycleAccess(session: SqliteStorageSession
 }
 
 export type SqliteProjectLifecycleAccess = ReturnType<typeof createSqliteProjectLifecycleAccess>;
+
+/**
+ * F-009 复用：项目级活动占用计数（同上完全 fail-closed）；供删除预览清点在
+ * 同一只读事务内取同一口径的活动事实，避免两套阻塞定义漂移。
+ */
+export function readProjectArchiveCloseoutInDatabase(db: Database, projectId: string): ProjectLifecycleCloseout {
+  return readCloseoutInDatabase(db, projectId);
+}

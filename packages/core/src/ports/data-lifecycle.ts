@@ -543,8 +543,20 @@ export function validateDataLifecycleCommandPayload(operation: DataLifecycleOper
     return { confirmation: validateRestoreConfirmation(item.confirmation, operation) };
   }
   if (operation === 'project.delete.preview') {
-    exact(item, ['projectId'], operation, 'payload');
-    return { projectId: validateStableId(item.projectId, context(operation, { type: 'project' }), 'payload.projectId') };
+    // F-009：预览分页游标为可选不透明 base64url（结构深校验由预览端口 decode 完成）；
+    // projectId 与 scope 的一致性由信封层比对。
+    exact(item, ['projectId', 'cursor'], operation, 'payload');
+    const result: { projectId: string; cursor?: string } = {
+      projectId: validateStableId(item.projectId, context(operation, { type: 'project' }), 'payload.projectId'),
+    };
+    if (item.cursor !== undefined) {
+      const cursor = item.cursor;
+      if (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor)) {
+        throw validationError(context(operation, { type: 'project' }), 'payload.cursor', '必须是有效的分页游标');
+      }
+      result.cursor = cursor;
+    }
+    return result;
   }
   if (operation === 'project.delete.confirm') {
     exact(item, ['projectId', 'previewDigest', 'confirmed'], operation, 'payload');

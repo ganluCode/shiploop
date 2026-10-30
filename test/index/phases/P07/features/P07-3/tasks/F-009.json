@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/commands/p07-3-f009-project-delete-preview.test.ts", "all": true },
+      { "file": "test/modules/commands/p07-3-f008-project-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/storage/data-lifecycle-contract.test.ts", "all": true },
+      { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+      { "file": "test/modules/events/events-contract.test.ts", "all": true },
+      { "file": "test/modules/workspace/p03-5-workspace-discard.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/artifact-verify.test.ts", "all": true },
+      { "file": "test/modules/storage/storage-contracts.test.ts", "all": true },
+      { "file": "test/modules/authorization/authorization-contract.test.ts", "all": true }
+    ]
+  }]
+}

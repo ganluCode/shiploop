@@ -112,6 +112,9 @@ import {
 import type {
   WorkspaceDiscardPreview,
 } from '../ports/workspace-discard.js';
+import { PROJECT_DELETE_PREVIEW_OPERATION } from '../ports/project-delete-preview.js';
+import type { ProjectDeletePreviewPage } from '../ports/project-delete-preview.js';
+import type { ProjectDeletePreviewService } from './project-delete-preview.js';
 import type { WorkspaceDiscardService } from './workspace-discard.js';
 import type {
   ExecutionDispatchSignalPort,
@@ -251,6 +254,12 @@ export interface CommandServiceOptions {
    */
   readonly workspaceDiscard?: WorkspaceDiscardService;
   /**
+   * P07-3 / F-009：项目删除只读预览服务（不传则 project.delete.preview
+   * unsupported，不冒充能力）。预览事务外只读清点，事务内仅持久化 completed
+   * 回执（零业务状态/文件变更；与 workspace.discard.preview 同一纪律）。
+   */
+  readonly projectDeletePreview?: ProjectDeletePreviewService;
+  /**
    * F-012：人工批准后的授权显式验证继续依赖（同库只读 Attempt/批次访问 +
    * 生命周期内事务提交；不传则命令 unsupported，不冒充能力）。装配者：
    * composition 根；受控测试可直接注入窄端口实现。
@@ -359,6 +368,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionDispatchSignal = options.executionDispatchSignal;
   const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
+  const projectDeletePreview = options.projectDeletePreview;
   const projectResources = options.projectResources;
   const projectLifecycle = options.projectLifecycle;
   const taskVerificationContinue = options.taskVerificationContinue;
@@ -840,6 +850,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === FINALIZATION_RETRY_OPERATION && finalizationRetry === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P07-3 / F-009：删除预览服务缺席时 unsupported（不冒充能力；能力位与
+        // 确认共享授权面，端口装配是真实支持边界）。
+        if (envelope.operation === PROJECT_DELETE_PREVIEW_OPERATION && projectDeletePreview === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         // P03-5 / F-011：人工丢弃预览/确认服务端口缺席时 unsupported（不冒充
         // 能力；命令面能力位与预览/确认共享授权面，端口装配是真实支持边界）。
         if (
@@ -897,6 +912,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
+          envelope.operation !== PROJECT_DELETE_PREVIEW_OPERATION &&
           envelope.operation !== TASK_VERIFICATION_CONTINUE_OPERATION &&
           envelope.operation !== 'project.resource.import' &&
           envelope.operation !== 'project.resource.enable' &&
@@ -1084,6 +1100,19 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             envelope.scope.projectId,
             envelope.payload,
           );
+        }
+
+        // P07-3 / F-009：项目删除只读预览——事务外完成清点/现场检查/摘要计算
+        // （零业务写入）；事务内只持久化 completed 回执（与 workspace.discard.preview
+        // 同一纪律）。payload 深校验（projectId+cursor）已在信封层完成。
+        let projectDeletePreviewResult: ProjectDeletePreviewPage | undefined;
+        if (envelope.operation === PROJECT_DELETE_PREVIEW_OPERATION && existing === undefined) {
+          const payload = envelope.payload as { projectId: string; cursor?: string };
+          projectDeletePreviewResult = await projectDeletePreview!.preview({
+            principal,
+            projectId: payload.projectId,
+            ...(payload.cursor === undefined ? {} : { cursor: payload.cursor }),
+          });
         }
 
         // P03-5 / F-011：人工丢弃预览为只读检查 + 不可变证据发布（事务外、
@@ -1652,6 +1681,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               transaction,
               now,
             );
+          }
+          if (envelope.operation === PROJECT_DELETE_PREVIEW_OPERATION) {
+            // P07-3 / F-009：只读预览——事务外已完成清点与摘要计算；事务内只
+            // 持久化 completed 回执（零业务状态变更、零事件、零预算）。
+            if (projectDeletePreviewResult === undefined) {
+              throw new TypeError('删除预览缺少事务外准备结果');
+            }
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+              resultRef: createResultRef(randomBytes(32)),
+              result: projectDeletePreviewResult,
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
           }
           if (envelope.operation === WORKSPACE_DISCARD_PREVIEW_OPERATION) {
             // P03-5 / F-011：只读预览——事务外已完成检查与证据发布；事务内只

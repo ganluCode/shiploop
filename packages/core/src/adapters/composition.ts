@@ -52,6 +52,7 @@ import type { CommandReceiptsService } from '../application/command-receipts-ser
 import { createCommandService } from '../application/command-service.js';
 import { createProjectLifecycleCommandHandler } from '../application/project-lifecycle.js';
 import type { ProjectLifecycleCommandHandler as ProjectLifecycleHandler } from '../ports/project-lifecycle.js';
+import type { ProjectDeletePreviewService } from '../application/project-delete-preview.js';
 import { createExecutionStopControl } from '../application/execution-stop-control.js';
 import { createVerificationStopControl } from '../application/verification-stop-control.js';
 import type { VerificationStopControl } from '../ports/verification-stop.js';
@@ -224,6 +225,8 @@ import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createSqliteProjectLifecycleAccess } from './sqlite/project-lifecycle.js';
+import { createSqliteProjectDeleteInventory } from './sqlite/project-delete-inventory.js';
+import { createProjectDeletePreviewService } from '../application/project-delete-preview.js';
 import { createSqliteMaintenanceWriteGate } from './sqlite/data-maintenance.js';
 import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
@@ -357,6 +360,8 @@ export interface CoreApplication {
   readonly commandReceiptStore: CommandReceiptStore;
   /** P07-3 / F-008：项目软归档/显式恢复命令句柄与收尾只读快照。 */
   readonly projectLifecycle: ProjectLifecycleHandler;
+  /** P07-3 / F-009：项目删除只读预览服务（命令面 project.delete.preview 同一能力）。 */
+  readonly projectDeletePreview: ProjectDeletePreviewService;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
   readonly commandService: CommandService;
   /**
@@ -1351,10 +1356,22 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       readCloseout: projectLifecycleCloseouts.readProjectArchiveCloseout,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
+    // P07-3 / F-009：项目删除只读预览（SQLite 一致读清点 + 受界工作区检查器 +
+    // 备份保留清点；预览零业务写入，未装配服务时命令 unsupported）。
+    const projectDeletePreview = createProjectDeletePreviewService({
+      inventory: createSqliteProjectDeleteInventory({
+        session,
+        files: artifactFileStore,
+        backupRoot: join(basePathService.dataRoot(), 'backups'),
+      }),
+      inspectorFor: async projectId => workspaceInspectorForCall(projectId),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
     const commandService = createCommandService({
       maintenanceGate,
       atomicStore,
       projectLifecycle,
+      projectDeletePreview,
       batchDelivery,
       featureDelivery,
       repositoryInspector,
@@ -1565,6 +1582,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptsService,
       commandService,
       projectLifecycle,
+      projectDeletePreview,
       integrationPlanGeneration,
       integrationPlanControl,
       gitAgentRepair,
