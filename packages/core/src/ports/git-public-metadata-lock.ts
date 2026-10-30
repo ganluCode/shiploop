@@ -11,6 +11,8 @@ export interface GitPublicMetadataLockInput {
 }
 
 export interface GitPublicMetadataLease {
+  /** Recheck pinned directories, claim identity and native locks before a side effect. */
+  assertCurrent?(): void;
   /** Releases only the claim acquired by this lease. Repeated release is harmless. */
   release(): Promise<void>;
 }

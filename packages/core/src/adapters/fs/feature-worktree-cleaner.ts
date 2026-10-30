@@ -137,6 +137,7 @@ export function createFeatureWorktreeCleaner(options: {
       }
     }
     async function remove(verified: WorkspaceCleanerVerified): Promise<WorkspaceCleanerOutcome> {
+      if (!isDeepStrictEqual(await directoryIdentity(), verified.directoryIdentity)) throw new Error('directory_identity_changed');
       // A startup/result exception cannot prove that the supervised group stopped.
       isolated = true;
       const handle = await processes.start({ cwd: binding.canonicalPath,
@@ -149,7 +150,14 @@ export function createFeatureWorktreeCleaner(options: {
         maxInputBytes: 65_536, maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
         timeoutMs: options.timeoutMs ?? 30_000 }, async identity => {
           persist(() => checkpoint.recordProcess(identity));
-          return options.confirmProcessIdentity(identity);
+          const confirmed = await options.confirmProcessIdentity(identity);
+          // Confirmation can yield while durable evidence is published. Recheck
+          // the exact directory and gates before the supervisor releases argv.
+          if (!isDeepStrictEqual(await directoryIdentity(), verified.directoryIdentity)) throw new Error('directory_identity_changed');
+          gates.fence();
+          const refused = gates.authorize();
+          if (refused !== null) throw new Error(refused);
+          return confirmed;
         });
       const chunks: Buffer[] = [];
       let outputFailed = false;

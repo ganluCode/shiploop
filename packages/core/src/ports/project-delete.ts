@@ -1,3 +1,4 @@
+import type { ProjectDeleteCheckpoints } from './project-delete-executor.js';
 import type { TrustedPrincipal } from './authorization.js';
 import type { CommandReceipt, ValidatedCommandEnvelope } from './commands.js';
 import type { ProjectDeleteInventory } from './project-delete-preview.js';
@@ -33,7 +34,7 @@ export interface ProjectDeleteExecutorIdentity {
  * preserving source repositories/branches/backups. Unknown/partial facts return false.
  */
 export type ProjectDeleteExternalVerifier = (operation: ProjectDeleteOperation) => Promise<boolean>;
-export interface ProjectDeleteStore {
+export interface ProjectDeleteStore extends ProjectDeleteCheckpoints {
   findReceipt(principal: TrustedPrincipal, commandId: string, digest: string): CommandReceipt | undefined;
   accept(principal: TrustedPrincipal, envelope: ProjectDeleteEnvelope, digest: string, inventory: ProjectDeleteInventory): CommandReceipt;
   get(principal: TrustedPrincipal, operationId: string): ProjectDeleteOperation;

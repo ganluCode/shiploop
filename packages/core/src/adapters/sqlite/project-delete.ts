@@ -7,6 +7,8 @@ import type { MaintenanceWriteGate } from '../../ports/data-maintenance.js';
 import { stableStringify } from '../../ports/feature-plan.js';
 import { hasProjectArchiveBlockers } from '../../ports/project-lifecycle.js';
 import { PROJECT_DELETE_POLICY, computeProjectDeletePreviewDigest } from '../../ports/project-delete-preview.js';
+import { validateWorkspaceCleanerVerified } from '../../ports/workspace-cleaner.js';
+import { isDeepStrictEqual } from 'node:util';
 import { PROJECT_DELETE_STEPS, type ProjectDeleteExecutorIdentity, type ProjectDeleteManifest, type ProjectDeleteOperation, type ProjectDeleteStore } from '../../ports/project-delete.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { readProjectArchiveCloseoutInDatabase } from './project-lifecycle.js';
@@ -165,6 +167,64 @@ export function createSqliteProjectDeleteStore(session: SqliteStorageSession, op
         return readOperation(readRow(operationId));
       });
     },
+    priorWorkspaceRemoval(identity, workspaceId) {
+      const operation = owned(identity);
+      const workspace = db.prepare("SELECT status FROM managed_workspaces WHERE project_id = ? AND id = ?").get(operation.target_project_id, workspaceId) as { status: string } | undefined;
+      if (workspace?.status !== 'cleaned') return null;
+      const row = db.prepare("SELECT id, kind FROM workspace_operations WHERE project_id = ? AND workspace_id = ? AND status = 'succeeded' AND kind IN ('cleanup','discard') ORDER BY updated_at DESC LIMIT 1")
+        .get(operation.target_project_id, workspaceId) as { id: string; kind: string } | undefined;
+      if (!row) return null;
+      const prefix = row.kind === 'cleanup' ? 'clean' : 'discard';
+      const recorded = receipts.findReceiptByCommandId(`core-workspace-${prefix}-verified`, row.id);
+      if (recorded?.status !== 'completed' || recorded.scope.kind !== 'project' || recorded.scope.projectId !== operation.target_project_id) return null;
+      const result = recorded.result as { workspaceId?: string; value?: unknown };
+      if (result.workspaceId !== workspaceId) return null;
+      const processes = db.prepare('SELECT command_id, result_json FROM command_receipts WHERE principal_id = ? AND project_id = ? AND json_extract(result_json, \'$.workspaceId\') = ?')
+        .all(`core-workspace-${prefix}-process`, operation.target_project_id, workspaceId) as { command_id: string; result_json: string }[];
+      for (const process of processes) {
+        const stop = receipts.findReceiptByCommandId(`core-workspace-${prefix}-stop`, process.command_id);
+        if (stop?.status !== 'completed' || !isDeepStrictEqual(stop.result, JSON.parse(process.result_json))) conflict('cleanup_unconfirmed');
+      }
+      return validateWorkspaceCleanerVerified(result.value);
+    },
+    assertCurrent(principal, identity) {
+      return session.transactWrite(`${OP}.executor.guard`, () => {
+        const row = owned(identity);
+        authorize(principal, row.target_project_id);
+        if (row.principal_id !== principal.principalId) throw new PublicError('forbidden', OP);
+        const operation = readOperation(row);
+        if (!operation.manifest || !['running', 'failed'].includes(operation.status)) conflict('executor_not_running');
+        const closeout = readProjectArchiveCloseoutInDatabase(db, row.target_project_id);
+        if (closeout.status !== 'deleting' || !closeout.clear) conflict('active_execution');
+        assertNoUncertainWriters(db, row.target_project_id);
+        if (operation.manifest.databaseDigestAfterAccept !== computeProjectDeleteDatabaseDigest(db, row.target_project_id)) conflict('database_snapshot_changed');
+        return operation;
+      });
+    },
+    readCheckpoints(identity, step) {
+      owned(identity);
+      if (!PROJECT_DELETE_STEPS.includes(step)) throw new TypeError('非法删除步骤');
+      const row = db.prepare('SELECT checkpoint_json, checkpoint_digest FROM project_delete_steps WHERE operation_id = ? AND step = ?')
+        .get(identity.operationId, step) as { checkpoint_json: string; checkpoint_digest: string };
+      const value = JSON.parse(row.checkpoint_json) as Record<string, unknown>;
+      if (hash(value) !== row.checkpoint_digest) conflict('checkpoint_corrupt');
+      return value;
+    },
+    checkpoint(identity, step, key, value) {
+      session.transactWrite(`${OP}.checkpoint`, () => {
+        if (!/^[A-Za-z0-9._:-]{1,200}$/.test(key) || value === undefined) throw new TypeError('非法删除检查点');
+        const prior = store.readCheckpoints(identity, step);
+        if (Object.hasOwn(prior, key)) {
+          if (hash(prior[key]) !== hash(value)) conflict('checkpoint_immutable');
+          return;
+        }
+        const next = { ...prior, [key]: value };
+        const json = JSON.stringify(next);
+        if (Buffer.byteLength(json) > 16 * 1024 * 1024) conflict('checkpoint_budget_exhausted');
+        db.prepare('UPDATE project_delete_steps SET checkpoint_json = ?, checkpoint_digest = ? WHERE operation_id = ? AND step = ?')
+          .run(json, hash(next), identity.operationId, step);
+      });
+    },
     recordStep(identity, step, status, evidenceDigest) {
       session.transactWrite(`${OP}.step`, () => {
         const row = owned(identity);
@@ -211,6 +271,7 @@ export function createSqliteProjectDeleteStore(session: SqliteStorageSession, op
             db.prepare(`DELETE FROM ${quote(table)} WHERE ${predicate}`).run(row.target_project_id);
           }
           if ((db.pragma('foreign_key_check') as unknown[]).length !== 0) conflict('remaining_foreign_key_reference');
+          db.prepare("UPDATE project_delete_steps SET checkpoint_json = '{}', checkpoint_digest = ? WHERE operation_id = ?").run(hash({}), row.id);
           db.prepare("UPDATE project_delete_operations SET status = 'completed', manifest_json = NULL, failed_step = NULL, updated_at = ? WHERE id = ?").run(now(), row.id);
           db.prepare("UPDATE maintenance_occupancy SET state = 'idle', operation = NULL, operation_id = NULL, owner_id = NULL, host_instance_id = NULL, acquired_at = NULL, blocked_reason = NULL, revision = revision + 1 WHERE id = 'global'").run();
           return readOperation(readRow(row.id));

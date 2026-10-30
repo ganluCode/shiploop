@@ -2946,8 +2946,12 @@ export const projectDeleteSteps = sqliteTable('project_delete_steps', {
   step: text('step').notNull(),
   status: text('status').notNull().default('pending'),
   evidenceDigest: text('evidence_digest'),
+  checkpointJson: text('checkpoint_json').notNull().default('{}'),
+  checkpointDigest: text('checkpoint_digest').notNull().default('44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),
 }, table => [
   primaryKey({ columns: [table.operationId, table.step] }),
+  check('project_delete_checkpoint_json_check', sql`json_valid(${table.checkpointJson}) AND json_type(${table.checkpointJson}) = 'object'`),
+  check('project_delete_checkpoint_digest_check', sql`length(${table.checkpointDigest}) = 64 AND ${table.checkpointDigest} NOT GLOB '*[^0-9a-f]*'`),
   check('project_delete_steps_step_check', sql`${table.step} IN ('artifact_bodies','artifact_staging','managed_worktrees')`),
   check('project_delete_steps_status_check', sql`${table.status} IN ('pending','completed','failed')`),
   check('project_delete_steps_evidence_digest_check', sql`${table.evidenceDigest} IS NULL OR length(${table.evidenceDigest}) = 64`),

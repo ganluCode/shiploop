@@ -89,7 +89,7 @@ function syncArtifactBodies(f: ClaimFixture, root: string): void {
   }
 }
 
-export async function openPreviewFixture(pageSize = 5_000): Promise<PreviewFixture> {
+export async function openPreviewFixture(pageSize = 5_000, options: { readonly prepareWorkspace?: boolean } = {}): Promise<PreviewFixture> {
   const claim = await openClaimFixture();
   const box = claim.box;
   const root = box.box.root;
@@ -175,7 +175,7 @@ export async function openPreviewFixture(pageSize = 5_000): Promise<PreviewFixtu
 
   // 真实受管 worktree：完整 preparation 栈（与 workspace discard 测试同一装配）。
   let worktreePath = '';
-  {
+  if (options.prepareWorkspace !== false) {
     const paths = createPathService({ dataRoot: root, projectLookup: createSqliteStateStore(session), featureLookup: createSqlitePlanAccess(session) });
     const authority = createWorkWorkspaceAuthority({ authorizedRoots: [root], preparationPaths: paths });
     const resources = createSqliteWorkResourceAccess(session, { workspaceAuthority: authority, nowUtcMs: () => clock.now });
@@ -209,8 +209,8 @@ export async function openPreviewFixture(pageSize = 5_000): Promise<PreviewFixtu
     });
     worktreePath = String((session.database.prepare('SELECT canonical_path FROM managed_workspaces WHERE id = ?')
       .get(prepared.workspace.id) as { canonical_path: string }).canonical_path);
-    syncArtifactBodies(claim, root);
   }
+  syncArtifactBodies(claim, root);
 
   return {
     claim, root, session, owner, projectId, worktreePath: () => worktreePath, clock,

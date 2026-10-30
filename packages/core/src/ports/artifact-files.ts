@@ -291,6 +291,8 @@ export interface ArtifactFileStore {
   discardStaging(staging: ArtifactStagingWrite | ArtifactStagingFile): Promise<void>;
   /** 读取入口：no-follow 打开并核验常规文件；逃逸/缺失/非常规文件明确报错。 */
   openFinalRead(key: unknown): Promise<ArtifactFileContent>;
+  /** Read-only managed staging inspection; same no-follow and bounded consumer rules. */
+  openStagingRead(staging: { readonly relativePath: string }): Promise<ArtifactFileContent>;
   /** 核对入口：lstat 元数据（不读取正文、不跟随链接）。 */
   statFinal(key: unknown): Promise<ArtifactFileStat>;
   /** 扫描项目正式制品区：不跟随链接、每批限量；项目尚无制品区时返回空页。 */

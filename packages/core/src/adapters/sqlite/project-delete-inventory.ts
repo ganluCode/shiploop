@@ -464,7 +464,25 @@ export function createSqliteProjectDeleteInventory(options: {
             reasons.push('file_scan_limit');
             break;
           }
-          extraObjects.push({ kind: 'artifact-staging-entry', id: entry.relativePath, disposition: 'delete' });
+          if (entry.kind !== 'file' || entry.sizeBytes === null || entry.sizeBytes > limits.maxBodyBytes) {
+            reasons.push('staging_body_unavailable');
+            continue;
+          }
+          const content = await files.openStagingRead({ relativePath: entry.relativePath });
+          const hash = createHash('sha256');
+          let size = 0;
+          try {
+            for await (const chunk of content.stream) {
+              const bytes = chunk as Buffer;
+              size += bytes.length;
+              if (size > limits.maxBodyBytes || totalBytes + size > limits.maxTotalBodyBytes) throw new Error('staging_body_limit');
+              hash.update(bytes);
+            }
+          } finally { content.stream.destroy(); }
+          totalBytes += size;
+          if (size !== entry.sizeBytes || size !== content.sizeBytes) reasons.push('staging_body_changed');
+          extraObjects.push({ kind: 'artifact-staging-entry', id: entry.relativePath, disposition: 'delete',
+            file: { sizeBytes: size, sha256: hash.digest('hex') } });
         }
         stagingCursor = page.nextCursor ?? undefined;
         if (stagingCursor === undefined || reasons.includes('file_scan_limit')) break;

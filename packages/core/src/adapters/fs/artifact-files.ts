@@ -711,6 +711,26 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
       }
     },
 
+    async openStagingRead(staging): Promise<ArtifactFileContent> {
+      const op = 'ArtifactFileStore.openStagingRead';
+      const ref = parseStagingRef(staging.relativePath, op);
+      const abs = toAbsolute(ref.relativePath, op);
+      assertAncestorsInsideRoot(abs, ref.relativePath, op);
+      assertRegularLeaf(abs, ref.relativePath, op);
+      let fd: number | undefined;
+      try {
+        fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1) throw new ArtifactFileError('not_regular_file', op, 'Staging leaf is not a private regular file');
+        const stream = createReadStream(ref.relativePath, { fd, autoClose: true });
+        return { relativePath: ref.relativePath, sizeBytes: stat.size, stream };
+      } catch (error) {
+        if (fd !== undefined) closeSync(fd);
+        if (error instanceof ArtifactFileError) throw error;
+        throw mapFsError(error, op, ref.relativePath);
+      }
+    },
+
     async statFinal(key: unknown): Promise<ArtifactFileStat> {
       const op = 'ArtifactFileStore.statFinal';
       const valid = validateArtifactFileKey(key, op);

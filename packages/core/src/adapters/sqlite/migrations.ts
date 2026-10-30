@@ -16,6 +16,7 @@
  */
 import { createHash } from 'node:crypto';
 import { PROJECT_DELETE_MIGRATION_SQL } from './project-delete-migration.js';
+import { PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL } from './project-delete-checkpoint-migration.js';
 import { WORK_RECORDING_V32_JSON_GUARDS_SQL } from './work-recording-constraints.js';
 
 export interface SqliteMigration {
@@ -4369,4 +4370,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 54, sql: MIGRATION_054_SQL, checksum: sha256Hex(MIGRATION_054_SQL) },
   { version: 55, sql: MIGRATION_055_SQL, checksum: sha256Hex(MIGRATION_055_SQL) },
   { version: 56, sql: PROJECT_DELETE_MIGRATION_SQL, checksum: sha256Hex(PROJECT_DELETE_MIGRATION_SQL) },
+  { version: 57, sql: PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL, checksum: sha256Hex(PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL) },
 ];

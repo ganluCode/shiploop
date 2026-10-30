@@ -125,6 +125,9 @@ export function createFaultyArtifactFileStore(
       maybeFail('openFinalRead', 'ArtifactFileStore.openFinalRead');
       return inner.openFinalRead(key);
     },
+    openStagingRead(staging) {
+      return inner.openStagingRead(staging);
+    },
     async statFinal(key: unknown) {
       maybeFail('statFinal', 'ArtifactFileStore.statFinal');
       return inner.statFinal(key);

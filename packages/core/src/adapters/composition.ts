@@ -227,6 +227,9 @@ import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createSqliteProjectLifecycleAccess } from './sqlite/project-lifecycle.js';
 import { createSqliteProjectDeleteInventory } from './sqlite/project-delete-inventory.js';
 import { createProjectDeletePreviewService } from '../application/project-delete-preview.js';
+import { createProjectDeleteExecutor } from '../application/project-delete-executor.js';
+import { createProjectDeleteFiles } from './fs/project-delete-files.js';
+import type { ProjectDeleteExecutor } from '../ports/project-delete-executor.js';
 import type { ProjectDeleteStore } from '../ports/project-delete.js';
 import { createProjectDeleteCommandHandler } from '../application/project-delete.js';
 import { createSqliteProjectDeleteStore } from './sqlite/project-delete.js';
@@ -365,6 +368,7 @@ export interface CoreApplication {
   readonly projectLifecycle: ProjectLifecycleHandler;
   /** P07-3 / F-010：可信内部删除执行/续核端口，不直接暴露给客户端。 */
   readonly projectDeleteStore: ProjectDeleteStore;
+  readonly projectDeleteExecutor: ProjectDeleteExecutor;
   /** P07-3 / F-009：项目删除只读预览服务（命令面 project.delete.preview 同一能力）。 */
   readonly projectDeletePreview: ProjectDeletePreviewService;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
@@ -1373,6 +1377,19 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
     const projectDeleteStore = createSqliteProjectDeleteStore(session, { nowUtcMs, maintenanceGate });
+    const projectDeleteExecutor = createProjectDeleteExecutor({
+      store: projectDeleteStore,
+      files: createProjectDeleteFiles({ dataRoot: basePathService.dataRoot() }),
+      gitLock: workspaceGitLock,
+      bindingFor: projectId => stateStore.getRepositoryBinding(projectId),
+      async cleanerFor(projectId, confirm) {
+        const binding = await stateStore.getRepositoryBinding(projectId);
+        const inspector = createWorkspaceInspector({ authorizedRoots: [basePathService.dataRoot(), binding.canonicalPath],
+          confirmProcessIdentity: confirm });
+        return createFeatureWorktreeCleaner({ inspector, confirmProcessIdentity: confirm });
+      },
+      verifyProcessStop: verifyWorkspaceStop,
+    });
     const projectDelete = createProjectDeleteCommandHandler({ store: projectDeleteStore, preview: projectDeletePreview, nowUtcMs });
     const commandService = createCommandService({
       projectDelete,
@@ -1591,6 +1608,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandService,
       projectLifecycle,
       projectDeleteStore,
+      projectDeleteExecutor,
       projectDeletePreview,
       integrationPlanGeneration,
       integrationPlanControl,

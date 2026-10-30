@@ -1,4 +1,4 @@
-import { currentSchemaVersion, currentMigrationVersions } from '../../../helpers/current-schema.ts';
+import { currentMigrationVersions } from '../../../helpers/current-schema.ts';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -17,9 +17,8 @@ it('[case:upgrade-rollback-constraints] v55 支持库追加升级保存旧事实
     db.prepare("INSERT INTO projects (id, created_at, updated_at, display_name, status, labels) VALUES ('kept', 1, 1, '旧项目正文', 'archived', '[]')").run();
     const before = db.prepare('SELECT * FROM projects').all();
     const guards = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all();
-    const last = SQLITE_MIGRATIONS.at(-1)!;
+    const last = SQLITE_MIGRATIONS.find(migration => migration.version === 56)!;
     expect(last.version).toBe(56);
-    expect(currentSchemaVersion).toBe(last.version);
     expect(currentMigrationVersions).toEqual(SQLITE_MIGRATIONS.map(migration => migration.version));
     const badSql = last.sql + '\nINSERT INTO projects(id) VALUES (NULL);';
     await expect(migrateSqliteStorage(session, {
@@ -29,7 +28,7 @@ it('[case:upgrade-rollback-constraints] v55 支持库追加升级保存旧事实
     expect(db.prepare('SELECT * FROM projects').all()).toEqual(before);
     expect(db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all()).toEqual(guards);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'project_delete_operations'").get()).toBeUndefined();
-    const upgraded = await migrateSqliteStorage(session, { backupPath: join(box.path, 'before-upgrade.sqlite') });
+    const upgraded = await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.filter(m => m.version <= 56), backupPath: join(box.path, 'before-upgrade.sqlite') });
     expect(upgraded.appliedVersions).toEqual([56]);
     expect(db.prepare('SELECT * FROM projects').all()).toEqual(before);
     expect(db.prepare('SELECT checksum FROM schema_migrations WHERE version <= 55 ORDER BY version').all()).toEqual(previous.map(m => ({ checksum: m.checksum })));

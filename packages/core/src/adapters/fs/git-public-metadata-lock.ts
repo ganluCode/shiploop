@@ -57,6 +57,8 @@ function canonicalize(input: GitPublicMetadataLockInput): Claim {
   try {
     const workspacePath = realpathSync(input.workspacePath);
     const gitCommonDir = realpathSync(input.gitCommonDir);
+    if (!lstatSync(input.workspacePath).isDirectory() || !lstatSync(input.gitCommonDir).isDirectory()
+      || workspacePath !== resolve(input.workspacePath) || gitCommonDir !== resolve(input.gitCommonDir)) throw conflict();
     const observedIdentity = deriveObservedRepoIdentity(gitCommonDir);
     // Existing pre-P06 bindings retain their path-derived identity; new bindings use inode identity.
     if ((input.repoIdentity !== observedIdentity && input.repoIdentity !== deriveRepoIdentity(gitCommonDir))
@@ -155,6 +157,8 @@ export function createGitPublicMetadataLock(): GitPublicMetadataLock {
       const claim = canonicalize(input);
       if (hasNativeLock(claim)) throw busy('git_native_lock');
       const path = claimPath(claim);
+      const observedIdentity = deriveObservedRepoIdentity(claim.gitCommonDir);
+      const workspaceStat = lstatSync(claim.workspacePath, { bigint: true });
       let fd: number;
       try { fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600); }
       catch (error) {
@@ -170,7 +174,20 @@ export function createGitPublicMetadataLock(): GitPublicMetadataLock {
       finally { closeSync(fd); }
       // Partial writes deliberately retain a claim; only the exact owner may release it.
       let released = false;
-      return { async release() {
+      return { assertCurrent() {
+        if (released) throw conflict();
+        canonicalize(input);
+        const current = lstatSync(claim.workspacePath, { bigint: true });
+        if (deriveObservedRepoIdentity(claim.gitCommonDir) !== observedIdentity
+          || current.dev !== workspaceStat.dev || current.ino !== workspaceStat.ino || current.birthtimeNs !== workspaceStat.birthtimeNs) throw conflict();
+        const fd = openSync(path, READ_FLAGS);
+        try {
+          const opened = fstatSync(fd), currentClaim = lstatSync(path);
+          if (opened.dev !== inode.dev || opened.ino !== inode.ino || opened.dev !== currentClaim.dev
+            || opened.ino !== currentClaim.ino || !owns(readClaim(fd), claim)) throw conflict();
+        } finally { closeSync(fd); }
+        if (hasNativeLock(claim)) throw busy('git_native_lock');
+      }, async release() {
         if (released) return;
         try { removeOwned(path, claim, inode, false); }
         catch (error) {

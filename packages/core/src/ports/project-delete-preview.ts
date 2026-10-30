@@ -67,6 +67,8 @@ export interface ProjectDeleteObjectFact {
   readonly kind: string;
   readonly id: string;
   readonly disposition: ProjectDeleteDisposition;
+  /** Fixed content identity for a managed staging leaf, captured by preview. */
+  readonly file?: { readonly sizeBytes: number; readonly sha256: string };
 }
 
 /** 制品正文文件事实：摘要由预览现场重新哈希得出（只读），并与登记身份核对。 */
@@ -277,7 +279,7 @@ export function computeProjectDeletePreviewDigest(
     repositoryBindings: inventory.repositoryBindings.map(binding => [
       binding.bindingId, binding.repoIdentity, binding.revision, binding.bindingRevision,
     ]),
-    objects: inventory.objects.map(object => [object.kind, object.id, object.disposition]),
+    objects: inventory.objects.map(object => [object.kind, object.id, object.disposition, object.file ?? null]),
     totalObjects: inventory.totalObjects,
     artifactBodies: inventory.artifactBodies.map(body => [body.artifactId, body.sizeBytes, body.sha256]),
     workspaces: inventory.workspaces.map(workspace => [

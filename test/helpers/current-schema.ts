@@ -10,5 +10,6 @@
 // P06-6 / F-004：Run 独立标签元数据（v53）；P03-7：Verifier 进程身份只追加事实（v54）。
 // P07-3 / F-002：维护占用单行 fencing（v55）；修复当时未同步本常量的遗漏。
 // P07-3 / F-010：项目删除 operation、分步进展与最小回执（v56）。
-export const currentSchemaVersion = 56;
+// P07-3 / F-011：删除 operation 的逐步持久检查点（v57）。
+export const currentSchemaVersion = 57;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);
