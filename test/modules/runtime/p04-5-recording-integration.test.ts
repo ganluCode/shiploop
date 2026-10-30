@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 it('[case:production-recording] publishes queryable bodies and indexes through the production Work composition', async () => {
-  fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
+  fixture = await openBindingFixture({ confirmProjectProfile: true, secondTask: true, secondTaskDependsOnFirst: true });
   host = await startHost({ dataRoot: fixture.box.dataRoot, capabilityCatalog: createStaticRuntimeCapabilityCatalog([{ runtimeId: 'fake', providers: [{ providerId: 'test-provider', models: ['fake-model'] }] }]),
     env: {}, workRuntimeFactory: createFakeWorkRuntimeFactory({
       providers: [{ providerId: 'test-provider', models: ['fake-model'] }],

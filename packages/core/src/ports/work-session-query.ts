@@ -241,6 +241,7 @@ export interface WorkSessionSettlementEvidence {
     readonly complete: boolean;
     readonly manifestRef: string | null;
     readonly failure: string | null;
+    readonly cleanupStatus?: 'confirmed' | 'cleanup_unconfirmed';
     readonly gaps: readonly string[];
     readonly watermark: number | null;
   };
@@ -449,7 +450,7 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
     const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
     rejectUnknownKeys(
       recording,
-      ['complete', 'manifestRef', 'failure', 'gaps', 'watermark', 'mode'],
+      ['complete', 'manifestRef', 'failure', 'gaps', 'watermark', 'mode', 'cleanupStatus'],
       EVIDENCE_CONTEXT,
       'evidence.recording',
     );
@@ -476,6 +477,8 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
         complete: recording.complete,
         manifestRef,
         failure: nullableToken(recording.failure, 'evidence.recording.failure'),
+        cleanupStatus: recording.cleanupStatus === undefined ? undefined : recording.cleanupStatus === 'confirmed' || recording.cleanupStatus === 'cleanup_unconfirmed'
+          ? recording.cleanupStatus : (() => { throw validationError(EVIDENCE_CONTEXT, 'evidence.recording.cleanupStatus', 'invalid_cleanup_status'); })(),
         gaps: boundedGaps(recording.gaps, 'evidence.recording.gaps'),
         watermark:
           recording.watermark === null
@@ -691,6 +694,7 @@ export interface PublicWorkSessionResultEvidence {
     readonly complete: boolean;
     readonly manifestRef: string | null;
     readonly failure: string | null;
+    readonly cleanupStatus?: 'confirmed' | 'cleanup_unconfirmed';
     readonly gaps: readonly string[];
     readonly watermark: number | null;
   };
@@ -733,7 +737,7 @@ export function validatePublicWorkSessionResultEvidence(value: unknown): PublicW
   if (keys.some(key => !Object.hasOwn(raw, key))) throw validationError(EVIDENCE_CONTEXT, 'evidence', 'missing_field');
   const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
   const stop = requirePlainObject(raw.stop, EVIDENCE_CONTEXT, 'evidence.stop');
-  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'failure', 'gaps', 'watermark', 'mode'], EVIDENCE_CONTEXT, 'evidence.recording');
+  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'failure', 'gaps', 'watermark', 'mode', 'cleanupStatus'], EVIDENCE_CONTEXT, 'evidence.recording');
   rejectUnknownKeys(stop, ['evidence', 'failure'], EVIDENCE_CONTEXT, 'evidence.stop');
   if (raw.kind === 'runtime-not-started') {
     if (raw.routing !== undefined || raw.result !== null || raw.control !== null || recording.complete !== false || recording.manifestRef !== null ||
