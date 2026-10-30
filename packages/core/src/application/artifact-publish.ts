@@ -14,8 +14,8 @@
  *   （hard link 不覆盖 + 目录同步）→ transitionArtifact（短事务 CAS ready）；
  * - 内容逐块增量计算 SHA-256 与字节数，配合背压（drain）写入，绝不将整个
  *   大流无限缓存在内存；限制显式有限：maxSizeBytes 超限即失败、timeoutMs
- *   为 staging 阶段时间预算（时钟可注入以保证确定性测试）、AbortSignal 支持
- *   取消（含等待下一块期间的有界中止）；
+ *   为打开 staging 至发布/核验完成的总时间预算；wall-clock 定时器在等待前
+ *   生效，注入时钟保留可测预算检查。每次失败撤销内部 AbortSignal 的发布资格；
  * - 失败语义（不伪装成功、不自动删除未知文件）：
  *   · register 失败：无任何副作用，stage='register'；
  *   · staging/verify/publish 失败（超限、超时、取消、流错误、非字节块、
@@ -34,7 +34,6 @@
  * 命令；断电/真实磁盘满演练与其他平台验收不在本阶段（注入故障一律明确标注）。
  */
 import { createHash } from 'node:crypto';
-import { once } from 'node:events';
 import { isStorageError } from '../ports/errors.js';
 import { ArtifactFileError, isArtifactFileError } from '../ports/artifact-files.js';
 import type {
@@ -79,11 +78,14 @@ export type ArtifactPublishFailureCode =
   /** 文件端口错误（写入/同步/发布失败等，见 cause）。 */
   | 'file';
 
+export type ArtifactPublishCleanupStatus = 'confirmed' | 'cleanup_unconfirmed';
+
 export interface ArtifactPublishErrorOptions {
   readonly projectId: string;
   readonly artifactId: string | null;
   readonly details?: Readonly<Record<string, unknown>>;
   readonly cause?: unknown;
+  readonly cleanupStatus?: ArtifactPublishCleanupStatus;
 }
 
 /**
@@ -97,6 +99,7 @@ export class ArtifactPublishError extends Error {
   readonly projectId: string;
   readonly artifactId: string | null;
   readonly details: Readonly<Record<string, unknown>> | undefined;
+  readonly cleanupStatus: ArtifactPublishCleanupStatus;
 
   constructor(
     stage: ArtifactPublishStage,
@@ -111,6 +114,7 @@ export class ArtifactPublishError extends Error {
     this.projectId = options.projectId;
     this.artifactId = options.artifactId;
     this.details = options.details;
+    this.cleanupStatus = options.cleanupStatus ?? 'confirmed';
   }
 }
 
@@ -125,7 +129,7 @@ export function isArtifactPublishError(
 export interface ArtifactPublishLimits {
   /** 正文最大字节数（≥1 整数；实测超限即失败）。 */
   readonly maxSizeBytes: number;
-  /** staging 阶段时间预算毫秒（≥1 整数；超时即失败）。 */
+  /** 打开 staging 至发布/核验完成的总预算毫秒（1..2^31-1）。 */
   readonly timeoutMs: number;
 }
 
@@ -222,14 +226,68 @@ export interface ArtifactPublisherDeps {
   readonly nowMs?: () => number;
 }
 
+class PublishWaitControlError extends Error {
+  readonly reason: 'timeout' | 'cancelled';
+
+  constructor(reason: 'timeout' | 'cancelled') {
+    super(reason);
+    this.name = 'PublishWaitControlError';
+    this.reason = reason;
+  }
+}
+
+/** Arm cancellation and the timer before invoking an operation, including synchronous work. */
+function waitWithDeadline<T>(
+  operation: () => PromiseLike<T> | T,
+  options: { readonly signal?: AbortSignal; readonly deadlineMs: number },
+): Promise<T> {
+  const { signal, deadlineMs } = options;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const clear = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clear();
+      reject(error);
+    };
+    const onAbort = (): void => fail(signal?.reason instanceof PublishWaitControlError
+      ? signal.reason : new PublishWaitControlError('cancelled'));
+    if (signal?.aborted) { onAbort(); return; }
+    if (Date.now() >= deadlineMs) { fail(new PublishWaitControlError('timeout')); return; }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => fail(new PublishWaitControlError('timeout')), deadlineMs - Date.now());
+    let pending: Promise<T>;
+    try { pending = Promise.resolve(operation()); } catch (error) { fail(error); return; }
+    pending.then(value => {
+      if (settled) return;
+      // A synchronous syscall may have blocked the timer; never accept its late result.
+      if (signal?.aborted) { onAbort(); return; }
+      if (Date.now() >= deadlineMs) { fail(new PublishWaitControlError('timeout')); return; }
+      settled = true;
+      clear();
+      resolve(value);
+    }, fail);
+  });
+}
+
 function validateLimits(limits: unknown, operation: string): ArtifactPublishLimits {
   const context: ValidationContext = { operation };
   const object = requirePlainObject(limits, context, 'limits');
   rejectUnknownKeys(object, ['maxSizeBytes', 'timeoutMs'], context, 'limits');
-  return {
-    maxSizeBytes: validatePositiveInteger(object.maxSizeBytes, context, 'limits.maxSizeBytes'),
-    timeoutMs: validatePositiveInteger(object.timeoutMs, context, 'limits.timeoutMs'),
-  };
+  const maxSizeBytes = validatePositiveInteger(object.maxSizeBytes, context, 'limits.maxSizeBytes');
+  const timeoutMs = validatePositiveInteger(object.timeoutMs, context, 'limits.timeoutMs');
+  if (!Number.isSafeInteger(maxSizeBytes)) {
+    throw validationError(context, 'limits.maxSizeBytes', '必须是有限安全整数');
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs > 2_147_483_647) {
+    throw validationError(context, 'limits.timeoutMs', '必须是 1..2147483647 的有限安全整数（定时器范围）');
+  }
+  return { maxSizeBytes, timeoutMs };
 }
 
 /**
@@ -267,31 +325,14 @@ export function createArtifactPublisher(deps: ArtifactPublisherDeps): ArtifactPu
     reason: string,
   ): Promise<'failed_recorded' | 'failed_unrecorded'> {
     try {
-      await artifacts.transitionArtifact(record.projectId, record.id, {
+      await waitWithDeadline(() => artifacts.transitionArtifact(record.projectId, record.id, {
         expectedRevision: record.revision,
         outcome: { status: 'failed', reason },
-      });
+      }), { deadlineMs: Date.now() + Math.min(1000, limits.timeoutMs) });
       return 'failed_recorded';
     } catch {
       // 标 failed 本身失败（如 busy）不覆盖原始失败；残留状态仍可核对。
       return 'failed_unrecorded';
-    }
-  }
-
-  /**
-   * staging 失败后的清理：停止写入并关闭句柄，残留文件保留供 F-012 核对，
-   * 绝不自动删除未知状态的文件。finishStaging 在流已结束/出错时负责关闭 fd。
-   */
-  async function closeStagingKeepResidue(write: ArtifactStagingWrite): Promise<void> {
-    try {
-      write.stream.end();
-    } catch {
-      // 流已销毁：忽略，继续关闭流程。
-    }
-    try {
-      await files.finishStaging(write);
-    } catch {
-      // 流错误时适配器已关闭 fd；残留保留，清理失败不覆盖原始错误。
     }
   }
 
@@ -303,12 +344,14 @@ export function createArtifactPublisher(deps: ArtifactPublisherDeps): ArtifactPu
     projectId: string,
     cause: unknown,
     extraDetails: Readonly<Record<string, unknown>> = {},
+    cleanupStatus: ArtifactPublishCleanupStatus = 'confirmed',
   ): ArtifactPublishError {
     return new ArtifactPublishError(stage, code, message, {
       projectId,
       artifactId: record?.id ?? null,
-      details: { ...extraDetails, ...(record !== null ? { artifactId: record.id } : {}) },
+      details: { ...extraDetails, cleanupStatus, ...(record !== null ? { artifactId: record.id } : {}) },
       cause,
+      cleanupStatus,
     });
   }
 
@@ -374,275 +417,228 @@ export function createArtifactPublisher(deps: ArtifactPublisherDeps): ArtifactPu
         );
       }
 
-      /** staging/verify/publish 阶段失败：标 failed、保留残留、抛出阶段化错误。 */
-      async function failAfterRegister(
-        stage: 'staging' | 'verify' | 'publish',
-        code: ArtifactPublishFailureCode,
-        message: string,
-        cause: unknown,
-        evidence: readonly string[],
-        extraDetails: Readonly<Record<string, unknown>> = {},
-      ): Promise<never> {
-        const reason = failureReason(stage, code, evidence);
-        const recording = await markFailed(record, reason);
-        throw toPublishError(stage, code, message, record, projectId, cause, {
-          ...extraDetails,
-          failureRecord: recording,
+      const key = { projectId: record.projectId, artifactId: record.id, locator: record.locator };
+      const startedAtMs = nowMs();
+      const deadlineMs = Date.now() + limits.timeoutMs;
+      const controller = new AbortController();
+      const signal = controller.signal;
+      const cancel = (): void => controller.abort(new PublishWaitControlError('cancelled'));
+      valid.signal?.addEventListener('abort', cancel, { once: true });
+      if (valid.signal?.aborted) cancel();
+      const timer = setTimeout(() => controller.abort(new PublishWaitControlError('timeout')), limits.timeoutMs);
+      const control = { signal, deadlineMs };
+      const inFlight = new Map<Promise<unknown>, string>();
+      let stage: ArtifactPublishStage = 'staging';
+      let write: ArtifactStagingWrite | undefined;
+      let iterator: AsyncIterator<Uint8Array> | Iterator<Uint8Array> | undefined;
+      let producerDone = false;
+      let sizeBytes = 0;
+      let published: Awaited<ReturnType<ArtifactFileStore['publishStaging']>> | undefined;
+      const hash = createHash('sha256');
+      // Capture stream errors between waits, without leaking body/path text into diagnostics.
+      let streamError: unknown;
+      const onStreamError = (error: unknown): void => { streamError = error; };
+
+      function assertActive(checkInjectedClock = true): void {
+        if (!signal.aborted && ((checkInjectedClock && nowMs() - startedAtMs >= limits.timeoutMs) || Date.now() >= deadlineMs)) {
+          controller.abort(new PublishWaitControlError('timeout'));
+        }
+        if (signal.aborted) throw signal.reason;
+      }
+      function track<T>(operation: () => PromiseLike<T> | T, label: string): Promise<T> {
+        const pending = Promise.resolve().then(operation);
+        inFlight.set(pending, label);
+        void pending.then(() => inFlight.delete(pending), () => inFlight.delete(pending));
+        return pending;
+      }
+      async function wait<T>(operation: () => PromiseLike<T> | T, label: string): Promise<T> {
+        assertActive();
+        const result = await waitWithDeadline(() => track(() => {
+          assertActive(false);
+          return operation();
+        }, label), control);
+        assertActive();
+        return result;
+      }
+      function writeChunk(chunk: Uint8Array, target: ArtifactStagingWrite): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+          let callbackDone = false;
+          let drained = false;
+          let written = false;
+          let settled = false;
+          const clear = (): void => {
+            target.stream.removeListener('drain', onDrain);
+            target.stream.removeListener('error', onError);
+            target.stream.removeListener('close', onClose);
+            signal.removeEventListener('abort', onAbort);
+          };
+          const fail = (error: unknown): void => {
+            if (settled) return;
+            settled = true;
+            clear();
+            reject(error);
+          };
+          const complete = (): void => {
+            if (settled || !written || !callbackDone || !drained) return;
+            settled = true;
+            clear();
+            resolve();
+          };
+          const onDrain = (): void => { drained = true; complete(); };
+          const onError = (error: unknown): void => fail(error);
+          const onClose = (): void => fail(new ArtifactFileError('io', operation, 'staging 在写入确认前关闭'));
+          const onAbort = (): void => fail(signal.reason);
+          target.stream.on('drain', onDrain);
+          target.stream.on('error', onError);
+          target.stream.on('close', onClose);
+          signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) { onAbort(); return; }
+          try {
+            const accepted = target.stream.write(chunk, (error?: Error | null) => {
+              if (error) { fail(error); return; }
+              callbackDone = true;
+              complete();
+            });
+            drained ||= accepted;
+            written = true;
+            complete();
+          } catch (error) { fail(error); }
         });
       }
 
-      const key = { projectId: record.projectId, artifactId: record.id, locator: record.locator };
-
-      // 阶段 2：staging 流式写入（数据库事务外；增量 hash/size；背压写入）。
-      let write: ArtifactStagingWrite;
-      try {
-        write = await files.openStagingWrite(key);
-      } catch (cause) {
-        return failAfterRegister(
-          'staging',
-          codeOfPortError(cause),
-          `${operation}: staging 打开失败（${portErrorEvidence(cause)}）`,
-          cause,
-          [portErrorEvidence(cause)],
-        );
+      async function cleanup(): Promise<{ status: ArtifactPublishCleanupStatus; pendingOperations: string[] }> {
+        // Revoke the old operation before releasing any barrier or beginning cleanup.
+        if (!signal.aborted) controller.abort(new Error('artifact_publication_revoked'));
+        const cleanupDeadline = Date.now() + Math.max(10, Math.min(250, limits.timeoutMs));
+        const checks: Promise<boolean>[] = [];
+        if (!producerDone && iterator !== undefined) {
+          if (typeof iterator.return === 'function') {
+            checks.push(track(() => iterator!.return!(), 'producer.return').then(() => true, () => false));
+          } else if ([...inFlight.values()].includes('producer.next')) {
+            checks.push(Promise.resolve(false));
+          }
+        }
+        if (write !== undefined) {
+          const target = write;
+          if (files.abortStaging !== undefined) {
+            checks.push(track(() => files.abortStaging!(target), 'staging.close').then(result => result.confirmed, () => false));
+          } else {
+            // Legacy/uninterruptible adapters cannot prove their file descriptor has stopped.
+            try { target.stream.destroy(); } catch { /* Residue remains. */ }
+            checks.push(Promise.resolve(false));
+          }
+        }
+        const pending = [...inFlight.keys()];
+        let confirmed = false;
+        try {
+          const results = await waitWithDeadline(() => Promise.all([
+            ...checks,
+            ...pending.map(promise => promise.then(() => true, () => true)),
+          ]), { deadlineMs: cleanupDeadline });
+          confirmed = results.every(Boolean);
+        } catch { /* A held next/finish/publish is explicitly unconfirmed. */ }
+        return { status: confirmed ? 'confirmed' : 'cleanup_unconfirmed',
+          pendingOperations: [...new Set(inFlight.values())] };
       }
-      const stagingRelativePath = write.relativePath;
 
-      const hash = createHash('sha256');
-      let sizeBytes = 0;
-      const startedAtMs = nowMs();
-      const signal = valid.signal;
-      let onAbort: (() => void) | undefined;
-      const abortPromise =
-        signal === undefined
-          ? undefined
-          : new Promise<never>((_resolve, reject) => {
-              onAbort = () => {
-                reject(
-                  new ArtifactPublishError('staging', 'cancelled', `${operation}: 发布被取消`, {
-                    projectId,
-                    artifactId: record.id,
-                    details: { artifactId: record.id, stagingRelativePath },
-                  }),
-                );
-              };
-              signal.addEventListener('abort', onAbort, { once: true });
-            });
-
-      const iterator =
-        Symbol.asyncIterator in Object(valid.content)
+      try {
+        // Pending is already durable. All file/producer waits start outside SQLite transactions.
+        write = await wait(() => {
+          const opened = files.openStagingWrite(key, control);
+          // Even a legacy adapter that opens after timeout must have its late handle stopped.
+          void opened.then(late => {
+            write ??= late;
+            if (signal.aborted) {
+              if (files.abortStaging) void files.abortStaging(late).catch(() => {});
+              else late.stream.destroy();
+            }
+          }).catch(() => {});
+          return opened;
+        }, 'staging.open');
+        write.stream.on('error', onStreamError);
+        iterator = Symbol.asyncIterator in Object(valid.content)
           ? (valid.content as AsyncIterable<Uint8Array>)[Symbol.asyncIterator]()
           : (valid.content as Iterable<Uint8Array>)[Symbol.iterator]();
-
-      /** staging 阶段统一失败出口：关闭句柄、保留残留、标 failed、抛出。 */
-      async function failStaging(
-        code: ArtifactPublishFailureCode,
-        message: string,
-        cause: unknown,
-        evidence: readonly string[],
-      ): Promise<never> {
-        if (onAbort !== undefined && signal !== undefined) {
-          signal.removeEventListener('abort', onAbort);
-        }
-        // 释放内容流生产方（不等待可能悬挂的 next；可信生产方尽力清理）。
-        if (typeof iterator.return === 'function') {
-          void Promise.resolve()
-            .then(() => iterator.return?.())
-            .catch(() => {});
-        }
-        await closeStagingKeepResidue(write);
-        return failAfterRegister(stage, code, message, cause, evidence, { stagingRelativePath });
-      }
-      const stage: 'staging' = 'staging';
-
-      for (;;) {
-        if (signal?.aborted === true) {
-          return await failStaging(
-            'cancelled',
-            `${operation}: 发布被取消`,
-            undefined,
-            ['code=cancelled', `staging=${stagingRelativePath}（残留保留）`],
-          );
-        }
-        if (nowMs() - startedAtMs > limits.timeoutMs) {
-          return await failStaging(
-            'timeout',
-            `${operation}: staging 超过时间预算 ${limits.timeoutMs}ms`,
-            undefined,
-            [
-              `timeoutMs=${limits.timeoutMs}`,
-              `writtenBytes=${sizeBytes}`,
-              `staging=${stagingRelativePath}（残留保留）`,
-            ],
-          );
-        }
-        let next: IteratorResult<Uint8Array>;
-        try {
-          next =
-            abortPromise === undefined
-              ? await iterator.next()
-              : await Promise.race([Promise.resolve(iterator.next()), abortPromise]);
-        } catch (cause) {
-          if (isArtifactPublishError(cause, 'staging') && cause.code === 'cancelled') {
-            return await failStaging('cancelled', cause.message, undefined, [
-              'code=cancelled',
-              `staging=${stagingRelativePath}（残留保留）`,
-            ]);
+        for (;;) {
+          let next: IteratorResult<Uint8Array>;
+          try { next = await wait(() => iterator!.next(), 'producer.next'); }
+          catch (cause) {
+            if (cause instanceof PublishWaitControlError) throw cause;
+            throw toPublishError('staging', 'stream', 'ArtifactPublisher: 内容流生产方失败', record, projectId, cause);
           }
-          return await failStaging(
-            'stream',
-            `${operation}: 内容流生产方失败`,
-            cause,
-            [
-              'code=stream',
-              `writtenBytes=${sizeBytes}`,
-              `staging=${stagingRelativePath}（残留保留）`,
-            ],
-          );
-        }
-        if (next.done === true) {
-          break;
-        }
-        const chunk: unknown = next.value;
-        if (!(chunk instanceof Uint8Array)) {
-          return await failStaging(
-            'validation',
-            `${operation}: 内容块必须是 Uint8Array`,
-            undefined,
-            ['code=validation', 'field=content.chunk', `staging=${stagingRelativePath}（残留保留）`],
-          );
-        }
-        sizeBytes += chunk.byteLength;
-        if (sizeBytes > limits.maxSizeBytes) {
-          return await failStaging(
-            'size_limit_exceeded',
-            `${operation}: 正文超过大小限制 ${limits.maxSizeBytes} 字节`,
-            undefined,
-            [
-              `maxSizeBytes=${limits.maxSizeBytes}`,
-              `actualBytes>${limits.maxSizeBytes}`,
-              `staging=${stagingRelativePath}（残留保留）`,
-            ],
-          );
-        }
-        hash.update(chunk);
-        try {
-          const canContinue = write.stream.write(chunk);
-          if (!canContinue) {
-            // 背压：等待 drain；流错误时 events.once 以该错误拒绝。
-            await once(write.stream, 'drain');
+          if (next.done) { producerDone = true; break; }
+          const chunk: unknown = next.value;
+          if (!(chunk instanceof Uint8Array)) {
+            throw toPublishError('staging', 'validation', 'ArtifactPublisher: 内容块必须是 Uint8Array', record, projectId, undefined);
           }
-        } catch (cause) {
-          const codeText =
-            (cause as NodeJS.ErrnoException | null)?.code ?? 'stream_write_failed';
-          return await failStaging(
-            'file',
-            `${operation}: staging 写入失败（${String(codeText)}）`,
-            cause,
-            [`fs=${String(codeText)}`, `staging=${stagingRelativePath}（残留保留）`],
-          );
+          if (sizeBytes + chunk.byteLength > limits.maxSizeBytes) {
+            throw toPublishError('staging', 'size_limit_exceeded', 'ArtifactPublisher: 正文超过大小限制', record, projectId, undefined);
+          }
+          hash.update(chunk);
+          await wait(() => writeChunk(chunk, write!), 'staging.write');
+          sizeBytes += chunk.byteLength;
+          if (streamError !== undefined) throw streamError;
         }
-      }
-      if (onAbort !== undefined && signal !== undefined) {
-        signal.removeEventListener('abort', onAbort);
-      }
-
-      // staging 收尾：结束流、fsync、关闭（失败保留残留）。
-      let staged: ArtifactStagingFile;
-      try {
-        write.stream.end();
-        staged = await files.finishStaging(write);
-      } catch (cause) {
-        return failAfterRegister(
-          'staging',
-          codeOfPortError(cause),
-          `${operation}: staging 同步/关闭失败（${portErrorEvidence(cause)}）`,
-          cause,
-          [portErrorEvidence(cause), `staging=${stagingRelativePath}（残留保留）`],
-          { stagingRelativePath },
-        );
-      }
-      if (staged.sizeBytes !== sizeBytes) {
-        // 防御纵深：适配器回报字节数与实测不一致，绝不放行。
-        return failAfterRegister(
-          'verify',
-          'size_mismatch',
-          `${operation}: staging 字节数与实测不一致`,
-          undefined,
-          [
-            `measuredBytes=${sizeBytes}`,
-            `stagedBytes=${staged.sizeBytes}`,
-            `staging=${stagingRelativePath}（残留保留）`,
-          ],
-          { stagingRelativePath },
-        );
-      }
-
-      // 阶段 3：核验实测摘要与登记预期一致（不匹配不发布）。
-      const actualHash = hash.digest('hex');
-      if (actualHash !== record.expectedHash) {
-        return failAfterRegister(
-          'verify',
-          'hash_mismatch',
-          `${operation}: 实测摘要与登记预期摘要不一致，拒绝发布`,
-          undefined,
-          [
-            `expectedHash=${record.expectedHash}`,
-            `actualHash=${actualHash}`,
-            `staging=${stagingRelativePath}（残留保留）`,
-          ],
-          { stagingRelativePath, expectedHash: record.expectedHash, actualHash },
-        );
-      }
-
-      // 阶段 4：同文件系统不覆盖发布（数据库事务外）。
-      let published;
-      try {
-        published = await files.publishStaging(staged, key);
-      } catch (cause) {
-        return failAfterRegister(
-          'publish',
-          codeOfPortError(cause),
-          `${operation}: 正式发布失败（${portErrorEvidence(cause)}）`,
-          cause,
-          [portErrorEvidence(cause), `staging=${stagingRelativePath}（残留保留）`],
-          { stagingRelativePath },
-        );
-      }
-      if (published.sizeBytes !== sizeBytes) {
-        // 正式文件已存在但不可信：保持 pending 供 F-012 核对，不标 failed。
-        throw toPublishError(
-          'publish',
-          'size_mismatch',
-          `${operation}: 发布字节数与实测不一致，保持 pending 供核对`,
-          record,
-          projectId,
-          undefined,
-          {
-            finalRelativePath: published.relativePath,
-            failureRecord: 'kept_pending',
-          },
-        );
-      }
-
-      // 阶段 5：短事务 CAS 标 ready。失败时正式文件与 pending 索引都保留
-      // 供恢复（F-012 的中断核对按“pending + 正式文件存在”路径处理）。
-      try {
+        const staged = await wait(() => {
+          write!.stream.end();
+          return files.finishStaging(write!, control);
+        }, 'staging.finish');
+        stage = 'verify';
+        assertActive();
+        if (staged.sizeBytes !== sizeBytes) {
+          throw toPublishError(stage, 'size_mismatch', 'ArtifactPublisher: staging 字节数与实测不一致', record, projectId, undefined);
+        }
+        const actualHash = hash.digest('hex');
+        if (actualHash !== record.expectedHash) {
+          throw toPublishError(stage, 'hash_mismatch', 'ArtifactPublisher: 实测摘要不符，拒绝发布', record, projectId, undefined,
+            { expectedHash: record.expectedHash, actualHash });
+        }
+        stage = 'publish';
+        published = await wait(() => files.publishStaging(staged, key, control), 'staging.publish');
+        if (published.sizeBytes !== sizeBytes) {
+          throw toPublishError(stage, 'size_mismatch', 'ArtifactPublisher: 发布字节数不符，保持 pending 供核对', record, projectId, undefined,
+            { finalRelativePath: published.relativePath, failureRecord: 'kept_pending' });
+        }
+        assertActive();
+        stage = 'commit';
+        // SQLite performs this CAS synchronously in a short transaction. Do not race an
+        // uninterruptible ready mutation: a timeout must never leave a background commit.
         const ready = await artifacts.transitionArtifact(record.projectId, record.id, {
           expectedRevision: record.revision,
           outcome: { status: 'ready', actualHash, sizeBytes },
         });
         return { artifact: ready, finalRelativePath: published.relativePath };
       } catch (cause) {
-        throw toPublishError(
-          'commit',
-          codeOfPortError(cause),
-          `${operation}: ready 提交失败（${portErrorEvidence(cause)}），正式文件与 pending 索引保留供恢复`,
-          record,
-          projectId,
-          cause,
-          { finalRelativePath: published.relativePath, failureRecord: 'kept_pending' },
-        );
+        if (stage === 'commit' || (isArtifactPublishError(cause) && cause.details?.['failureRecord'] === 'kept_pending')) {
+          throw isArtifactPublishError(cause) ? cause : toPublishError(stage, codeOfPortError(cause),
+            'ArtifactPublisher: ready 提交失败，正式文件与 pending 索引保留供恢复', record, projectId, cause,
+            { finalRelativePath: published?.relativePath, failureRecord: 'kept_pending' });
+        }
+        // A real stream/file error remains the primary failure even if closing also fails.
+        const code = cause instanceof PublishWaitControlError ? cause.reason
+          : isArtifactPublishError(cause) ? cause.code : 'file';
+        const cleanupResult = await cleanup();
+        const details = { ...(isArtifactPublishError(cause) ? cause.details : {}),
+          stagingRelativePath: write?.relativePath,
+          finalRelativePath: files.resolvePlacement(key).finalRelativePath,
+          writtenBytes: sizeBytes, timeoutMs: limits.timeoutMs, maxSizeBytes: limits.maxSizeBytes,
+          cleanupStatus: cleanupResult.status, pendingOperations: cleanupResult.pendingOperations };
+        const evidence = [
+          'timeoutMs=' + limits.timeoutMs, 'maxSizeBytes=' + limits.maxSizeBytes,
+          'writtenBytes=' + sizeBytes, 'cleanupStatus=' + cleanupResult.status,
+          ...(write ? ['staging=' + write.relativePath + '（残留保留）'] : []),
+          ...(isArtifactPublishError(cause) && cause.code === 'hash_mismatch'
+            ? ['expectedHash=' + cause.details?.['expectedHash'], 'actualHash=' + cause.details?.['actualHash']] : []),
+          portErrorEvidence(isArtifactPublishError(cause) ? cause.cause : cause),
+        ];
+        const recording = await markFailed(record, failureReason(stage, code, evidence));
+        throw toPublishError(stage, code, isArtifactPublishError(cause) ? cause.message : 'ArtifactPublisher: 发布失败（' + code + '）',
+          record, projectId, isArtifactPublishError(cause) ? cause.cause : cause,
+          { ...details, failureRecord: recording }, cleanupResult.status);
+      } finally {
+        clearTimeout(timer);
+        valid.signal?.removeEventListener('abort', cancel);
+        write?.stream.removeListener('error', onStreamError);
       }
     },
   };

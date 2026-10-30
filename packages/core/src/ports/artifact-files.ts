@@ -153,11 +153,19 @@ export interface ArtifactFilePlacement {
   readonly stagingRelativeDir: string;
 }
 
-/** 已打开的 staging 写入：O_EXCL + 受限权限；调用方写入并 end() 后必须 finish 或 discard。 */
+/** 已打开的 staging 写入：O_EXCL + 受限权限；调用方写入并 end() 后必须 finish、abort 或 discard。 */
 export interface ArtifactStagingWrite {
   /** staging 区内相对位置（staging/<projectId>/<artifactId>.<随机>.part）。 */
   readonly relativePath: string;
   readonly stream: Writable;
+}
+
+/** 文件端口操作的有限控制信号。 */
+export interface ArtifactFileOperationOptions {
+  /** 调用方取消当前文件操作；适配器必须尽力停止并关闭句柄。 */
+  readonly signal?: AbortSignal;
+  /** wall-clock 截止时间（epoch ms）；超过后不得继续推进发布。 */
+  readonly deadlineMs?: number;
 }
 
 /** 已完成写入并 fsync 的 staging 文件，可发布或丢弃。 */
@@ -264,11 +272,21 @@ export interface ArtifactFileStore {
   /** 纯定位推导：校验键并返回受控相对位置；不产生任何 I/O 副作用。 */
   resolvePlacement(key: unknown): ArtifactFilePlacement;
   /** 打开 staging 写入（O_EXCL、受限权限、祖先 realpath 核验）。 */
-  openStagingWrite(key: unknown): Promise<ArtifactStagingWrite>;
+  openStagingWrite(key: unknown, options?: ArtifactFileOperationOptions): Promise<ArtifactStagingWrite>;
+  /** 停止并关闭本适配器拥有的写句柄，保留文件；缺省时调用方必须报告 cleanup_unconfirmed。
+   * confirmed 只在底层写入/同步和句柄关闭均已结算后成立。调用方仍须有界等待本方法。 */
+  abortStaging?(write: ArtifactStagingWrite): Promise<{ readonly confirmed: boolean }>;
   /** 等待流完成、fsync 并关闭 staging 文件；失败时保留残留供核对，不自动删除。 */
-  finishStaging(write: ArtifactStagingWrite): Promise<ArtifactStagingFile>;
+  finishStaging(
+    write: ArtifactStagingWrite,
+    options?: ArtifactFileOperationOptions,
+  ): Promise<ArtifactStagingFile>;
   /** 发布：staging → 正式位置（同文件系统、不覆盖、目录同步）；目标已存在返回冲突并保留。 */
-  publishStaging(staging: ArtifactStagingFile, key: unknown): Promise<ArtifactPublishedFile>;
+  publishStaging(
+    staging: ArtifactStagingFile,
+    key: unknown,
+    options?: ArtifactFileOperationOptions,
+  ): Promise<ArtifactPublishedFile>;
   /** 丢弃 staging 残留（仅限受控 staging 区内的常规文件）；幂等。 */
   discardStaging(staging: ArtifactStagingWrite | ArtifactStagingFile): Promise<void>;
   /** 读取入口：no-follow 打开并核验常规文件；逃逸/缺失/非常规文件明确报错。 */

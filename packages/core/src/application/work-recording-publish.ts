@@ -7,6 +7,7 @@
  * 私有档案，也不从 logger 文本重建公开事件。
  */
 import { createOutputRedactor } from './output-redaction.js';
+import { isArtifactPublishError } from './artifact-publish.js';
 import type { ArtifactPublisher, ArtifactPublishResult } from './artifact-publish.js';
 import type { WorkRecordingArtifactRef, WorkRecordingMessageRole } from '../ports/work-recording.js';
 import { WORK_RECORDING_MESSAGE_ROLES } from '../ports/work-recording.js';
@@ -277,7 +278,8 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
     } catch (error) {
       return {
         status: 'unavailable', ref: null, observedBytes, retainedBytes, truncated, redacted,
-        gapReasons: [safeGap(error)],
+        gapReasons: [safeGap(error), ...(isArtifactPublishError(error) && error.cleanupStatus === 'cleanup_unconfirmed'
+          ? ['cleanup_unconfirmed'] : [])],
       };
     }
   }

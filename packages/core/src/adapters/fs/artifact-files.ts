@@ -20,7 +20,7 @@
  *   dev 号复核；发布采用 hard link + 移除 staging：link 的 EEXIST 语义保证
  *   “不覆盖已有目标”无检查-操作窗口，同名已有文件保留并返回冲突；
  * - 受限权限：staging/正式文件 0o600，创建的目录 0o700（真实模式经 umask 后的
- *   实际值由测试断言）；finishStaging 在关闭前 fsync 文件，publishStaging 在
+ *   实际值由测试断言）；写流通过 flush/autoClose 在关闭前异步 fsync 文件，publishStaging 在
  *   移除 staging 前 fsync 正式文件与目录（macOS 平台行为由测试记录）；
  * - 可信项目模式边界：检查（realpath/lstat）与操作（open/link）之间的并发替换
  *   窗口由“单 Host 写入者 + 用户明确授权的可信项目”前提收窄；本适配器不宣称
@@ -61,6 +61,7 @@ import {
   ARTIFACT_FILE_CONTENT_LEAF,
   ARTIFACT_STAGING_FILE_SUFFIX,
   ArtifactFileError,
+  isArtifactFileError,
   deriveArtifactFinalRelativePath,
   deriveProjectArtifactsRelativeDir,
   deriveStagingRelativeDir,
@@ -71,6 +72,7 @@ import type {
   ArtifactFileContent,
   ArtifactFileEntryKind,
   ArtifactFileKey,
+  ArtifactFileOperationOptions,
   ArtifactFilePlacement,
   ArtifactFileScanEntry,
   ArtifactFileScanPage,
@@ -98,6 +100,96 @@ type NodeError = NodeJS.ErrnoException;
 
 function errorCode(error: unknown): string | undefined {
   return (error as NodeError | null)?.code;
+}
+
+function operationAbortError(
+  operation: string,
+  relativePath: string,
+  reason: 'cancelled' | 'timeout',
+): ArtifactFileError {
+  return new ArtifactFileError('io', operation, `${operation}: 文件操作${reason === 'timeout' ? '超过期限' : '被取消'}`, {
+    details: { relativePath, reason: `operation_${reason}` },
+  });
+}
+
+function assertOperationActive(
+  options: ArtifactFileOperationOptions | undefined,
+  operation: string,
+  relativePath: string,
+): void {
+  if (options?.signal?.aborted === true) {
+    throw operationAbortError(operation, relativePath, 'cancelled');
+  }
+  if (options?.deadlineMs !== undefined && Date.now() >= options.deadlineMs) {
+    throw operationAbortError(operation, relativePath, 'timeout');
+  }
+}
+
+/**
+ * 为可中止的文件等待提供真正的停止动作。竞速只负责唤醒调用方；中止时
+ * 必须先 destroy/close，迟到 promise 只被吸收，不能继续推进发布。
+ */
+function awaitFileOperation<T>(
+  promise: Promise<T>,
+  options: ArtifactFileOperationOptions | undefined,
+  operation: string,
+  relativePath: string,
+  stop: () => void,
+): Promise<T> {
+  const signal = options?.signal;
+  const deadlineMs = options?.deadlineMs;
+  if (signal?.aborted === true) {
+    stop();
+    void promise.catch(() => {});
+    return Promise.reject(operationAbortError(operation, relativePath, 'cancelled'));
+  }
+  if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+    stop();
+    void promise.catch(() => {});
+    return Promise.reject(operationAbortError(operation, relativePath, 'timeout'));
+  }
+  if (signal === undefined && deadlineMs === undefined) {
+    return promise;
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (signal !== undefined) signal.removeEventListener('abort', onAbort);
+    };
+    const interrupt = (reason: 'cancelled' | 'timeout'): void => {
+      if (settled) return;
+      settled = true;
+      finish();
+      try {
+        stop();
+      } catch {
+        // 不能让清理异常覆盖操作本身的取消/超时证据。
+      }
+      void promise.catch(() => {});
+      reject(operationAbortError(operation, relativePath, reason));
+    };
+    const onAbort = (): void => interrupt('cancelled');
+    if (signal !== undefined) signal.addEventListener('abort', onAbort, { once: true });
+    if (deadlineMs !== undefined) {
+      timer = setTimeout(() => interrupt('timeout'), Math.max(0, deadlineMs - Date.now()));
+    }
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        finish();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        finish();
+        reject(error);
+      },
+    );
+  });
 }
 
 /** 运行期文件条件统一映射；消息/details 只含相对位置与错误码（脱敏）。 */
@@ -169,6 +261,12 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
     throw mapFsError(error, operation, '.');
   }
   const stagingName = options.stagingName ?? randomUUID;
+  // Stream owns its fd, including pending writes/flush. Never close a numeric fd
+  // behind an active stream (it may already have been reused by another file).
+  const writes = new WeakMap<ArtifactStagingWrite, {
+    completed: Promise<void>;
+    finished?: Promise<ArtifactStagingFile>;
+  }>();
 
   /** 受控根内相对位置 → 绝对路径（词法防线；输入校验已使越界不可能，防御纵深）。 */
   function toAbsolute(relativePath: string, op: string): string {
@@ -368,11 +466,12 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
       };
     },
 
-    async openStagingWrite(key: unknown): Promise<ArtifactStagingWrite> {
+    async openStagingWrite(key: unknown, options?: ArtifactFileOperationOptions): Promise<ArtifactStagingWrite> {
       const op = 'ArtifactFileStore.openStagingWrite';
       const valid = validateArtifactFileKey(key, op);
       const stagingDirRel = deriveStagingRelativeDir(valid.projectId);
       const absDir = toAbsolute(stagingDirRel, op);
+      assertOperationActive(options, op, stagingDirRel);
       ensureDirInsideRoot(absDir, stagingDirRel, op);
       const randomPart = stagingName();
       if (typeof randomPart !== 'string' || !STAGING_NAME_PATTERN.test(randomPart)) {
@@ -393,62 +492,61 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
         throw mapFsError(error, op, relativePath);
       }
       try {
-        // autoClose: false——fd 生命周期由 finishStaging/discardStaging 显式管理，
-        // 保证 fsync 发生在关闭之前。
-        const stream = createWriteStream(relativePath, { fd, autoClose: false });
-        // 流错误（如写入失败）经 finishStaging 的 finished() 以结构化 io 错误
-        // 透出；此处挂空错误监听，避免 Host 进程因无人监听的 'error' 事件崩溃。
-        stream.on('error', () => {});
-        return { relativePath, stream };
+        // flush uses async fsync before autoClose; stream destruction coordinates
+        // with pending writes instead of closing a descriptor still in use.
+        const stream = createWriteStream(relativePath, { fd, autoClose: true, flush: true });
+        const completed = finished(stream, { cleanup: true });
+        void completed.catch(() => {});
+        const write = { relativePath, stream };
+        writes.set(write, { completed });
+        return write;
       } catch (error) {
         closeSync(fd);
         throw mapFsError(error, op, relativePath);
       }
     },
 
-    async finishStaging(write: ArtifactStagingWrite): Promise<ArtifactStagingFile> {
+    async abortStaging(write: ArtifactStagingWrite): Promise<{ confirmed: boolean }> {
+      const state = writes.get(write);
+      if (state === undefined) return { confirmed: false };
+      write.stream.destroy();
+      try { await state.completed; } catch { /* Original failure belongs to publisher. */ }
+      return { confirmed: write.stream.closed };
+    },
+
+    async finishStaging(
+      write: ArtifactStagingWrite,
+      options?: ArtifactFileOperationOptions,
+    ): Promise<ArtifactStagingFile> {
       const op = 'ArtifactFileStore.finishStaging';
       const { relativePath } = parseStagingRef(write?.relativePath, op);
-      if (!(write?.stream instanceof Writable)) {
-        throw validationError({ operation: op }, 'staging.stream', '必须是 openStagingWrite 返回的写入流');
+      const state = writes.get(write);
+      if (state === undefined) {
+        throw new ArtifactFileError('invalid_input', op, 'staging 句柄不属于当前文件端口', { details: { relativePath } });
       }
-      const stream = write.stream;
-      // fd 由本适配器 openSync 提供；结构化访问避免泄漏 fs.WriteStream 类型到契约面。
-      const fd = (stream as { fd?: unknown }).fd;
-      try {
-        // 调用方必须先 end()；finished 等待流完成或传播流错误（失败不伪装成功）。
-        await finished(stream);
-      } catch (error) {
-        if (typeof fd === 'number') {
-          try {
-            closeSync(fd);
-          } catch {
-            // 关闭失败的诊断不覆盖原始流错误。
-          }
-        }
-        throw mapFsError(error, op, relativePath);
-      }
-      if (typeof fd !== 'number') {
-        throw new ArtifactFileError('invalid_input', op, `${op}: staging 写入流没有可用文件描述符`, {
-          details: { relativePath, reason: 'staging_fd_missing' },
-        });
-      }
-      try {
-        fsyncSync(fd);
-        const sizeBytes = fstatSync(fd).size;
-        closeSync(fd);
-        return { relativePath, sizeBytes };
-      } catch (error) {
+      state.finished ??= (async () => {
         try {
-          closeSync(fd);
-        } catch {
-          // 同上：不覆盖原始错误。
+          await awaitFileOperation(state.completed, options, op, relativePath, () => write.stream.destroy());
+          assertOperationActive(options, op, relativePath);
+          const abs = toAbsolute(relativePath, op);
+          assertAncestorsInsideRoot(abs, relativePath, op);
+          assertRegularLeaf(abs, relativePath, op);
+          const sizeBytes = lstatSync(abs).size;
+          assertOperationActive(options, op, relativePath);
+          return { relativePath, sizeBytes };
+        } catch (error) {
+          if (isArtifactFileError(error)) throw error;
+          throw mapFsError(error, op, relativePath);
         }
-        throw mapFsError(error, op, relativePath);
-      }
+      })();
+      return state.finished;
     },
 
-    async publishStaging(staging: ArtifactStagingFile, key: unknown): Promise<ArtifactPublishedFile> {
+    async publishStaging(
+      staging: ArtifactStagingFile,
+      key: unknown,
+      options?: ArtifactFileOperationOptions,
+    ): Promise<ArtifactPublishedFile> {
       const op = 'ArtifactFileStore.publishStaging';
       const valid = validateArtifactFileKey(key, op);
       const ref = parseStagingRef(staging?.relativePath, op);
@@ -461,6 +559,7 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
         );
       }
       const absStaging = toAbsolute(ref.relativePath, op);
+      assertOperationActive(options, op, ref.relativePath);
       // staging 叶必须是真实常规文件（不跟随链接）。
       assertRegularLeaf(absStaging, ref.relativePath, op);
       assertAncestorsInsideRoot(absStaging, ref.relativePath, op);
@@ -501,19 +600,25 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
         }
         throw mapFsError(error, op, finalRel);
       }
-      // 发布：hard link（EEXIST 语义保证不覆盖无窗口）→ fsync 正式文件与目录 → 移除 staging。
+      // 发布：hard link（EEXIST 语义保证不覆盖无窗口）→ fsync 正式文件与目录。
+      // 每个同步边界后重新核验期限；同步系统调用本身无法被 JS 抢占，
+      // 只能在返回后失败关闭并保留已产生的残留证据。
       try {
+        assertOperationActive(options, op, finalRel);
         linkSync(absStaging, absFinal);
       } catch (error) {
+        if (error instanceof ArtifactFileError) throw error;
         throw mapFsError(error, op, finalRel);
       }
       try {
+        assertOperationActive(options, op, finalRel);
         const finalFd = openSync(absFinal, constants.O_RDONLY);
         try {
           fsyncSync(finalFd);
         } finally {
           closeSync(finalFd);
         }
+        assertOperationActive(options, op, finalRel);
         const dirFd = openSync(absFinalDir, constants.O_RDONLY);
         try {
           fsyncSync(dirFd);
@@ -523,13 +628,17 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
       } catch (error) {
         // 文件与索引（若有）都保持可核对状态：staging 未移除，正式文件已存在，
         // 由 F-012 的中断核对按 pending + 正式文件存在 的恢复路径处理。
+        if (error instanceof ArtifactFileError) throw error;
         throw mapFsError(error, op, finalRel);
       }
       try {
+        assertOperationActive(options, op, ref.relativePath);
         unlinkSync(absStaging);
       } catch (error) {
+        if (error instanceof ArtifactFileError) throw error;
         throw mapFsError(error, op, ref.relativePath);
       }
+      assertOperationActive(options, op, finalRel);
       return { relativePath: finalRel, sizeBytes: lstatSync(absFinal).size };
     },
 
@@ -541,15 +650,13 @@ export function createArtifactFileStore(options: ArtifactFileStoreOptions): Arti
         if (!(maybeStream instanceof Writable)) {
           throw validationError({ operation: op }, 'staging.stream', '必须是 openStagingWrite 返回的写入流');
         }
-        const fd = (maybeStream as { fd?: unknown }).fd;
-        maybeStream.destroy();
-        if (typeof fd === 'number') {
-          try {
-            closeSync(fd);
-          } catch {
-            // 尽力关闭；清理继续。
-          }
+        const state = writes.get(staging as ArtifactStagingWrite);
+        if (state === undefined) {
+          throw new ArtifactFileError('invalid_input', op, 'staging 句柄不属于当前文件端口');
         }
+        maybeStream.destroy();
+        try { await state.completed; } catch { /* 保留文件错误，不阻止已关闭句柄的显式清理。 */ }
+        if (!maybeStream.closed) throw new ArtifactFileError('io', op, 'staging 关闭未确认');
       }
       const absStaging = toAbsolute(ref.relativePath, op);
       let stat;
