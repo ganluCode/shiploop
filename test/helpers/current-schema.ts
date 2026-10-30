@@ -7,5 +7,7 @@
 // P05-8 / F-001：GitAgent repair authorization and attempt admission (v45).
 // P06-5 / F-003：重新绑定不可变快照与旧绑定事实（v51）。
 // P06-5 / F-005：基线授权的绑定 revision、脏范围和获准环境身份（v52）。
-export const currentSchemaVersion = 54;
+// P06-6 / F-004：Run 独立标签元数据（v53）；P03-7：Verifier 进程身份只追加事实（v54）。
+// P07-3 / F-002：维护占用单行 fencing（v55）；修复当时未同步本常量的遗漏。
+export const currentSchemaVersion = 55;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);
