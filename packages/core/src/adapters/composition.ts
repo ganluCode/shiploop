@@ -171,6 +171,7 @@ import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { BackupPackageService } from '../ports/backup-package.js';
+import type { BackupPackageVerificationService } from '../ports/backup-verification.js';
 import type { BaselineEnvironmentDirectory } from '../ports/baseline.js';
 import type { CommandReceiptStore } from '../ports/command-receipts.js';
 import { StorageError } from '../ports/errors.js';
@@ -206,6 +207,7 @@ import type { RepositoryInspectorOptions } from './fs/repository-inspector.js';
 import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
 import { createBackupPackageService } from './sqlite/backup-package.js';
+import { createBackupPackageVerificationService } from './fs/backup-verification.js';
 import { createSqliteBaselineStore } from './sqlite/baseline-store.js';
 import type { BaselineStore } from '../ports/baseline-store.js';
 import { createSqliteVerificationStore } from './sqlite/verification-store.js';
@@ -333,6 +335,7 @@ export interface CoreApplication {
   readonly artifactStore: ArtifactStore;
   readonly artifactFileStore: ArtifactFileStore;
   readonly backupPackageService: BackupPackageService;
+  readonly backupPackageVerificationService: BackupPackageVerificationService;
   readonly repositoryInspector: RepositoryInspector;
   /** F-003：跨数据根、跨 Host 共用的 Git common-dir 短操作锁。 */
   readonly gitPublicMetadataLock: GitPublicMetadataLock;
@@ -668,6 +671,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       backupRoot: join(basePathService.dataRoot(), 'backups'),
       files: artifactFileStore,
       maintenanceGate,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const backupPackageVerificationService = createBackupPackageVerificationService({
+      dataRoot: basePathService.dataRoot(),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
     const runtimeRecovery = createRuntimeRecoveryService({
@@ -1523,6 +1530,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       artifactStore,
       artifactFileStore,
       backupPackageService,
+      backupPackageVerificationService,
       repositoryInspector,
       gitPublicMetadataLock,
       projectService,

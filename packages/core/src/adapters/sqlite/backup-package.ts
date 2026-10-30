@@ -304,6 +304,8 @@ export function createBackupPackageService(options: BackupPackageServiceOptions)
         const candidate = { schemaVersion: 1 as const, packageVersion: 1, backupId, createdAtUtc, database: { logicalPath: 'core.sqlite' as const, schemaVersion, migrationDigest, contentDigest: databaseCopy.sha256, integrity: { integrityCheck: 'ok' as const, foreignKeyCheck: 'ok' as const } }, projects: projectEntries, files, nativeRecords, sources, checkpoints, recorder, externalDependencies };
         manifest = validateBackupManifest(candidate, OPERATION);
       } finally { snapshotDb.close(); packageDb.close(); }
+      await rm(join(stagingPath, 'core.sqlite-shm'), { force: true });
+      await rm(join(stagingPath, 'core.sqlite-wal'), { force: true });
       if (reasons.length > 0) {
         const report: BackupPackageReport = { status: 'incomplete', backupId, scannedProjects, scannedArtifacts, copiedFiles, totalBytes, durationMs: Math.max(0, now() - started), reasons: [...new Set(reasons)] };
         lastReport = report;
