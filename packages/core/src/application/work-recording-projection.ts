@@ -7,6 +7,7 @@ import { validateWorkRecordingManifest, validateWorkRecordingMessage, WORK_RECOR
 import type { WorkRecordingArtifactRef, WorkRecordingManifestRecord, WorkRecordingMessageRecord } from '../ports/work-recording.js';
 import type { WorkEvidenceManifest } from '../ports/work-evidence-recorder.js';
 import type { WorkRecordingPublisher } from './work-recording-publish.js';
+import type { WorkRecordingStorageBudget } from './work-recording-budget.js';
 import type { ArtifactVerifier } from './artifact-verify.js';
 
 export interface WorkRecordingProjectionDeps {
@@ -16,7 +17,7 @@ export interface WorkRecordingProjectionDeps {
 }
 
 export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps, request: RuntimeExecutionRequest,
-  verifier: Pick<ArtifactVerifier, 'verifyArtifact'>) {
+  verifier: Pick<ArtifactVerifier, 'verifyArtifact'>, storageBudget?: WorkRecordingStorageBudget) {
   if (request.identity.purpose !== 'work') throw new Error('work_identity_required');
   const identity: WorkRecordingWriteIdentity = { purpose: 'work', projectId: request.projectId, sessionId: request.sessionId,
     runId: request.identity.runId, attemptId: request.identity.attemptId, invocationId: request.invocationId,
@@ -53,6 +54,7 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
         const body = await deps.publisher.publishBody({ projectId: request.projectId, kind: kind === 'message' ? 'message' : kind,
           mediaType: 'application/json', locator: `sessions/${request.sessionId}/messages/${event.sequence}.json`,
           expectedHash: createHash('sha256').update(content).digest('hex'),
+          ...(storageBudget === undefined ? {} : { budget: storageBudget }),
           content: (function* () { for (let offset = 0; offset < content.length; offset += 1024) yield content.subarray(offset, offset + 1024); })() });
         for (const gap of body.gapReasons) if (publicationGaps.size < 16) publicationGaps.add(gap);
         if (body.ref === null || body.status !== 'complete') throw new Error('recording_body_publication_failed');

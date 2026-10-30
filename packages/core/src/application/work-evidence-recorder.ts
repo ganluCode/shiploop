@@ -49,6 +49,12 @@
  */
 import { createWorkRecordingProjection, type WorkRecordingProjectionDeps } from './work-recording-projection.js';
 import type { WorkRecordingArtifactRef } from '../ports/work-recording.js';
+import {
+  createWorkRecordingStorageBudget,
+  storageBudgetDiagnostic,
+  workRecordingFinalizationReserve,
+} from './work-recording-budget.js';
+import type { WorkRecordingStorageBudget, WorkRecordingStorageBudgetUsage } from './work-recording-budget.js';
 import { WORK_RECORDING_MAX_BATCH_MESSAGES } from '../ports/work-recording-store.js';
 import { recoveryRecordingForRequest } from './runtime-recovery-recording.js';
 import { createHash } from 'node:crypto';
@@ -154,6 +160,8 @@ export interface WorkEvidenceRecordingErrorOptions {
   readonly safeStopRequired: boolean;
   /** 尽力发布的诚实清单（coverage='failed'）制品 ID；未发布为 null。 */
   readonly manifestArtifactId?: string | null;
+  /** P07-2 / F-004：本次记录的累计磁盘额度账目（证据持久化失败时可核对）。 */
+  readonly storageBudget?: WorkRecordingStorageBudgetUsage;
   readonly cause?: unknown;
 }
 
@@ -168,6 +176,7 @@ export class WorkEvidenceRecordingError extends Error {
   readonly watermark: number | null;
   readonly gaps: readonly string[];
   readonly manifestArtifactId: string | null;
+  readonly storageBudget: WorkRecordingStorageBudgetUsage | null;
   readonly recovery?: import('../ports/runtime-recovery-recording.js').RuntimeRecoveryRecording;
 
   constructor(
@@ -183,6 +192,7 @@ export class WorkEvidenceRecordingError extends Error {
     this.watermark = options.watermark;
     this.gaps = [...options.gaps];
     this.manifestArtifactId = options.manifestArtifactId ?? null;
+    this.storageBudget = options.storageBudget ?? null;
     this.recovery = options.recovery;
   }
 }
@@ -208,6 +218,8 @@ export interface WorkEvidenceRecordingOutcome {
   readonly watermark: number | null;
   readonly gaps: readonly string[];
   readonly stats: WorkEvidenceStats;
+  /** P07-2 / F-004：本次记录的累计磁盘额度账目（与磁盘实测字节可核对）。 */
+  readonly storageBudget?: WorkRecordingStorageBudgetUsage;
   readonly result: RuntimeExecutionResult | null;
   readonly resultStatus: WorkEvidenceResultStatus;
   readonly sequenceReconciliation: WorkEvidenceSequenceReconciliation;
@@ -378,11 +390,18 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const input = validateRecordingInput(value);
       const { request, handle, eventIdentityPrefix, signal } = input;
       const mode = deps.recordingMode ?? 'required';
+      /* P07-2 / F-004：本次记录的累计磁盘额度：事件分块、公开消息/工具正文、
+       * 附件与覆盖 Manifest 共享同一账本（maxTotalBytes）；为收尾清单保留有限
+       * 额度，正文不可侵占；申请不退还，失败重试不重新获得额度。 */
+      const storageBudget = createWorkRecordingStorageBudget({
+        limitBytes: limits.maxTotalBytes,
+        finalizationReserveBytes: workRecordingFinalizationReserve(limits.maxTotalBytes, limits.chunkMaxBytes),
+      });
       /* P07-2：本次 Attempt 的实际生效限制（装配期 recorder/publish + 本次请求
        * limits）；随成功与失败清单一起落盘，与清单身份绑定。 */
       const effectiveEvidenceLimits: WorkEvidenceEffectiveLimits | null = assemblyLimits === null ? null
         : { version: assemblyLimits.version, recorder: assemblyLimits.recorder, publish: assemblyLimits.publish, request: request.limits };
-      const projection = deps.recording === undefined ? null : createWorkRecordingProjection(deps.recording, request, deps.verifier);
+      const projection = deps.recording === undefined ? null : createWorkRecordingProjection(deps.recording, request, deps.verifier, storageBudget);
       const maxBatchEvents = projection === null ? limits.chunkMaxEvents : Math.min(limits.chunkMaxEvents, WORK_RECORDING_MAX_BATCH_MESSAGES);
       let stopObservation: WorkEvidenceStopObservation = { status: 'tail_timeout', evidence: null };
       const stopWatch = Promise.resolve(handle.stopped).then(raw => {
@@ -472,6 +491,8 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       let chunkFirstSequence: number | null = null;
       let chunkLastSequence: number | null = null;
       let chunkEventCount = 0;
+      /* P07-2 / F-004：已申请（未结算）的事件行字节；发布成败后统一结算。 */
+      let chunkClaimedBytes = 0;
       const chunks: WorkEvidenceChunkRef[] = [];
       /* 用量观察：稳定身份去重后计入；任一字段未知则该字段总量 null。 */
       let usageCounted = 0;
@@ -548,9 +569,20 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             return { event: { ...event, payload }, redacted: JSON.stringify(payload) !== JSON.stringify(event.payload) };
           }));
         } catch (error) {
+          /* 已申请的事件行额度随本次失败结算（不退还；重试重新申请）。 */
+          storageBudget.settle('body', chunkClaimedBytes, 0, true);
+          chunkClaimedBytes = 0;
           throw new RecordingFailure('event_publish_failed', '公开正文发布失败', error);
         }
         const content = Buffer.concat(chunkLines);
+        let claimedBytes = chunkClaimedBytes;
+        if (claimedBytes < content.byteLength) {
+          /* 防御纵深：块内容必须先有额度（正常路径逐行申请；不得无额度写入）。 */
+          if (!storageBudget.claimExact('body', content.byteLength - claimedBytes)) {
+            throw new RecordingFailure('total_bytes_limit_exceeded', '持久化总字节超限（受控停止）');
+          }
+          claimedBytes = content.byteLength;
+        }
         const locator = `sessions/${request.sessionId}/event-log/${String(chunkIndex).padStart(6, '0')}.ndjson`;
         let published;
         try {
@@ -563,15 +595,22 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             content: [content],
           });
         } catch (error) {
+          storageBudget.settle('body', claimedBytes, 0, true);
+          chunkClaimedBytes = 0;
           throw new RecordingFailure(classifyArtifactPublishFailure('event', error), '事件分块发布失败', error);
         }
         try {
           const report = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
           if (report.kind !== 'verified_ready') throw new Error('事件正文完整性核验失败');
         } catch (error) {
+          storageBudget.settle('body', claimedBytes, 0, true);
+          chunkClaimedBytes = 0;
           throw new RecordingFailure('event_publish_failed', '事件正文完整性核验失败', error);
         }
         assertCurrent();
+        /* 写入中核对实测字节：ready 制品的实测 sizeBytes 与申请额度对账。 */
+        storageBudget.settle('body', claimedBytes, published.artifact.sizeBytes as number, false);
+        chunkClaimedBytes = 0;
         stats.eventsPersisted += chunkEventCount;
         stats.bytesPersisted += chunkBytes;
         for (const event of chunkEvents) {
@@ -625,9 +664,12 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           gaps.add(`event_body_too_large:${event.sequence}`);
           return;
         }
-        if (stats.bytesPersisted + chunkBytes + line.byteLength > limits.maxTotalBytes) {
+        /* P07-2 / F-004：写入前申请累计磁盘额度（全有或全无；不退还）。
+         * 额度不足 = 存储额度原因的受控停止，required 不可成为完整成功。 */
+        if (!storageBudget.claimExact('body', line.byteLength)) {
           throw new RecordingFailure('total_bytes_limit_exceeded', '持久化总字节超限（受控停止）');
         }
+        chunkClaimedBytes += line.byteLength;
         if (chunkBytes + line.byteLength > limits.chunkMaxBytes) await flushChunk();
         chunkLines.push(line);
         chunkEvents.push(event);
@@ -1040,7 +1082,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           lastEventSequence: finalResult.lastEventSequence,
         },
         resultStatus,
-        diagnostics: [...diagnostics.list],
+        diagnostics: [...diagnostics.list.slice(0, WORK_EVIDENCE_DIAGNOSTICS_MAX_COUNT - 1), storageBudgetDiagnostic(storageBudget.usage())],
         coverage: (gaps.list.length === 0 && resultStatus === 'settled' &&
           sequenceReconciliation !== 'mismatch') ? 'complete' : 'partial',
       };
@@ -1049,9 +1091,15 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         return await failRecording(new RecordingFailure('recording_scope_incomplete', 'required 记录范围不完整'), manifest);
       }
       let manifestArtifactId: string;
+      let manifestClaimed = 0;
       try {
         assertCurrent();
         const body = Buffer.from(JSON.stringify(validateWorkEvidenceManifest(manifest)), 'utf8');
+        /* P07-2 / F-004：收尾额度内发布清单（全有或全无）；不足时不发布、不伪造 ready。 */
+        if (!storageBudget.claimExact('finalization', body.byteLength)) {
+          throw new RecordingFailure('manifest_storage_exhausted', '存储额度不足以保存覆盖清单');
+        }
+        manifestClaimed = body.byteLength;
         const published = await deps.publisher.publishArtifact({
           projectId: request.projectId,
           kind: WORK_EVIDENCE_MANIFEST_KIND,
@@ -1062,12 +1110,17 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         });
         const integrity = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
         if (integrity.kind !== 'verified_ready') throw new Error('覆盖清单完整性核验失败');
+        storageBudget.settle('finalization', manifestClaimed, published.artifact.sizeBytes as number, false);
         manifestArtifactId = published.artifact.id;
         if (projection !== null) await advanceWatermark(manifest, {
           artifactId: published.artifact.id, contentHash: published.artifact.contentHash!,
           sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
         });
       } catch (error) {
+        if (manifestClaimed > 0) storageBudget.settle('finalization', manifestClaimed, 0, true);
+        if (error instanceof RecordingFailure && error.failureReason === 'manifest_storage_exhausted') {
+          return await failRecording(error, manifest);
+        }
         return await failRecording(new RecordingFailure(classifyArtifactPublishFailure('manifest', error), '覆盖清单发布失败', error), manifest);
       }
 
@@ -1079,6 +1132,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         watermark: persistedWatermark,
         gaps: [...gaps.list],
         stats: { ...stats },
+        storageBudget: storageBudget.usage(),
         result: finalResult,
         resultStatus,
         sequenceReconciliation,
@@ -1143,6 +1197,11 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             gaps.add('partial_evidence_flush_failed');
           }
         }
+        /* P07-2 / F-004：未落盘的已申请事件行额度结算为失败口径（不退还）。 */
+        if (chunkClaimedBytes > 0) {
+          storageBudget.settle('body', chunkClaimedBytes, 0, true);
+          chunkClaimedBytes = 0;
+        }
         /* 尽力标缺口（recording_failed:<reason>，中止为 recording_failed:aborted），
          * 已保存证据与已发布分块原样保留。 */
         gaps.add(`recording_failed:${failure.failureReason}`);
@@ -1154,47 +1213,59 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         try {
           await advanceWatermark();
         } catch {
-          /* 水位推进失败不覆盖原始失败；Session 保留最后一致状态。 */
+          /* 水位推进失败不覆盖原始失败；向监督层传播证据未持久化缺口。 */
+          gaps.add('evidence_metadata_unpersisted');
         }
         /* 尽力发布诚实清单（coverage='failed'），不生成虚假 ready/complete。 */
         let failedManifestId: string | null = null;
         const failureManifest = buildFailedManifest(manifestDraft);
         if (aborted && projection !== null) {
           // Close only index metadata after abort; do not start new body writes.
-          try { await advanceWatermark(failureManifest); } catch { /* preserve the last durable index */ }
+          try { await advanceWatermark(failureManifest); } catch { gaps.add('evidence_metadata_unpersisted'); }
         }
         if (!aborted) {
-          try {
-            const draft = failureManifest;
-            const body = Buffer.from(JSON.stringify(validateWorkEvidenceManifest(draft)), 'utf8');
-            const published = await deps.publisher.publishArtifact({
-              projectId: request.projectId,
-              kind: WORK_EVIDENCE_MANIFEST_KIND,
-              mediaType: WORK_EVIDENCE_MANIFEST_MEDIA_TYPE,
-              expectedHash: createHash('sha256').update(body).digest('hex'),
-              locator: `sessions/${request.sessionId}/evidence-manifest.json`,
-              content: [body],
-            });
-            const integrity = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
-            if (integrity.kind !== 'verified_ready') throw new Error('失败清单完整性核验失败');
-            failedManifestId = published.artifact.id;
-            if (projection !== null) await advanceWatermark(draft, {
-              artifactId: published.artifact.id, contentHash: published.artifact.contentHash!,
-              sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
-            });
-          } catch {
-            // 连诚实的失败清单都无法保存：保留可核验缺口（证据无法保存），
-            // 已发布分块与 Session 缺口仍如实保留。
+          /* P07-2 / F-004：优先在有限收尾额度内发布失败清单；额度不足不发布、
+           * 不伪造引用，直接转入 SQLite 元数据回退。 */
+          const draft = failureManifest;
+          const body = Buffer.from(JSON.stringify(validateWorkEvidenceManifest(draft)), 'utf8');
+          if (storageBudget.claimExact('finalization', body.byteLength)) {
+            try {
+              const published = await deps.publisher.publishArtifact({
+                projectId: request.projectId,
+                kind: WORK_EVIDENCE_MANIFEST_KIND,
+                mediaType: WORK_EVIDENCE_MANIFEST_MEDIA_TYPE,
+                expectedHash: createHash('sha256').update(body).digest('hex'),
+                locator: `sessions/${request.sessionId}/evidence-manifest.json`,
+                content: [body],
+              });
+              const integrity = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
+              if (integrity.kind !== 'verified_ready') throw new Error('失败清单完整性核验失败');
+              storageBudget.settle('finalization', body.byteLength, published.artifact.sizeBytes as number, false);
+              failedManifestId = published.artifact.id;
+              if (projection !== null) await advanceWatermark(draft, {
+                artifactId: published.artifact.id, contentHash: published.artifact.contentHash!,
+                sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
+              });
+            } catch {
+              storageBudget.settle('finalization', body.byteLength, 0, true);
+              // 连诚实的失败清单都无法保存：保留可核验缺口（证据无法保存），
+              // 已发布分块与 Session 缺口仍如实保留。
+              gaps.add('evidence_unrecoverable');
+              diagnostics.add('evidence_unrecoverable');
+              // Metadata can still close honestly when body storage is unavailable.
+              try { await advanceWatermark(failureManifest); } catch { gaps.add('evidence_metadata_unpersisted'); }
+            }
+          } else {
             gaps.add('evidence_unrecoverable');
             diagnostics.add('evidence_unrecoverable');
-            // Metadata can still close honestly when body storage is unavailable.
-            try { await advanceWatermark(failureManifest); } catch { /* preserve the last durable index */ }
+            try { await advanceWatermark(failureManifest); } catch { gaps.add('evidence_metadata_unpersisted'); }
           }
         }
         if (mode === 'best_effort' && !aborted && failedManifestId !== null) return {
           recordingMode: mode, status: 'partial', manifestArtifactId: failedManifestId,
           ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
           watermark: persistedWatermark, gaps: [...gaps.list], stats: { ...stats }, result: settledResult(),
+          storageBudget: storageBudget.usage(),
           resultStatus: failureManifest.resultStatus, sequenceReconciliation: failureManifest.sequenceReconciliation,
         };
         throw new WorkEvidenceRecordingError(
@@ -1206,6 +1277,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             recordingMode: mode,
             safeStopRequired: mode === 'required' && !aborted,
             manifestArtifactId: failedManifestId,
+            storageBudget: storageBudget.usage(),
             ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
             cause: failure.causeValue,
           },
@@ -1269,7 +1341,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           },
           result: null,
           resultStatus: resultSettled ? (resultFailure === null ? 'settled' : 'invalid') : 'tail_timeout',
-          diagnostics: [...diagnostics.list],
+          diagnostics: [...diagnostics.list.slice(0, WORK_EVIDENCE_DIAGNOSTICS_MAX_COUNT - 1), storageBudgetDiagnostic(storageBudget.usage())],
           coverage: 'failed',
         };
         return {
@@ -1283,7 +1355,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           watermark: persistedWatermark,
           gaps: [...gaps.list],
           stats: { ...stats },
-          diagnostics: [...diagnostics.list],
+          diagnostics: [...diagnostics.list.slice(0, WORK_EVIDENCE_DIAGNOSTICS_MAX_COUNT - 1), storageBudgetDiagnostic(storageBudget.usage())],
           coverage: mode === 'best_effort' ? 'partial' : 'failed',
         };
       }

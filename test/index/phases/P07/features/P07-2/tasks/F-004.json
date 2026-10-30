@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p07-2-f004-storage-budget.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f001-recorder-bounds.test.ts", "all": true },
+      { "file": "test/modules/runtime/p07-2-f002-runner-bounds.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-work-recording-publisher.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p04-5-work-recording-store.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/p07-2-f003-artifact-deadline.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/artifact-publish.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/artifact-file-store.test.ts", "all": true },
+      { "file": "test/modules/storage/artifacts/artifact-verify.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f007-mcp-audit-recording.test.ts", "all": true },
+      { "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-service.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-runtime-settlement.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-10-runtime-negatives.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-10-runtime-output-negatives.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-3-runtime-retry-settlement.test.ts", "all": true },
+      { "file": "test/modules/execution/control/p04-7-f003-deadline-control.test.ts", "all": true }
+    ]
+  }]
+}

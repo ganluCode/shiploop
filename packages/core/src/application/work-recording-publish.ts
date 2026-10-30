@@ -9,6 +9,7 @@
 import { createOutputRedactor } from './output-redaction.js';
 import { isArtifactPublishError } from './artifact-publish.js';
 import type { ArtifactPublisher, ArtifactPublishResult } from './artifact-publish.js';
+import type { WorkRecordingStorageBudget } from './work-recording-budget.js';
 import type { WorkRecordingArtifactRef, WorkRecordingMessageRole } from '../ports/work-recording.js';
 import { WORK_RECORDING_MESSAGE_ROLES } from '../ports/work-recording.js';
 import { validateWorkRecordingPublishLimits } from '../ports/work-recording.js';
@@ -42,6 +43,12 @@ export interface WorkRecordingBodyInput {
   readonly expectedHash: string;
   readonly content: ByteStream;
   readonly signal?: AbortSignal;
+  /**
+   * P07-2 / F-004：本次记录的累计磁盘额度（一次 record() 内的会话级账本）。
+   * 提供时公开正文/附件按块在写入前申请该额度；额度不足按 session_storage_quota
+   * 截断/拒绝。缺省 = 旧语义（仅本调用局部 maxTotalBytes），保持兼容。
+   */
+  readonly budget?: WorkRecordingStorageBudget;
 }
 
 export interface WorkRecordingAttachmentInput {
@@ -52,6 +59,8 @@ export interface WorkRecordingAttachmentInput {
   readonly expectedHash: string;
   readonly content: ByteStream;
   readonly signal?: AbortSignal;
+  /** P07-2 / F-004：同 WorkRecordingBodyInput.budget（附件与正文共享会话额度）。 */
+  readonly budget?: WorkRecordingStorageBudget;
 }
 
 export interface WorkRecordingBodyPublication {
@@ -145,6 +154,14 @@ function artifactRef(result: ArtifactPublishResult): WorkRecordingArtifactRef {
   };
 }
 
+/** P07-2 / F-004：会话级累计磁盘额度形状校验（非可信输入不进入计量）。 */
+function isStorageBudgetLike(value: unknown): value is WorkRecordingStorageBudget {
+  if (value === null || typeof value !== 'object') return false;
+  const candidate = value as Partial<WorkRecordingStorageBudget>;
+  return typeof candidate.claim === 'function' && typeof candidate.claimExact === 'function'
+    && typeof candidate.settle === 'function' && typeof candidate.usage === 'function';
+}
+
 /**
  * 创建 Work 正文发布器。每个 publishBody 调用最多持有一个有界 chunk；
  * ArtifactPublisher 负责 pending/staging/hash/ready 失败证据，本模块不吞掉它。
@@ -191,12 +208,31 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
     if (remaining === 0) {
       return { status: 'unavailable', ref: null, observedBytes: 0, retainedBytes: 0, truncated: false, redacted: false, gapReasons: ['total_volume_limit'] };
     }
+    const budget = input.budget;
+    if (budget !== undefined && !isStorageBudgetLike(budget)) {
+      return { status: 'unavailable', ref: null, observedBytes: 0, retainedBytes: 0, truncated: false, redacted: false, gapReasons: ['invalid_budget'] };
+    }
     const retainedLimit = Math.min(limit, remaining);
     let observedBytes = 0;
     let retainedBytes = 0;
     let truncated = false;
     let redacted = false;
+    /* P07-2 / F-004：写入前申请会话级累计额度；返回可用前缀长度（0 = 无额度）。 */
+    let sessionClaimed = 0;
+    let quotaDenied = false;
+    const grantSession = (bytes: number): number => {
+      if (budget === undefined || bytes <= 0) return bytes;
+      const granted = budget.claim('body', bytes);
+      if (granted < bytes) quotaDenied = true;
+      sessionClaimed += granted;
+      return granted;
+    };
     const useRedaction = textual(mediaType) && redactionValues.length > 0;
+    /* P07-2 / F-004：写入前探测会话额度：正文池一无所剩时不启动发布（不产生
+     * 空制品冒充证据）。 */
+    if (budget !== undefined && budget.usage().availableBodyBytes === 0) {
+      return { status: 'unavailable', ref: null, observedBytes: 0, retainedBytes: 0, truncated: false, redacted: false, gapReasons: ['session_storage_quota'] };
+    }
     const decoder = useRedaction ? new TextDecoder('utf-8') : undefined;
     const redactor = useRedaction ? createOutputRedactor(redactionValues) : undefined;
 
@@ -221,7 +257,12 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
             truncated = true;
             return;
           }
-          const take = Math.min(available, limits.maxChunkBytes, output.byteLength - offset);
+          let take = Math.min(available, limits.maxChunkBytes, output.byteLength - offset);
+          take = grantSession(take);
+          if (take <= 0) {
+            truncated = true;
+            return;
+          }
           const chunk = output.slice(offset, offset + take);
           offset += take;
           retainedBytes += chunk.byteLength;
@@ -239,24 +280,22 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
         if (transformedTail.includes('[REDACTED]') && !flushText.includes('[REDACTED]')) redacted = true;
         if (transformedTail.length > 0) {
           const output = new TextEncoder().encode(transformedTail);
-          const available = retainedLimit - retainedBytes;
-          if (output.byteLength > available) {
-            const chunk = output.slice(0, Math.max(0, available));
-            if (chunk.byteLength > 0) {
-              retainedBytes += chunk.byteLength;
-              total.retained += chunk.byteLength;
-              queuedBytes += chunk.byteLength;
-              try { yield chunk; } finally { queuedBytes -= chunk.byteLength; }
-            }
-            truncated = true;
-          } else if (output.byteLength > 0) {
-            retainedBytes += output.byteLength;
-            total.retained += output.byteLength;
-            queuedBytes += output.byteLength;
-            try { yield output; } finally { queuedBytes -= output.byteLength; }
+          const take = grantSession(Math.min(retainedLimit - retainedBytes, output.byteLength));
+          if (take > 0) {
+            const chunk = output.slice(0, take);
+            retainedBytes += chunk.byteLength;
+            total.retained += chunk.byteLength;
+            queuedBytes += chunk.byteLength;
+            try { yield chunk; } finally { queuedBytes -= chunk.byteLength; }
           }
+          if (take < output.byteLength) truncated = true;
         }
       }
+    }
+
+    if (quotaDenied && retainedBytes === 0) {
+      /* 会话额度一点不可用：不发布空正文冒充证据，直接不可用并标记存储额度原因。 */
+      return { status: 'unavailable', ref: null, observedBytes, retainedBytes: 0, truncated: false, redacted, gapReasons: ['session_storage_quota'] };
     }
 
     try {
@@ -265,6 +304,7 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
         content: boundedContent(), signal: input.signal,
       });
       const ref = artifactRef(result);
+      if (budget !== undefined) budget.settle('body', sessionClaimed, ref.sizeBytes, false);
       if (ref.contentHash !== expectedHash) {
         return { status: 'unavailable', ref: null, observedBytes, retainedBytes, truncated, redacted, gapReasons: ['body_hash_mismatch'] };
       }
@@ -273,13 +313,16 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
       }
       return {
         status: truncated ? 'truncated' : 'complete', ref, observedBytes, retainedBytes,
-        truncated, redacted, gapReasons: truncated ? ['body_limit'] : [],
+        truncated, redacted,
+        gapReasons: truncated ? [quotaDenied ? 'session_storage_quota' : 'body_limit'] : [],
       };
     } catch (error) {
+      if (budget !== undefined) budget.settle('body', sessionClaimed, 0, true);
       return {
         status: 'unavailable', ref: null, observedBytes, retainedBytes, truncated, redacted,
-        gapReasons: [safeGap(error), ...(isArtifactPublishError(error) && error.cleanupStatus === 'cleanup_unconfirmed'
-          ? ['cleanup_unconfirmed'] : [])],
+        gapReasons: [safeGap(error), ...(quotaDenied ? ['session_storage_quota'] : []),
+          ...(isArtifactPublishError(error) && error.cleanupStatus === 'cleanup_unconfirmed'
+            ? ['cleanup_unconfirmed'] : [])],
       };
     }
   }
@@ -315,7 +358,8 @@ export function createWorkRecordingPublisher(deps: WorkRecordingPublisherDeps): 
       }
     } else {
       for (const attachment of rawAttachments.slice(0, attachmentLimit)) {
-        const result = await publishBodyInternal({ ...attachment, projectId: input.projectId, kind: 'attachment' }, total, true);
+        const result = await publishBodyInternal({ ...attachment, projectId: input.projectId, kind: 'attachment',
+          ...(input.message.budget === undefined && attachment.budget === undefined ? {} : { budget: attachment.budget ?? input.message.budget }) }, total, true);
         attachments.push(result);
         missingReasons.push(...result.gapReasons);
       }

@@ -25,6 +25,7 @@ import { createArtifactFileStore } from '../../../packages/core/src/adapters/fs/
 import { createArtifactPublisher } from '../../../packages/core/src/application/artifact-publish.ts';
 import { createWorkEvidenceRecorder, isWorkEvidenceRecordingError } from '../../../packages/core/src/application/work-evidence-recorder.ts';
 import type { WorkEvidenceRecordingError } from '../../../packages/core/src/application/work-evidence-recorder.ts';
+import { workRecordingFinalizationReserve } from '../../../packages/core/src/application/work-recording-budget.ts';
 import { createWorkRecordingPublisher } from '../../../packages/core/src/application/work-recording-publish.ts';
 import {
   DEFAULT_WORK_RECORDING_BOUND_POLICY,
@@ -211,11 +212,11 @@ async function readManifest(f: EvidenceFixture, artifactId: string): Promise<Wor
   return validateWorkEvidenceManifest(JSON.parse(Buffer.from(verified.content).toString('utf8')));
 }
 
-function craftedEvent(prefix: string, sequence: number, preview: string): RuntimeEvent {
+function craftedEvent(prefix: string, sequence: number, preview: string, text?: string): RuntimeEvent {
   return {
     schemaVersion: 1, sequence, eventId: `${prefix}${sequence}`, kind: 'message',
     occurredAtUtc: '2026-10-29T00:00:00.000Z',
-    payload: { messageId: `m-${sequence}`, role: 'assistant', preview },
+    payload: { messageId: `m-${sequence}`, role: 'assistant', preview, ...(text === undefined ? {} : { text }) },
   } as unknown as RuntimeEvent;
 }
 
@@ -239,11 +240,12 @@ function craftedHandle(events: readonly RuntimeEvent[], options: { throwError?: 
 
 /** 预计算记录器将序列化出的行字节（含结尾换行），用于精确字节边界。 */
 function expectedLineBytes(event: RuntimeEvent): number {
-  const payload = event.payload as { messageId: string; role: string; preview: string };
+  const payload = event.payload as { messageId: string; role: string; preview: string; text?: string };
   return Buffer.byteLength(`${JSON.stringify({
     v: 1, sequence: event.sequence, eventId: event.eventId, kind: event.kind,
     occurredAtUtc: event.occurredAtUtc,
-    payload: { kind: event.kind, messageId: payload.messageId, role: payload.role, preview: payload.preview },
+    payload: { kind: event.kind, messageId: payload.messageId, role: payload.role, preview: payload.preview,
+      ...(payload.text === undefined ? {} : { text: payload.text }) },
   })}\n`, 'utf8');
 }
 
@@ -341,31 +343,42 @@ describe('P07-2 F-001 effective limits evidence and runtime bound integrity (rea
   });
 
   it('stops on one byte over the total disk budget and accepts the exact total', async () => {
-    /* 每个 fixture 的 eventId 含会话相关前缀：先打开 fixture，再按其自身前缀
-     * 计算精确行字节，用白定义 recorder 的 maxTotalBytes 贴边界。 */
+    /* P07-2 / F-004 起 maxTotalBytes 是含公开正文/附件/Manifest 的累计磁盘额度：
+     * 正文池 = maxTotalBytes − 收尾保留额度（min(chunkMaxBytes, floor(L/4))）。
+     * 每个 fixture 的 eventId 含会话相关前缀：先打开 fixture，再按其自身前缀
+     * 计算精确行字节，用白定义 recorder 的 maxTotalBytes 贴正文池边界。 */
+    const limitForBodyCap = (cap: number): number => {
+      const capOf = (limitBytes: number): number => limitBytes - workRecordingFinalizationReserve(limitBytes, DEFAULT_RECORDER_LIMITS.chunkMaxBytes);
+      let limitBytes = Math.max(1, cap);
+      while (capOf(limitBytes) < cap) limitBytes += 1;
+      return limitBytes;
+    };
     const exact = await openEvidenceFixture({ script: messageScript(), limits: { tailWaitMs: 60 } });
     try {
-      const events = [1, 2, 3].map(seq => craftedEvent(exact.eventIdentityPrefix, seq, `正文-${seq}`));
+      /* 正文体积选大：收尾保留额度（≈ cap/3）能容纳覆盖清单。 */
+      const events = [1, 2, 3].map(seq => craftedEvent(exact.eventIdentityPrefix, seq, `正文-${seq}`, `长正文-${seq}-${'x'.repeat(2400)}`));
       const totalBytes = events.reduce((sum, event) => sum + expectedLineBytes(event), 0);
       const recorder = createWorkEvidenceRecorder({
         publisher: exact.publisher, verifier: exact.verifier, sessions: exact.sessions,
-        limits: { ...DEFAULT_RECORDER_LIMITS, maxTotalBytes: totalBytes, tailWaitMs: 60 },
+        limits: { ...DEFAULT_RECORDER_LIMITS, maxTotalBytes: limitForBodyCap(totalBytes), tailWaitMs: 60 },
       });
       const outcome = await recorder.record({
         request: exact.request, handle: craftedHandle(events), eventIdentityPrefix: exact.eventIdentityPrefix,
       });
       expect(outcome.status).toBe('complete');
       expect(outcome.stats.bytesPersisted).toBe(totalBytes);
+      /* 累计申请 = 事件分块 + 覆盖清单，均计入同一额度。 */
+      expect(outcome.storageBudget!.bodyClaimedBytes).toBe(totalBytes);
     } finally {
       exact.close();
     }
     const oneByteShort = await openEvidenceFixture({ script: messageScript(), limits: { tailWaitMs: 60 } });
     try {
-      const events = [1, 2, 3].map(seq => craftedEvent(oneByteShort.eventIdentityPrefix, seq, 'x'));
+      const events = [1, 2, 3].map(seq => craftedEvent(oneByteShort.eventIdentityPrefix, seq, `正文-${seq}`, `长正文-${seq}-${'x'.repeat(2400)}`));
       const totalBytes = events.reduce((sum, event) => sum + expectedLineBytes(event), 0);
       const recorder = createWorkEvidenceRecorder({
         publisher: oneByteShort.publisher, verifier: oneByteShort.verifier, sessions: oneByteShort.sessions,
-        limits: { ...DEFAULT_RECORDER_LIMITS, maxTotalBytes: totalBytes - 1, tailWaitMs: 60 },
+        limits: { ...DEFAULT_RECORDER_LIMITS, maxTotalBytes: limitForBodyCap(totalBytes - 1), tailWaitMs: 60 },
       });
       const error = await recorder.record({
         request: oneByteShort.request, handle: craftedHandle(events), eventIdentityPrefix: oneByteShort.eventIdentityPrefix,
