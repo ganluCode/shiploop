@@ -11,6 +11,7 @@ import { createSqliteAttemptAccess } from '../../../packages/core/src/adapters/s
 import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sqlite/task-dag-store.ts';
 import { observeWithin, superviseExecution } from '../../../packages/core/src/application/execution-supervision.ts';
 import { openBindingFixture, BINDING_NOW as NOW } from '../../helpers/p03-6/input-binding-fixture.ts';
+import { DEFAULT_WORK_RECORDING_RECORDER_LIMITS } from '../../../packages/core/src/ports/work-recording-policy.ts';
 import { DEFAULT_RECORDER_LIMITS } from '../../helpers/p03-6/evidence-fixture.ts';
 import { validateRuntimeExecutionResult, validateRuntimeStopEvidence, RuntimeError } from '../../../packages/core/src/ports/runtime-execution.ts';
 import type { RuntimeHandle } from '../../../packages/core/src/ports/runtime-execution.ts';
@@ -33,7 +34,7 @@ async function fixture(mode: RecordingMode = 'required') {
   const f = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
   const launch = f.claimAndLaunch('t-1');
   const bound = await f.bindingService.bind(f.bindingInput(launch));
-  const request = { ...bound.request, limits: { ...bound.request.limits, timeoutMs: 1000 } };
+  const request = bound.request;
   const sessions = createSqliteWorkSessionStore(f.session, { nowUtcMs: () => NOW });
   const identity = { projectId: f.projectId, sessionId: request.sessionId, attemptId: launch.receipt.attempt.id,
     owner: request.owner.principalId, hostInstanceId: request.owner.hostInstanceId, executionVersion: request.executionVersion };
@@ -45,7 +46,10 @@ async function fixture(mode: RecordingMode = 'required') {
   } });
   const recorder = (overrides: Partial<WorkEvidenceRecorderDeps> = {}) => createWorkEvidenceRecorder({
     publisher: f.publisher, verifier: f.verifier, sessions, recordingMode: mode,
-    limits: { ...DEFAULT_RECORDER_LIMITS, chunkMaxEvents: 1, tailWaitMs: 20 },
+    // Ordinary filesystem/settlement cases use the production failure reserve.
+    // Deadline cases below explicitly narrow it to exercise bounded expiry.
+    limits: { ...DEFAULT_RECORDER_LIMITS, chunkMaxEvents: 1,
+      tailWaitMs: DEFAULT_WORK_RECORDING_RECORDER_LIMITS.tailWaitMs },
     recording: { publisher: bodyPublisher, store, nowUtcMs: () => NOW }, ...overrides });
   let cancels = 0;
   const handle = (events: RuntimeHandle['events'], result = Promise.resolve(completed)): RuntimeHandle => ({
@@ -70,7 +74,8 @@ describe('P07-2 F-005 整体期限与监督结算', () => {
       });
       let persisted!: RuntimeSettlementInput;
       const runtime = f.handle({ async *[Symbol.asyncIterator]() {} });
-      const supervision = superviseExecution({ request: f.request, runtime: runtime as RuntimeSession,
+      const supervision = superviseExecution({ request: { ...f.request, limits: { ...f.request.limits, timeoutMs: 1000 } },
+        runtime: runtime as RuntimeSession,
         controller: new AbortController(), result: settle(Promise.resolve(completed)), stopped: settle(Promise.resolve(stopped)),
         recording: Promise.resolve({ status: 'rejected', reason: recordingError }),
         settlement: { async settle(input) { persisted = input; return f.settlement.settle(input); } },
@@ -119,7 +124,9 @@ describe('P07-2 F-005 整体期限与监督结算', () => {
         } };
         const runtime = f.handle(events, scenario === 'manifest-hang' ? Promise.resolve(completed) : blocked.promise);
         const start = performance.now();
-        recording = settle(f.recorder({ publisher }).record({ request: f.request, handle: runtime,
+        recording = settle(f.recorder({ publisher,
+          limits: { ...DEFAULT_RECORDER_LIMITS, chunkMaxEvents: 1, tailWaitMs: 20 },
+        }).record({ request: { ...f.request, limits: { ...f.request.limits, timeoutMs: 1000 } }, handle: runtime,
           eventIdentityPrefix: 'evt.f005.', signal: controller.signal }));
         const outcome = await observeWithin(recording, 1600);
         expect(outcome, '整体期限必须独立于 result 与 events 的结束').toMatchObject({ status: 'rejected',
@@ -160,9 +167,11 @@ describe('P07-2 F-005 整体期限与监督结算', () => {
           options: { stopWaitMs: 20, drainWaitMs: 100, closeWaitMs: 100,
             retain: async () => { retained++; }, routeFailure: async () => { routed++; return true; } },
           quarantine: () => { quarantined++; }, evidenceRef: () => f.sessions.getWorkSession(f.projectId, f.request.sessionId).resultRef,
-          timeoutMs: 1000, timeoutReason: 'runtime_timeout', timeoutLayer: 'session', timeoutLimitMs: 1000 });
+          timeoutMs: f.request.limits.timeoutMs, timeoutReason: 'runtime_timeout', timeoutLayer: 'session',
+          timeoutLimitMs: f.request.limits.timeoutMs });
         const outcome = await supervision.completion;
-        expect(outcome).toMatchObject({ stopConfirmed: true, persisted: true, retained: true });
+        expect(outcome, JSON.stringify({ outcome, recording: await recording })).toMatchObject({
+          stopConfirmed: true, persisted: true, retained: true, error: null });
         expect(f.query('SELECT status FROM attempts')).toEqual({ status: 'failed' });
         expect(f.query("SELECT count(*) AS n FROM tasks WHERE status = 'passed'")).toEqual({ n: 0 });
         expect(f.query('SELECT status FROM tasks WHERE id = ?', 't-2')).toEqual({ status: 'pending' });
@@ -173,6 +182,67 @@ describe('P07-2 F-005 整体期限与监督结算', () => {
       } finally { f.close(); }
     });
   }
+  it('[case:failed-manifest-cleanup-deadline] 失败 Manifest 发布耗尽收尾预算时独立保存清理错误并禁止释放', async () => {
+    const f = await fixture();
+    const entered = gate<void>(), release = gate<void>(), publicationDone = gate<void>();
+    let recording: Promise<PromiseSettledResult<WorkEvidenceRecordingOutcome>> | undefined;
+    let publicationSignal: AbortSignal | undefined;
+    let publicationStarted = false;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    try {
+      const runtime = f.handle({ async *[Symbol.asyncIterator]() {
+        throw new RuntimeError('protocol', 'runner_buffer_overflow');
+      } });
+      const recorder = f.recorder({
+        limits: { ...DEFAULT_RECORDER_LIMITS, chunkMaxEvents: 1, tailWaitMs: 20 },
+        publisher: { async publishArtifact(input) {
+          publicationSignal = (input as { signal?: AbortSignal }).signal;
+          publicationStarted = true;
+          entered.resolve();
+          try { await release.promise; return await f.publisher.publishArtifact(input); }
+          finally { publicationDone.resolve(); }
+        } },
+      });
+      recording = settle(recorder.record({ request: f.request, handle: runtime, eventIdentityPrefix: 'evt.f005.' }));
+      await entered.promise;
+      // No wall-clock race with real file sync: hold the publication until the
+      // exact failure-reserve boundary, then inspect business and cleanup facts.
+      await vi.advanceTimersByTimeAsync(20);
+      const observation = await recording;
+      expect(observation).toMatchObject({ status: 'rejected', reason: { reason: 'event_queue_backpressure',
+        manifestArtifactId: null, cleanupStatus: 'cleanup_unconfirmed', safeStopRequired: true,
+        gaps: expect.arrayContaining(['cleanup_unconfirmed', 'evidence_unrecoverable']) } });
+      expect(publicationSignal?.aborted).toBe(true);
+      const closedManifest = JSON.stringify(f.store.getLatestManifest(f.projectId, f.request.sessionId));
+      let retained = 0, quarantined = 0;
+      const supervision = superviseExecution({ request: f.request, runtime: runtime as RuntimeSession,
+        controller: new AbortController(), result: settle(Promise.resolve(completed)), stopped: settle(Promise.resolve(stopped)), recording,
+        settlement: f.settlement, options: { stopWaitMs: 20, drainWaitMs: 100, closeWaitMs: 100,
+          retain: async () => { retained++; } }, quarantine: () => { quarantined++; },
+        evidenceRef: () => f.sessions.getWorkSession(f.projectId, f.request.sessionId).resultRef,
+        timeoutMs: 1000, timeoutReason: 'runtime_timeout', timeoutLayer: 'session', timeoutLimitMs: 1000 });
+      expect(await supervision.completion).toMatchObject({ persisted: true, stopConfirmed: true,
+        retained: false, error: 'cleanup_unconfirmed' });
+      expect(retained).toBe(0); expect(quarantined).toBe(1);
+      expect(f.query('SELECT status FROM attempts')).toEqual({ status: 'failed' });
+      expect(f.session.database.prepare('SELECT state FROM workspace_leases').all()).toEqual(Array(3).fill({ state: 'quarantined' }));
+      const resultRef = f.sessions.getWorkSession(f.projectId, f.request.sessionId).resultRef!;
+      const evidence = JSON.parse(Buffer.from((await f.verifier.readVerifiedContent(f.projectId, resultRef)).content).toString('utf8'));
+      expect(evidence).toMatchObject({ recording: { failure: 'event_queue_backpressure', manifestRef: null,
+        cleanupStatus: 'cleanup_unconfirmed' }, stop: { evidence: { confirmed: true } } });
+      release.resolve();
+      await publicationDone.promise;
+      expect(JSON.stringify(f.store.getLatestManifest(f.projectId, f.request.sessionId))).toBe(closedManifest);
+      expect(f.query("SELECT count(*) AS n FROM artifacts WHERE kind = 'work-evidence-manifest' AND status = 'ready'")).toEqual({ n: 0 });
+    } finally {
+      release.resolve();
+      if (recording) await recording;
+      if (publicationStarted) await publicationDone.promise;
+      vi.useRealTimers();
+      f.close();
+    }
+  });
+
   for (const gap of ['queue_limit', 'cleanup_unconfirmed']) {
     it(`[case:best-effort-body-${gap}] 公开正文的硬限制和清理故障不能降为普通缺口`, async () => {
       const f = await fixture('best_effort');

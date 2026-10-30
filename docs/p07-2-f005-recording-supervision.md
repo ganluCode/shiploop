@@ -86,3 +86,31 @@ Harness selection 只引用该索引。六个文件有本地执行证据，其�
 当前索引保留原 14 文件并追加直接修改的 ExecutionService 测试，共 15 文件；Harness
 selection 继续只引用该索引。除上述 8 文件外，余下 7 文件交 Nezha 独立复验，不宣称本轮运行通过。
 未运行全仓、Phase 或真实模型，未改官方 Task/Feature 元数据或覆盖原失败结论。
+
+## F-005 第二次独立验收后的返工
+
+原独立验收 `verifications/F-005/083ca65bc98a4451817adce9f7cbb7c3/` 实际执行
+15 文件，196 项通过、2 项失败；旧报告和提交保持原样。
+
+两项失败用例要求失败 Manifest 完整发布或立即进入保留流程，但各自给正常文件发布设置了
+50ms / 20ms 收尾预算。有限收尾契约允许预算耗尽后返回空 manifestRef 或
+cleanup_unconfirmed，原断言没有为这种情形分配独立的测试场景。本次仅调整测试夹具和证据：
+
+- 正常文件发布/队列硬限制/Pi 事件失败沿用已有生产默认 `tailWaitMs=2000`；
+  普通采集使用 Core 绑定请求中已校验的有限期限，正常路径的监督与请求保持一致。
+  增加错误详情诊断，保持原 Manifest 内容、持久前缀、保留、禁止 fallback 和幂等断言。
+- 四种整体期限测试仍显式使用 1000ms 采集与 20ms 收尾，原 1600ms 观察上限不变；
+  共享期限竞争用例仍显式使用 1000ms 请求。
+- 新增 `failed-manifest-cleanup-deadline`：发布屏障挂起失败 Manifest，受控时钟精确推进
+  20ms。断言原队列错误保留、空引用、evidence_unrecoverable 与 cleanup_unconfirmed；
+  即使 Runtime stopped=true，监督也返回独立清理错误，三组租约 quarantined，不保留/释放。
+  随后放行迟到发布并等待其结束，断言无 ready Manifest、已有元数据不变。
+
+本次未修改生产源码、配置或依赖。15 文件索引和 Harness 引用保留，新增 case 自动纳入
+文件级索引，不删除失败分支、不把清理未确认记作成功。
+
+本轮日志绑定 invocation `896b0a64d78e485ea43c37d19e298a94`，均在 `runtime-logs/`：
+`test-mp0gc_cn.log` 为新屏障用例单独验证；`test-isruv2l3.log` 为两个失败文件 29 项全部通过；
+随后普通请求改为复用 Core 已校验期限后，`test-53z2qce9.log` 完整重验 supervision 15 项通过；
+`test-do1dc89m.log` 最终类型检查通过。两文件均有本轮通过证据，余下13文件交 Nezha
+独立复验；未运行全仓/Phase/真实模型，无人工待确认阻塞。

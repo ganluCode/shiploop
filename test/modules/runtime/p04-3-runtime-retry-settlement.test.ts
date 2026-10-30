@@ -14,6 +14,7 @@ import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sq
 import { createSqliteAttemptLifecycleStore } from '../../../packages/core/src/adapters/sqlite/attempt-lifecycle-store.ts';
 import { createSqliteAtomicCommandStore } from '../../../packages/core/src/adapters/sqlite/atomic-commands.ts';
 import { openBindingFixture, BINDING_NOW } from '../../helpers/p03-6/input-binding-fixture.ts';
+import { DEFAULT_WORK_RECORDING_RECORDER_LIMITS } from '../../../packages/core/src/ports/work-recording-policy.ts';
 import { DEFAULT_RECORDER_LIMITS } from '../../helpers/p03-6/evidence-fixture.ts';
 
 const strategy = { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet-4-5' };
@@ -77,7 +78,9 @@ async function fixture(script: Script, fault?: 'recording' | 'events') {
           } } };
         } } }], configuration) }),
       recorder: createWorkEvidenceRecorder({ publisher: fault === 'recording' ? { async publishArtifact() { throw new Error('controlled_recording_failure'); } } : f.publisher,
-        verifier: f.verifier, sessions, limits: { ...DEFAULT_RECORDER_LIMITS, tailWaitMs: 50 } }),
+        // Use the production reserve for the required real Manifest publication.
+        verifier: f.verifier, sessions, limits: { ...DEFAULT_RECORDER_LIMITS,
+          tailWaitMs: DEFAULT_WORK_RECORDING_RECORDER_LIMITS.tailWaitMs } }),
       eventIdentityPrefix: piRuntimeEventPrefix, nowUtcMs: () => BINDING_NOW });
     const claim = f.claimTask('t-1');
     return { ...f, sessions, service, settlement, claim, sdk: () => sdk, calls: () => calls, factories: () => factories,
@@ -206,6 +209,7 @@ describe('F-003 real Pi Session, recording and fenced settlement', () => {
       expect(evidence.recording).toMatchObject({ complete: false, failure: fault === 'events' ? 'event_stream_failed' : 'event_publish_failed' });
       if (fault === 'events') {
         expect(evidence.execution).toMatchObject({ failure: { kind: 'protocol', reason: 'runtime_events_failed' }, classification: { category: 'protocol' } });
+        expect(evidence.recording.manifestRef, JSON.stringify({ recording, evidence: evidence.recording })).toEqual(expect.any(String));
         const manifest = await f.json(evidence.recording.manifestRef);
         expect(manifest.coverage).toBe('failed');
         expect(manifest.watermark).toBeGreaterThan(0);
