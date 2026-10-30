@@ -157,9 +157,40 @@ function setup(): Entry {
   return entry;
 }
 
+async function confirmProjectProfile(fixture: BindingFixture): Promise<void> {
+  const profileNowMs = 1_900_000_100_000;
+  const app = await fixture.box.openApplication({
+    capabilityCatalog: fixture.box.capabilityCatalog,
+    nowUtcMs: () => profileNowMs,
+  });
+  try {
+    const owner = fixture.box.localOwner();
+    const scope = { kind: 'project' as const, projectId: fixture.projectId };
+    const submit = async (operation: string, payload: unknown, extra: Record<string, unknown> = {}) => {
+      const receipt = await app.commandService.submit(owner, {
+        schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(profileNowMs).toISOString(),
+        operation, payload, ...extra,
+      } as never);
+      if (receipt.status !== 'completed' || receipt.result === null) {
+        throw new Error(`project.profile 命令失败（${operation}）: ${JSON.stringify(receipt)}`);
+      }
+      return receipt as unknown as { result: Record<string, unknown> };
+    };
+    const detected = await submit('project.profile.detect', {}, { scope });
+    const profile = detected.result.profile;
+    if (typeof profile !== 'object' || profile === null) throw new Error('project.profile.detect 未返回 Profile');
+    const revision = fixture.query('SELECT revision FROM project_profiles WHERE project_id = ? ORDER BY version DESC LIMIT 1', fixture.projectId) as { revision: number } | undefined;
+    if (revision === undefined) throw new Error('project.profile.detect 未持久化候选 Profile');
+    await submit('project.profile.confirm', { profile }, { scope, expectedRevision: revision.revision });
+  } finally {
+    await app.close();
+  }
+}
+
 async function prepareFixture(entry: Entry): Promise<{ fixture: BindingFixture; markerDir: string; probe: SqliteStorageSession }> {
   const fixture = await openBindingFixture();
   entry.fixture = fixture;
+  await confirmProjectProfile(fixture);
   const markerDir = join(fixture.box.root, 'f016-markers');
   mkdirSync(markerDir, { recursive: true });
   fixture.session.close();
@@ -397,7 +428,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     expect(runtimeStarts(markerDir)).toHaveLength(1);
   }, 90_000);
 
-  it('after a verifier-boundary kill resumes once through the Host command and preserves cumulative budget', async () => {
+  it('after a verifier-boundary kill preserves the durable prefix but refuses resume without a published Manifest', async () => {
     const entry = setup();
     const { fixture, markerDir, probe } = await prepareFixture(entry);
     const initial = budget(probe);
@@ -421,42 +452,30 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     await waitFor(() => attemptRows(probe)[0]?.status === 'interrupted', '遗留 Attempt 被 fence');
     expect(attemptRows(probe)).toHaveLength(1);
     expect(q(probe, 'SELECT status, reason FROM runs')).toMatchObject({ status: 'paused' });
-    expect(workspace(probe)).toMatchObject({ id: managed.id, status: 'retained' });
-    expect(probe.database.prepare('SELECT COUNT(*) AS n FROM workspace_leases').get()).toEqual({ n: 0 });
+    expect(workspace(probe)).toMatchObject({ id: managed.id, status: 'quarantined' });
+    expect(probe.database.prepare("SELECT state FROM workspace_leases").all()).toEqual([
+      { state: 'quarantined' }, { state: 'quarantined' }, { state: 'quarantined' },
+    ]);
+    const diagnostic = await diagnosticOf(fixture, probe, verified.id);
+    expect(diagnostic).toMatchObject({ kind: 'work-recovery-reconciliation', status: 'quarantined' });
+    expect(diagnostic.gaps).toEqual(expect.arrayContaining([
+      'recording_manifest_unpublished', 'recording_manifest_incomplete', 'recording_resume_unsupported',
+    ]));
     expect(q(probe, "SELECT status FROM tasks WHERE status = 'passed'")).toBeUndefined();
     expect(lateResult(probe, fixture, verified)).toMatchObject({ disposition: 'ignored', reason: 'stale_execution_identity' });
 
-    // Host 命令并发 resume：仅一个事务成功；之后只创建一个新 Attempt、复用同一 worktree。
     const client = await connectToHost({ canonicalRoot: fixture.box.dataRoot });
     entry.clients.push(client);
-    // 恢复核对已将 Run 置于 paused/restart_recovery；调度器对该状态只报告
-    // run_control_blocked，不改写权威恢复原因。显式 resume 直接以当前 revision 竞争。
-    expect(q(probe, 'SELECT status, reason FROM runs')).toMatchObject({ status: 'paused',
-      reason: expect.stringMatching(/^(restart_recovery|verification_not_assembled)$/) });
     const run = q(probe, 'SELECT revision FROM runs') as { revision: number };
-    const resumed = await client.resumeExecution({
+    await expect(client.resumeExecution({
       projectId: fixture.projectId, runId: fixture.runId, expectedRevision: run.revision,
-    });
-    const competed = await client.resumeExecution({
-      projectId: fixture.projectId, runId: fixture.runId, expectedRevision: run.revision,
-    }).catch(error => error as { code?: string });
-    expect(resumed).toMatchObject({ status: 'completed', result: expect.objectContaining({ resumed: true }) });
-    expect(competed).toMatchObject({ status: 'rejected', error: { code: 'conflict',
-      details: { reason: expect.stringMatching(/^(stale_revision|not_resumable)$/) } } });
-    await waitFor(() => attemptRows(probe).length === 2, '仅创建一个新 Attempt');
-    await waitFor(() => runtimeStarts(markerDir).length === 2, '新 Attempt 至多一次 Runtime 启动');
-    await waitFor(() => attemptRows(probe)[1]?.status === 'verifying', '新 Attempt 进入待验收');
-    expect(attemptRows(probe)[0]).toMatchObject({ id: verified.id, status: 'interrupted' });
-    expect(attemptRows(probe)[1]!.session_id).not.toBe(verified.session_id);
-    expect(q(probe, 'SELECT COUNT(*) AS n FROM managed_workspaces')).toEqual({ n: 1 });
-    expect(workspace(probe).id).toBe(managed.id);
+    })).rejects.toMatchObject({ code: 'resource_busy' });
+    expect(attemptRows(probe)).toHaveLength(1);
+    expect(runtimeStarts(markerDir)).toHaveLength(1);
     const after = budget(probe);
+    expect(after).toEqual(before);
     expect(after.deadline_at).toBe(initial.deadline_at);
     expect(after.budget_snapshot).toBe(initial.budget_snapshot);
-    expect(after.attempts_created).toBe(Number(before.attempts_created) + 1);
-    expect(after.runtime_starts).toBe(Number(before.runtime_starts) + 1);
-    expect(runtimeStarts(markerDir).map(item => item.attemptId)).toEqual([verified.id, attemptRows(probe)[1]!.id]);
-    expect(new Set(runtimeStarts(markerDir).map(item => item.invocationId)).size).toBe(2);
   }, 90_000);
 
   it('SIGKILLs a Host with events finished but result unsettled and refuses recovery after external Git drift and a leftover lock', async () => {
