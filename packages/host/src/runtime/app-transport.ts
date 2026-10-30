@@ -111,6 +111,7 @@ import {
   WORKSPACE_OPERATIONS_ROUTE_PREFIX,
   SETTINGS_GLOBAL_EXPORT_ROUTE,
   SETTINGS_GLOBAL_ROUTE,
+  RETENTION_EVALUATION_ROUTE,
   SNAPSHOT_ROUTE,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
@@ -159,6 +160,7 @@ export type ApplicationOperation =
   | 'settings.project.get'
   | 'settings.project.effective'
   | 'settings.project.export'
+  | 'retention.evaluation.get'
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
@@ -273,6 +275,11 @@ export interface HostApplicationContext {
   readonly projectResourceService?: Pick<import('shiploop-core').ProjectResourceService, 'getConfiguration' | 'discoverCandidates' | 'previewCandidates' | 'configureSource'>;
   readonly repositoryMoveService?: Pick<import('shiploop-core').RepositoryMoveService, 'preview' | 'prepareConfirmation' | 'confirm'>;
   /**
+   * P07-3 / F-012：保留评估只读服务（retention.evaluation.get）；未装配时
+   * 路由 501 unsupported（不冒充观测能力；生产默认装配真实接线）。
+   */
+  readonly retentionEvaluationService?: Pick<import('shiploop-core').RetentionEvaluationService, 'evaluate'>;
+  /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
    */
@@ -310,6 +317,8 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       return { operation: 'settings.global.get', method: 'GET' };
     case SETTINGS_GLOBAL_EXPORT_ROUTE:
       return { operation: 'settings.global.export', method: 'GET' };
+    case RETENTION_EVALUATION_ROUTE:
+      return { operation: 'retention.evaluation.get', method: 'GET' };
     case SNAPSHOT_ROUTE:
       return { operation: 'snapshot.get', method: 'GET' };
     case EVENTS_ROUTE:
@@ -1434,6 +1443,13 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'settings.project.export':
       result = await app.queryService.exportProjectSettings(app.principal, pathParam?.value);
       break;
+    case 'retention.evaluation.get': {
+      if (app.retentionEvaluationService === undefined) {
+        reject(501, 'unsupported', operation, '保留评估未在本装配中启用', { reason: 'retention_evaluation_unsupported' });
+      }
+      result = await app.retentionEvaluationService.evaluate(app.principal);
+      break;
+    }
     case 'snapshot.get':
       result = await app.queryService.getSnapshot(app.principal, buildSnapshotScope(params, operation));
       break;

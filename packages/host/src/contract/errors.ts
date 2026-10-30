@@ -127,6 +127,8 @@ export const APP_OPERATIONS = [
   'project.resources.sources.configure',
   'repository.move.confirm',
   'repository.move.preview',
+  // P07-3 / F-012：保留评估只读查询（与 Core RETENTION_EVALUATION_OPERATION 同源）。
+  'retention.evaluation.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

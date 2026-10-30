@@ -241,6 +241,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'project.resources.preview',
   'project.resources.sources.configure',
   'repository.move.preview',
+  // P07-3 / F-012：保留评估只读查询（受控数据根磁盘阈值/保留候选量；
+  // 能力位复用 settings.global.read，与 Core RETENTION_EVALUATION_OPERATION 同源）。
+  'retention.evaluation.get',
 ] as const;
 
 /**

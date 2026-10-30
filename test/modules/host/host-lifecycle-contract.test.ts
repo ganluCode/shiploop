@@ -301,7 +301,8 @@ describe('F-002 冻结常量与能力声明', () => {
       "project.resources.candidates",
       "project.resources.preview",
       "project.resources.sources.configure",
-      "repository.move.preview"
+      "repository.move.preview",
+      "retention.evaluation.get"
     ],
     "events": {
       "transport": "sse",
@@ -380,6 +381,9 @@ describe('F-002 冻结常量与能力声明', () => {
       'project.resources.preview',
       'project.resources.sources.configure',
       'repository.move.preview',
+      // P07-3 / F-012：保留评估只读查询（与 Core
+      // RETENTION_EVALUATION_OPERATION 同步）。
+      'retention.evaluation.get',
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

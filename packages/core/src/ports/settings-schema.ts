@@ -181,6 +181,55 @@ export interface DeliveryPolicyV2 {
   readonly deliveryActions?: readonly DeliveryActionKind[];
 }
 
+/* ------------------------------------------------------------------ *
+ * P07-3 / F-012 保留政策段（证据保留、备份上限与受控数据根磁盘阈值）。
+ *
+ * 语义与兼容（core-design/03 §6「会话保留、磁盘阈值和备份上限在发布前
+ * 确认，当前不编造默认容量」；PRD p07-data-lifecycle §3.1 第 3 项）：
+ * - 全部字段可选且必须由用户显式配置——未配置即未配置，不注入默认保留
+ *   天数、默认磁盘容量或默认备份上限；配置本身不启动破坏性自动清理；
+ * - 单位显式固定：天数按 86_400_000 毫秒滚动窗口计算到期；磁盘阈值为受控
+ *   数据根的最低可用空间，字节或百分比可同时配置（任一触发即评估触发）；
+ *   maxBackupCount 以完整备份包份数计（含最新一包）；
+ * - 作用域与冲突值：diskMinFreeBytes/diskMinFreePercent 观测的是共享受控
+ *   数据根，只允许出现在 global scope 配置中；project scope payload 携带
+ *   即带字段定位拒绝（reason='global_only_field'），项目规则不能借磁盘
+ *   阈值扩大跨项目治理权。保留/备份字段按既有政策段级整体覆盖继承（见
+ *   effective-settings）；
+ * - 阈值与上限只授权「评估与候选生成」，绝不授权删除被引用证据或清除
+ *   唯一经验证可恢复的备份（maxBackupCount 下界 1；清理执行的引用保护与
+ *   执行前复核见 F-013）；
+ * - schemaVersion 维持 2：可选新增段，旧 v2 payload（无该段）语义不变；
+ *   未知键与非法数值一律拒绝（有界整数，越界/小数/字符串不静默取整）。
+ * ------------------------------------------------------------------ */
+
+/** 保留期限（天）取值范围：1 天 .. 36_500 天（100 年）。 */
+export const RETENTION_DAYS_MIN = 1;
+export const RETENTION_DAYS_MAX = 36_500;
+/** 备份份数上限取值范围：至少保留 1 包（0 不能授权清空全部备份）。 */
+export const MAX_BACKUP_COUNT_MIN = 1;
+export const MAX_BACKUP_COUNT_MAX = 1_000;
+/** 受控数据根最低可用空间（字节）取值范围：1 MiB .. 1 TiB（实施契约值）。 */
+export const DISK_MIN_FREE_BYTES_MIN = 1_048_576;
+export const DISK_MIN_FREE_BYTES_MAX = 1_099_511_627_776;
+/** 受控数据根最低可用百分比取值范围：(0,100) 开区间整数。 */
+export const DISK_MIN_FREE_PERCENT_MIN = 1;
+export const DISK_MIN_FREE_PERCENT_MAX = 99;
+
+/** P07-3 / F-012 保留政策段（可选新增；详见上方段注释）。 */
+export interface RetentionPolicyV2 {
+  /** 受管证据保留期限（天；到期只是可清理候选，引用保护在清理执行时复核）。 */
+  readonly evidenceRetentionDays?: number;
+  /** 备份保留期限（天；到期备份进入轮换候选，最新一包始终保留）。 */
+  readonly backupRetentionDays?: number;
+  /** 完整备份包份数上限（含最新一包；超过部分为轮换候选）。 */
+  readonly maxBackupCount?: number;
+  /** 受控数据根最低可用空间（字节；仅 global scope）。 */
+  readonly diskMinFreeBytes?: number;
+  /** 受控数据根最低可用百分比 1..99（仅 global scope）。 */
+  readonly diskMinFreePercent?: number;
+}
+
 /** 本阶段确认的政策子集；未列出的政策段（memoryPolicy/agentModes 等）未定义即非法。 */
 export interface SettingsPoliciesV2 {
   readonly executionLimits?: ExecutionLimitsPolicyV2;
@@ -188,6 +237,8 @@ export interface SettingsPoliciesV2 {
   readonly securityPolicy?: SecurityPolicyV2;
   /** P03-8 / F-001 交付政策段（可选新增；详见 DeliveryPolicyV2）。 */
   readonly deliveryPolicy?: DeliveryPolicyV2;
+  /** P07-3 / F-012 保留政策段（可选新增；详见 RetentionPolicyV2）。 */
+  readonly retentionPolicy?: RetentionPolicyV2;
 }
 
 export interface SettingsPayloadV2 {
@@ -214,9 +265,10 @@ const STRATEGIES_KEYS = ['defaultStrategy', 'modelMap', 'purposeStrategies', 'ag
 const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'endpointRef'] as const;
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
-const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy'] as const;
+const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy', 'retentionPolicy'] as const;
 const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'toolTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
+const RETENTION_POLICY_KEYS = ['evidenceRetentionDays', 'backupRetentionDays', 'maxBackupCount', 'diskMinFreeBytes', 'diskMinFreePercent'] as const;
 
 /** 以 Unicode 码点计数（String.length 会把 emoji 记为 2）。 */
 function codePointLength(value: string): number {
@@ -532,6 +584,92 @@ function validateSecurityPolicy(
   return result;
 }
 
+/**
+ * P07-3 / F-012 保留政策段校验：全部字段为有界整数（单位与语义见
+ * RetentionPolicyV2）；磁盘阈值字段仅允许 global scope 配置——project
+ * scope（entity.type='project_settings' 或携带 projectId）携带即拒绝，
+ * 项目配置不能借共享数据根磁盘阈值扩大跨项目治理权。
+ */
+function validateRetentionPolicySection(
+  value: unknown,
+  context: ValidationContext,
+  field: string,
+): RetentionPolicyV2 {
+  const object = requirePlainObject(value, context, field);
+  rejectUnknownKeys(object, RETENTION_POLICY_KEYS, context, field);
+  const projectScope = context.entity?.type === 'project_settings' || context.entity?.projectId !== undefined;
+  const globalScope = context.entity?.type === 'global_settings';
+  const result: {
+    evidenceRetentionDays?: number;
+    backupRetentionDays?: number;
+    maxBackupCount?: number;
+    diskMinFreeBytes?: number;
+    diskMinFreePercent?: number;
+  } = {};
+  if (object.evidenceRetentionDays !== undefined) {
+    result.evidenceRetentionDays = validateBoundedInteger(
+      object.evidenceRetentionDays,
+      context,
+      `${field}.evidenceRetentionDays`,
+      RETENTION_DAYS_MIN,
+      RETENTION_DAYS_MAX,
+    );
+  }
+  if (object.backupRetentionDays !== undefined) {
+    result.backupRetentionDays = validateBoundedInteger(
+      object.backupRetentionDays,
+      context,
+      `${field}.backupRetentionDays`,
+      RETENTION_DAYS_MIN,
+      RETENTION_DAYS_MAX,
+    );
+  }
+  if (object.maxBackupCount !== undefined) {
+    result.maxBackupCount = validateBoundedInteger(
+      object.maxBackupCount,
+      context,
+      `${field}.maxBackupCount`,
+      MAX_BACKUP_COUNT_MIN,
+      MAX_BACKUP_COUNT_MAX,
+    );
+  }
+  if (object.diskMinFreeBytes !== undefined) {
+    if (!globalScope || projectScope) {
+      throw new StorageError(
+        'validation',
+        context.operation,
+        `${context.operation}: ${field}.diskMinFreeBytes 只允许在全局配置中设置（受控数据根是共享根，项目配置不能扩大跨项目治理）`,
+        { entity: context.entity, details: { field: `${field}.diskMinFreeBytes`, reason: 'global_only_field' } },
+      );
+    }
+    result.diskMinFreeBytes = validateBoundedInteger(
+      object.diskMinFreeBytes,
+      context,
+      `${field}.diskMinFreeBytes`,
+      DISK_MIN_FREE_BYTES_MIN,
+      DISK_MIN_FREE_BYTES_MAX,
+    );
+  }
+  if (object.diskMinFreePercent !== undefined) {
+    if (!globalScope || projectScope) {
+      throw new StorageError(
+        'validation',
+        context.operation,
+        `${context.operation}: ${field}.diskMinFreePercent 只允许在全局配置中设置（受控数据根是共享根，项目配置不能扩大跨项目治理）`,
+        { entity: context.entity, details: { field: `${field}.diskMinFreePercent`, reason: 'global_only_field' } },
+      );
+    }
+    result.diskMinFreePercent = validateBoundedInteger(
+      object.diskMinFreePercent,
+      context,
+      `${field}.diskMinFreePercent`,
+      DISK_MIN_FREE_PERCENT_MIN,
+      DISK_MIN_FREE_PERCENT_MAX,
+    );
+  }
+  return result;
+}
+
 function validateSettingsPolicies(
   value: unknown,
   context: ValidationContext,
@@ -544,6 +682,7 @@ function validateSettingsPolicies(
     verification?: VerificationPolicyV2;
     securityPolicy?: SecurityPolicyV2;
     deliveryPolicy?: DeliveryPolicyV2;
+    retentionPolicy?: RetentionPolicyV2;
   } = {};
   if (object.executionLimits !== undefined) {
     result.executionLimits = validateExecutionLimitsPolicy(object.executionLimits, context, `${field}.executionLimits`);
@@ -559,6 +698,13 @@ function validateSettingsPolicies(
       object.deliveryPolicy,
       context,
       `${field}.deliveryPolicy`,
+    );
+  }
+  if (object.retentionPolicy !== undefined) {
+    result.retentionPolicy = validateRetentionPolicySection(
+      object.retentionPolicy,
+      context,
+      `${field}.retentionPolicy`,
     );
   }
   return result;

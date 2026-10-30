@@ -78,6 +78,8 @@ export const PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX = 'repository-move/con
 export const PROJECTS_INSPECT_ROUTE = '/v1/projects/inspect';
 export const SETTINGS_GLOBAL_ROUTE = '/v1/settings/global';
 export const SETTINGS_GLOBAL_EXPORT_ROUTE = '/v1/settings/global/export';
+/** P07-3 / F-012：保留评估只读路由（受控数据根磁盘阈值/保留候选量观测）。 */
+export const RETENTION_EVALUATION_ROUTE = '/v1/retention/evaluation';
 export const SNAPSHOT_ROUTE = '/v1/snapshot';
 export const EVENTS_ROUTE = '/v1/events';
 /** P02-3 / F-014 §3.2：基线分页/详情/证据正文路由（全部 GET + Bearer）。 */

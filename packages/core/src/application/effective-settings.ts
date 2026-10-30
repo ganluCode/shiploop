@@ -40,6 +40,7 @@ import type {
   DeliveryPolicyV2,
   ExecutionLimitsPolicyV2,
   ModelComplexity,
+  RetentionPolicyV2,
   RuntimeStrategyV1,
   SecurityPolicyV2,
   SettingsPayload,
@@ -99,6 +100,8 @@ export interface EffectivePolicies {
   readonly securityPolicy?: EffectivePolicySection<SecurityPolicyV2>;
   /** P03-8 / F-001 交付政策段（项目非空段整体覆盖全局段；空段继承全局）。 */
   readonly deliveryPolicy?: EffectivePolicySection<DeliveryPolicyV2>;
+  /** P07-3 / F-012 保留政策段（同一覆盖语义；磁盘阈值仅 global scope）。 */
+  readonly retentionPolicy?: EffectivePolicySection<RetentionPolicyV2>;
 }
 
 /**
@@ -298,6 +301,7 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
     verification?: EffectivePolicySection<VerificationPolicyV2>;
     securityPolicy?: EffectivePolicySection<SecurityPolicyV2>;
     deliveryPolicy?: EffectivePolicySection<DeliveryPolicyV2>;
+    retentionPolicy?: EffectivePolicySection<RetentionPolicyV2>;
   } = {};
   const executionLimits = pickPolicySection(
     'policies.executionLimits',
@@ -338,6 +342,18 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
   );
   if (deliveryPolicy !== undefined) {
     policies.deliveryPolicy = deliveryPolicy;
+  }
+  // P07-3 / F-012：保留政策段同一“项目非空段整体覆盖、空段继承全局”语义；
+  // 磁盘阈值字段已在 schema 层限定仅 global scope（项目段携带即拒绝）。
+  const retentionPolicy = pickPolicySection(
+    'policies.retentionPolicy',
+    projectPolicies?.retentionPolicy,
+    projectScope,
+    globalPolicies?.retentionPolicy,
+    globalScope,
+  );
+  if (retentionPolicy !== undefined) {
+    policies.retentionPolicy = retentionPolicy;
   }
 
   const configured =

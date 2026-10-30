@@ -1143,6 +1143,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P06-3 / F-006：owner 管理入口来源登记经真实 Host 路由接线并宣告能力。
         'project.resources.sources.configure',
         'repository.move.preview',
+        // P07-3 / F-012：保留评估只读查询（与 Core
+        // RETENTION_EVALUATION_OPERATION 同步）。
+        'retention.evaluation.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

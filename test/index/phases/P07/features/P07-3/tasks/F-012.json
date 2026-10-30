@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-012",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/configuration/p07-3-f012-retention-policy-schema.test.ts", "all": true },
+      { "file": "test/modules/configuration/p07-3-f012-retention-merge-export.test.ts", "all": true },
+      { "file": "test/modules/retention/p07-3-f012-retention-evaluation.test.ts", "all": true },
+      { "file": "test/modules/host/p07-3-f012-retention-evaluation-host.test.ts", "all": true },
+      { "file": "test/modules/configuration/settings-schema-v2.test.ts", "all": true },
+      { "file": "test/modules/configuration/effective-settings-merge.test.ts", "all": true },
+      { "file": "test/modules/configuration/configuration-service.test.ts", "all": true },
+      { "file": "test/modules/configuration/settings-query-service.test.ts", "all": true },
+      { "file": "test/modules/commands/command-settings.test.ts", "all": true },
+      { "file": "test/modules/cli/app-cli-config-execute.test.ts", "all": true },
+      { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+      { "file": "test/modules/commands/docs-p02-2-operations.test.ts", "all": true },
+      { "file": "test/modules/host/host-client-application.test.ts", "all": true },
+      { "file": "test/modules/host/host-startup.test.ts", "all": true }
+    ]
+  }]
+}

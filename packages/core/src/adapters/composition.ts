@@ -49,6 +49,13 @@ import { createLocalProjectResourceCandidateSourceReader } from './fs/project-re
 import type { ConfigurationService } from '../application/configuration-service.js';
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
+import { createRetentionEvaluationService } from '../application/retention-evaluation.js';
+import type { RetentionEvaluationService } from '../application/retention-evaluation.js';
+import {
+  createBackupCatalogReader,
+  createDiskUsageObserver,
+  createManagedAreaScanner,
+} from './fs/disk-observation.js';
 import { createCommandService } from '../application/command-service.js';
 import { createProjectLifecycleCommandHandler } from '../application/project-lifecycle.js';
 import type { ProjectLifecycleCommandHandler as ProjectLifecycleHandler } from '../ports/project-lifecycle.js';
@@ -436,6 +443,11 @@ export interface CoreApplication {
   readonly projectProfileService: ProjectProfileService;
   /** P06-5：存量仓库移动预览与确认；确认由 Host 转为既有命令事务。 */
   readonly repositoryMoveService: RepositoryMoveService;
+  /**
+   * P07-3 / F-012：保留评估只读服务（retention.evaluation.get）：受控数据根
+   * 磁盘阈值/保留候选量观测；零写入、零清理，未知观测显式呈现。
+   */
+  readonly retentionEvaluationService: RetentionEvaluationService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
@@ -760,6 +772,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         : (object.repositoryInspector as unknown as RepositoryInspector);
     const projectService = createProjectService({ stateStore, repositoryInspector });
     const configurationService = createConfigurationService({ stateStore, capabilityCatalog });
+    // P07-3 / F-012：保留评估只读观测（真实 statfs/受管扫描/备份清单）。
+    const retentionEvaluationService = createRetentionEvaluationService({
+      configurationService,
+      disk: createDiskUsageObserver({ dataRoot: basePathService.dataRoot() }),
+      managedScan: createManagedAreaScanner({ dataRoot: basePathService.dataRoot() }),
+      backups: createBackupCatalogReader({
+        backupRoot: join(basePathService.dataRoot(), 'backups'),
+      }),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
     const projectResourceStore = createSqliteProjectResourceStore(
       session,
       nowUtcMs === undefined ? {} : { nowUtcMs },
@@ -1601,6 +1623,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       gitPublicMetadataLock,
       projectService,
       configurationService,
+      retentionEvaluationService,
       projectResourceService,
       maintenanceGate,
       commandReceiptStore,

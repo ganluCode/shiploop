@@ -55,6 +55,7 @@ import type {
   ExecutionLimitsPolicyV2,
   ModelComplexity,
   ProjectStrategiesV1,
+  RetentionPolicyV2,
   RuntimeStrategyV1,
   SecurityPolicyV2,
   SettingsPayload,
@@ -106,6 +107,8 @@ export interface ExportedPolicies {
   readonly executionLimits?: ExecutionLimitsPolicyV2;
   readonly verification?: VerificationPolicyV2;
   readonly securityPolicy?: SecurityPolicyV2;
+  /** P07-3 / F-012 保留政策段（非敏感数值；脱敏导出直接投影）。 */
+  readonly retentionPolicy?: RetentionPolicyV2;
 }
 
 /** 导出中的当前值投影：逐字段白名单，只含确认的非敏感配置与引用。 */
@@ -196,6 +199,7 @@ function exportPolicies(policies: SettingsPoliciesV2 | undefined): ExportedPolic
     executionLimits?: ExecutionLimitsPolicyV2;
     verification?: VerificationPolicyV2;
     securityPolicy?: SecurityPolicyV2;
+    retentionPolicy?: RetentionPolicyV2;
   } = {};
   if (policies.executionLimits !== undefined) {
     result.executionLimits =
@@ -208,6 +212,9 @@ function exportPolicies(policies: SettingsPoliciesV2 | undefined): ExportedPolic
   }
   if (policies.securityPolicy !== undefined) {
     result.securityPolicy = { ...policies.securityPolicy };
+  }
+  if (policies.retentionPolicy !== undefined) {
+    result.retentionPolicy = { ...policies.retentionPolicy };
   }
   return result;
 }

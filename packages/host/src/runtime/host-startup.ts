@@ -529,6 +529,9 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         commandReceiptsService: locked.writer.commandReceiptsService,
         projectResourceService: locked.writer.projectResourceService,
         repositoryMoveService: locked.writer.repositoryMoveService,
+        // P07-3 / F-012：保留评估只读服务（生产默认装配真实接线；未装配时
+        // 路由 501，不冒充观测能力）。
+        retentionEvaluationService: locked.writer.retentionEvaluationService,
         // P02-3 / F-006（§7.2/§7.3）：静态接入用例只经 Core 窄端口接线。
         onboardingService: locked.writer.onboardingService,
         projectProfileService: locked.writer.projectProfileService,
