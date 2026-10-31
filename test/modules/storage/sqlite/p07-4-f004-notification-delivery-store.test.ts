@@ -474,7 +474,7 @@ describe('P07-4 / F-004 notification schema migration v61', () => {
         setup.close();
       }
       // v60 库没有通知表。
-      expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(61);
+      expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(62);
 
       const session = openSqliteStorageSession({ path: dbPath });
       try {
@@ -490,7 +490,7 @@ describe('P07-4 / F-004 notification schema migration v61', () => {
           expect(session.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toMatchObject({ n: 0 });
         }
         const rows = session.database.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as Array<{ version: number; checksum: string }>;
-        expect(rows).toHaveLength(61);
+        expect(rows).toHaveLength(62);
         for (const row of rows.filter(item => item.version <= 60)) {
           expect(row.checksum).toBe(SQLITE_MIGRATIONS[row.version - 1]?.checksum);
         }

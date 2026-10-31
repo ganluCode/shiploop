@@ -23,6 +23,13 @@ import {
   DEFAULT_NOTIFICATION_DELIVERY_POLICY,
   NOTIFICATION_DELIVERY_CREATE_OPERATION,
   NOTIFICATION_DELIVERY_MAX_RETRY_DELAY_MS,
+  NOTIFICATION_DELIVERY_CLAIM_OPERATION,
+  NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION,
+  NOTIFICATION_DELIVERY_CLAIM_BATCH_DEFAULT,
+  NOTIFICATION_DELIVERY_CLAIM_LEASE_MS,
+  NOTIFICATION_DELIVERY_CLAIM_MAX_LEASE_MS,
+  NOTIFICATION_DELIVERY_CLAIM_MIN_LEASE_MS,
+  NOTIFICATION_DELIVERY_RESULT_READ_OPERATION,
   NOTIFICATION_DELIVERY_POLICY_VERSION,
   NOTIFICATION_DELIVERY_READ_OPERATION,
   NOTIFICATION_DELIVERY_RESULT_OPERATION,
@@ -36,13 +43,19 @@ import {
   deriveNotificationSummary,
   notificationDeliveryCorrupt,
   validateNotificationDeliveryCreateInput,
+  validateNotificationDeliveryClaimInput,
+  validateNotificationDeliveryClaimReleaseInput,
+  validateNotificationDeliveryResultReadInput,
   validateNotificationDeliveryResultInput,
   validateNotificationScanAdvanceInput,
   validateNotificationProjectionBatchRequest,
   validateNotificationChannelId,
   validateNotificationSummary,
+  type NotificationDeliveryClaimResult,
   type NotificationDeliveryRecord,
+  type NotificationDeliveryResultRecord,
   type NotificationDeliveryResultInput,
+  type NotificationDeliveryClaimReleaseInput,
   type NotificationDeliveryStore,
   type NotificationDeliveryWriteResult,
   type NotificationProjectionBatchResult,
@@ -56,8 +69,25 @@ type DeliveryRow = {
   id: string; revision: number; created_at: number; updated_at: number;
   project_id: string; event_id: string; channel_id: string; event_sequence: number; event_type: string;
   summary_json: string; status: string; attempt_count: number; next_attempt_at: number;
-  policy_version: number; policy_digest: string; claim_generation: number; last_receipt: string | null;
+  policy_version: number; policy_digest: string; claim_generation: number;
+  claim_owner: string | null; claim_until_at: number | null; last_receipt: string | null;
 };
+
+type ResultRow = {
+  id: string; created_at: number; project_id: string; delivery_id: string; attempt: number;
+  outcome: string; receipt: string | null; failure_reason: string | null; occurred_at: number;
+};
+
+function mapResultRow(row: ResultRow): NotificationDeliveryResultRecord {
+  if (row.outcome !== 'succeeded' && row.outcome !== 'failed') throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'unknown_result_outcome');
+  if (!Number.isSafeInteger(row.attempt) || row.attempt < 1 || row.attempt > 16 || !Number.isSafeInteger(row.occurred_at) || row.occurred_at < 1) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'invalid_result_row');
+  const receipt = row.receipt === null ? null : parseJsonObject(row.receipt, NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'invalid_result_receipt');
+  if (row.outcome === 'succeeded' && (receipt === null || row.failure_reason !== null)) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'invalid_success_result_shape');
+  if (row.outcome === 'failed' && (receipt !== null || typeof row.failure_reason !== 'string')) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'invalid_failure_result_shape');
+  return { schemaVersion: NOTIFICATION_DELIVERY_SCHEMA_VERSION, resultId: row.id, projectId: row.project_id,
+    deliveryId: row.delivery_id, attempt: row.attempt, outcome: row.outcome, receipt,
+    failureReason: row.failure_reason, occurredAt: row.occurred_at };
+}
 
 type ScanRow = {
   channel_id: string; revision: number; created_at: number; updated_at: number; last_scanned_sequence: number;
@@ -87,9 +117,12 @@ function mapDeliveryRow(row: DeliveryRow): NotificationDeliveryRecord {
   const status = NOTIFICATION_DELIVERY_STATUSES.find(candidate => candidate === row.status);
   if (status === undefined) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_READ_OPERATION, 'unknown_status');
   if (row.channel_id !== 'local-results') throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_READ_OPERATION, 'unknown_channel');
+  if ((row.claim_owner === null) !== (row.claim_until_at === null)) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_READ_OPERATION, 'invalid_claim_shape');
+  if (row.claim_owner !== null && (typeof row.claim_owner !== 'string' || row.claim_owner.length > 128)) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_READ_OPERATION, 'invalid_claim_owner');
   for (const [field, value] of [['revision', row.revision], ['attempt_count', row.attempt_count], ['claim_generation', row.claim_generation], ['event_sequence', row.event_sequence], ['policy_version', row.policy_version], ['next_attempt_at', row.next_attempt_at], ['created_at', row.created_at], ['updated_at', row.updated_at]] as const) {
     if (!Number.isSafeInteger(value) || value < 0) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_READ_OPERATION, `invalid_${field}`);
   }
+  if (row.claim_until_at !== null && (!Number.isSafeInteger(row.claim_until_at) || row.claim_until_at < row.created_at)) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_READ_OPERATION, 'invalid_claim_until_at');
   return {
     schemaVersion: NOTIFICATION_DELIVERY_SCHEMA_VERSION,
     deliveryId: row.id,
@@ -104,6 +137,8 @@ function mapDeliveryRow(row: DeliveryRow): NotificationDeliveryRecord {
     nextAttemptAt: row.next_attempt_at,
     policyVersion: row.policy_version,
     policyDigest: row.policy_digest,
+    claimOwner: row.claim_owner,
+    claimUntilAt: row.claim_until_at,
     claimGeneration: row.claim_generation,
     receipt: row.last_receipt === null ? null : parseJsonObject(row.last_receipt, NOTIFICATION_DELIVERY_READ_OPERATION, 'invalid_receipt_json'),
     createdAt: row.created_at,
@@ -233,10 +268,20 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
           entity: { type: 'notification_delivery', id: request.deliveryId },
         });
       }
+      const existingResult = db.prepare<[string, number], ResultRow>('SELECT * FROM notification_delivery_results WHERE delivery_id = ? AND attempt = ?').get(request.deliveryId, request.attempt);
+      if (existingResult !== undefined) {
+        const mapped = mapResultRow(existingResult);
+        const same = mapped.outcome === request.outcome
+          && mapped.failureReason === (request.outcome === 'failed' ? request.failureReason : null)
+          && canonicalNotificationJson(mapped.receipt ?? {}) === canonicalNotificationJson(request.receipt ?? {});
+        if (!same) throw conflict(NOTIFICATION_DELIVERY_RESULT_OPERATION, 'result_identity_conflict', request.deliveryId);
+        return mapDeliveryRow(row);
+      }
       if (row.status === 'delivered' || row.status === 'exhausted') {
         throw conflict(NOTIFICATION_DELIVERY_RESULT_OPERATION, 'terminal_status', request.deliveryId);
       }
-      if (request.attempt !== row.attempt_count + 1) {
+      const expectedAttempt = row.status === 'in_flight' ? row.attempt_count : row.attempt_count + 1;
+      if (request.attempt !== expectedAttempt) {
         throw conflict(NOTIFICATION_DELIVERY_RESULT_OPERATION, 'out_of_order_result', request.deliveryId);
       }
       if (request.claimGeneration !== row.claim_generation) {
@@ -268,7 +313,7 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
       }
       const receiptJson = request.outcome === 'succeeded' ? canonicalNotificationJson(request.receipt as Readonly<Record<string, unknown>>) : null;
       db.prepare(
-        'UPDATE notification_deliveries SET revision = revision + 1, updated_at = ?, status = ?, attempt_count = ?, next_attempt_at = ?, last_receipt = ? WHERE id = ?',
+        'UPDATE notification_deliveries SET revision = revision + 1, updated_at = ?, status = ?, attempt_count = ?, next_attempt_at = ?, claim_owner = NULL, claim_until_at = NULL, last_receipt = ? WHERE id = ?',
       ).run(timestamp, status, request.attempt, nextAttemptAt, receiptJson, request.deliveryId);
       db.prepare(
         'INSERT INTO notification_delivery_results (id, created_at, project_id, delivery_id, attempt, outcome, receipt, failure_reason, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -282,7 +327,59 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
     });
   }
 
-  /** 事务内单调推进渠道扫描水位（advanceScanState 与 F-006 投影共用）。 */
+  function readDeliveryResult(input: unknown): NotificationDeliveryResultRecord | null {
+    const request = validateNotificationDeliveryResultReadInput(input);
+    const row = session.database.prepare<[string, number], ResultRow>(
+      'SELECT * FROM notification_delivery_results WHERE delivery_id = ? AND attempt = ?',
+    ).get(request.deliveryId, request.attempt);
+    return row === undefined ? null : mapResultRow(row);
+  }
+
+  function claimDueDeliveries(input: unknown): NotificationDeliveryClaimResult {
+    const request = validateNotificationDeliveryClaimInput(input);
+    return session.transactWrite(NOTIFICATION_DELIVERY_CLAIM_OPERATION, (db) => {
+      const timestamp = now();
+      if (!Number.isSafeInteger(timestamp) || timestamp < 1) throw conflict(NOTIFICATION_DELIVERY_CLAIM_OPERATION, 'invalid_clock');
+      const rows = db.prepare<[string, number, number], DeliveryRow>(
+        "SELECT * FROM notification_deliveries WHERE channel_id = ? AND status IN ('pending','retry_scheduled') AND next_attempt_at <= ? ORDER BY next_attempt_at ASC, id ASC LIMIT ?",
+      ).all(request.channelId, timestamp, request.limit);
+      const deliveries: NotificationDeliveryRecord[] = [];
+      for (const row of rows) {
+        if (row.attempt_count >= DEFAULT_NOTIFICATION_DELIVERY_POLICY.maxAttempts) {
+          throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_CLAIM_OPERATION, 'retry_row_at_attempt_limit');
+        }
+        const until = timestamp + request.leaseMs;
+        db.prepare(
+          'UPDATE notification_deliveries SET revision = revision + 1, updated_at = ?, status = \'in_flight\', attempt_count = attempt_count + 1, claim_generation = claim_generation + 1, claim_owner = ?, claim_until_at = ? WHERE id = ? AND status IN (\'pending\',\'retry_scheduled\')',
+        ).run(timestamp, request.owner, until, row.id);
+        const claimed = db.prepare<[string], DeliveryRow>('SELECT * FROM notification_deliveries WHERE id = ?').get(row.id);
+        if (claimed === undefined) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_CLAIM_OPERATION, 'claim_missing');
+        deliveries.push(mapDeliveryRow(claimed));
+      }
+      return { channelId: request.channelId, owner: request.owner, deliveries };
+    });
+  }
+
+  function releaseDeliveryClaim(input: unknown): NotificationDeliveryRecord {
+    const request: NotificationDeliveryClaimReleaseInput = validateNotificationDeliveryClaimReleaseInput(input);
+    return session.transactWrite(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, (db) => {
+      const timestamp = now();
+      const row = db.prepare<[string], DeliveryRow>('SELECT * FROM notification_deliveries WHERE id = ?').get(request.deliveryId);
+      if (row === undefined) throw new StorageError('not_found', NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, '投递不存在', { entity: { type: 'notification_delivery', id: request.deliveryId } });
+      if (!request.confirmedStopped) throw conflict(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, 'stop_unconfirmed', request.deliveryId);
+      if (row.status !== 'in_flight') throw conflict(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, 'not_in_flight', request.deliveryId);
+      if (row.claim_owner !== request.owner) throw conflict(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, 'stale_claim_owner', request.deliveryId);
+      if (row.claim_generation !== request.claimGeneration) throw conflict(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, 'stale_claim_generation', request.deliveryId);
+      const status = row.attempt_count >= DEFAULT_NOTIFICATION_DELIVERY_POLICY.maxAttempts ? 'exhausted' : 'retry_scheduled';
+      db.prepare('UPDATE notification_deliveries SET revision = revision + 1, updated_at = ?, status = ?, next_attempt_at = ?, claim_owner = NULL, claim_until_at = NULL WHERE id = ?')
+        .run(timestamp, status, timestamp, request.deliveryId);
+      const updated = db.prepare<[string], DeliveryRow>('SELECT * FROM notification_deliveries WHERE id = ?').get(request.deliveryId);
+      if (updated === undefined) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, 'release_missing');
+      return mapDeliveryRow(updated);
+    });
+  }
+
+
   function upsertScanStateInTransaction(
     db: Database.Database,
     operation: string,
@@ -467,6 +564,9 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
   return Object.freeze({
     createDelivery,
     recordDeliveryResult,
+    readDeliveryResult,
+    claimDueDeliveries,
+    releaseDeliveryClaim,
     advanceScanState,
     readDelivery,
     readScanState,

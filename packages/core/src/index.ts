@@ -13,6 +13,9 @@
  * - 加载本模块没有副作用：不监听端口、不启动进程、不写用户数据。
  */
 export * from './ports/batch-delivery-commands.js';
+export * from './ports/notification-delivery.js';
+export * from './application/notification-delivery.js';
+
 export * from './ports/project-resource-sources.js';
 export * from './ports/errors.js';
 export * from './ports/validation.js';

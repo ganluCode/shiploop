@@ -150,6 +150,16 @@ export const NOTIFICATION_DELIVERY_CREATE_OPERATION = 'NotificationDelivery.crea
 export const NOTIFICATION_DELIVERY_RESULT_OPERATION = 'NotificationDelivery.recordResult';
 export const NOTIFICATION_DELIVERY_SCAN_OPERATION = 'NotificationDelivery.advanceScan';
 export const NOTIFICATION_DELIVERY_READ_OPERATION = 'NotificationDelivery.read';
+export const NOTIFICATION_DELIVERY_RESULT_READ_OPERATION = 'NotificationDelivery.readResult';
+export const NOTIFICATION_DELIVERY_CLAIM_OPERATION = 'NotificationDelivery.claimDue';
+export const NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION = 'NotificationDelivery.releaseClaim';
+export const NOTIFICATION_DELIVERY_CLAIM_BATCH_DEFAULT = 32 as const;
+export const NOTIFICATION_DELIVERY_CLAIM_BATCH_MAX = 100 as const;
+export const NOTIFICATION_DELIVERY_CLAIM_LEASE_MS = 60_000 as const;
+export const NOTIFICATION_DELIVERY_CLAIM_MIN_LEASE_MS = 1_000 as const;
+export const NOTIFICATION_DELIVERY_CLAIM_MAX_LEASE_MS = 300_000 as const;
+
+
 
 /** 校验内置渠道 ID：未知渠道在写入前拒绝（不猜测降级）。 */
 export function validateNotificationChannelId(
@@ -163,7 +173,50 @@ export function validateNotificationChannelId(
   return value as NotificationChannelId;
 }
 
-/** 递归核验摘要对象：JSON 可序列化、深度有界、单字符串有界、总序列化字节有界。 */
+/** 认领输入校验：owner 是不透明稳定身份，不能包含路径/换行等控制字符。 */
+export function validateNotificationDeliveryClaimInput(
+  value: unknown,
+  operation: string = NOTIFICATION_DELIVERY_CLAIM_OPERATION,
+): { channelId: NotificationChannelId; owner: string; limit: number; leaseMs: number } {
+  const context: ValidationContext = { operation };
+  const raw = requirePlainObject(value, context, 'request');
+  rejectUnknownKeys(raw, ['channelId', 'owner', 'limit', 'leaseMs'], context, 'request.');
+  const channelId = validateNotificationChannelId(raw.channelId, context, 'channelId');
+  if (typeof raw.owner !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(raw.owner)) throw validationError(context, 'owner', 'invalid_owner');
+  const limit = raw.limit === undefined ? NOTIFICATION_DELIVERY_CLAIM_BATCH_DEFAULT : raw.limit;
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > NOTIFICATION_DELIVERY_CLAIM_BATCH_MAX) throw validationError(context, 'limit', 'claim_batch_out_of_range', limit);
+  const leaseMs = raw.leaseMs === undefined ? NOTIFICATION_DELIVERY_CLAIM_LEASE_MS : raw.leaseMs;
+  if (typeof leaseMs !== 'number' || !Number.isSafeInteger(leaseMs) || leaseMs < NOTIFICATION_DELIVERY_CLAIM_MIN_LEASE_MS || leaseMs > NOTIFICATION_DELIVERY_CLAIM_MAX_LEASE_MS) throw validationError(context, 'leaseMs', 'claim_lease_out_of_range', leaseMs);
+  return { channelId, owner: raw.owner, limit, leaseMs };
+}
+
+export function validateNotificationDeliveryClaimReleaseInput(
+  value: unknown,
+  operation: string = NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION,
+): NotificationDeliveryClaimReleaseInput {
+  const context: ValidationContext = { operation };
+  const raw = requirePlainObject(value, context, 'request');
+  rejectUnknownKeys(raw, ['deliveryId', 'owner', 'claimGeneration', 'confirmedStopped'], context, 'request.');
+  if (typeof raw.deliveryId !== 'string' || raw.deliveryId.length === 0 || raw.deliveryId.length > 128) throw validationError(context, 'deliveryId', 'invalid_delivery_id');
+  if (typeof raw.owner !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(raw.owner)) throw validationError(context, 'owner', 'invalid_owner');
+  const claimGeneration = validateNonNegativeInteger(raw.claimGeneration, context, 'claimGeneration');
+  if (typeof raw.confirmedStopped !== 'boolean') throw validationError(context, 'confirmedStopped', 'must_be_boolean');
+  return { deliveryId: raw.deliveryId, owner: raw.owner, claimGeneration, confirmedStopped: raw.confirmedStopped };
+}
+
+export function validateNotificationDeliveryResultReadInput(
+  value: unknown,
+  operation: string = NOTIFICATION_DELIVERY_RESULT_READ_OPERATION,
+): NotificationDeliveryResultReadInput {
+  const context: ValidationContext = { operation };
+  const raw = requirePlainObject(value, context, 'request');
+  rejectUnknownKeys(raw, ['deliveryId', 'attempt'], context, 'request.');
+  if (typeof raw.deliveryId !== 'string' || raw.deliveryId.length === 0 || raw.deliveryId.length > 128) throw validationError(context, 'deliveryId', 'invalid_delivery_id');
+  if (typeof raw.attempt !== 'number' || !Number.isInteger(raw.attempt) || raw.attempt < 1 || raw.attempt > NOTIFICATION_DELIVERY_MAX_ATTEMPTS_LIMIT) throw validationError(context, 'attempt', 'attempt_out_of_range');
+  return { deliveryId: raw.deliveryId, attempt: raw.attempt };
+}
+
+
 export function validateNotificationSummary(
   value: unknown,
   context: ValidationContext,
@@ -245,6 +298,10 @@ export interface NotificationDeliveryRecord {
   readonly nextAttemptAt: number;
   readonly policyVersion: number;
   readonly policyDigest: string;
+  /** 当前发送者身份；仅在 in_flight 时存在，旧发送者不能借此覆盖新代次。 */
+  readonly claimOwner: string | null;
+  /** 当前发送租约到期时间；超时本身不代表发送者已停止。 */
+  readonly claimUntilAt: number | null;
   readonly claimGeneration: number;
   readonly receipt: Readonly<Record<string, unknown>> | null;
   readonly createdAt: number;
@@ -280,6 +337,84 @@ export interface NotificationDeliveryResultRecord {
   readonly failureReason: string | null;
   readonly occurredAt: number;
 }
+
+/** 有界认领请求；认领只改变持久状态，不调用渠道。 */
+export interface NotificationDeliveryClaimInput {
+  readonly channelId: NotificationChannelId;
+  readonly owner: string;
+  readonly limit?: number;
+  readonly leaseMs?: number;
+}
+
+export interface NotificationDeliveryClaimResult {
+  readonly channelId: NotificationChannelId;
+  readonly owner: string;
+  readonly deliveries: readonly NotificationDeliveryRecord[];
+}
+
+/** 只有发送取消并得到停止确认后，才能安全结束 in_flight 占用。 */
+export interface NotificationDeliveryClaimReleaseInput {
+  readonly deliveryId: string;
+  readonly owner: string;
+  readonly claimGeneration: number;
+  readonly confirmedStopped: boolean;
+}
+
+export interface NotificationDeliveryResultReadInput {
+  readonly deliveryId: string;
+  readonly attempt: number;
+}
+
+/** 本地渠道输入/回执：摘要已在投影端脱敏，渠道不得访问业务表或执行 shell。 */
+export interface NotificationChannelSendInput {
+  readonly deliveryId: string;
+  readonly attempt: number;
+  readonly summary: Readonly<Record<string, unknown>>;
+  readonly signal: AbortSignal;
+}
+
+export interface NotificationChannelCancelInput {
+  readonly deliveryId: string;
+  readonly attempt: number;
+  readonly signal: AbortSignal;
+}
+
+export interface NotificationChannel {
+  readonly channelId: NotificationChannelId;
+  send(input: NotificationChannelSendInput): Promise<Readonly<Record<string, unknown>>>;
+  /** 返回 true 才表示发送者已停止；false 时 delivery 必须继续保持 in_flight。 */
+  cancel?(input: NotificationChannelCancelInput): Promise<boolean>;
+}
+
+export type NotificationDeliveryAttemptStatus = 'delivered' | 'retry_scheduled' | 'exhausted' | 'in_flight';
+export type NotificationDeliveryAttemptOutcome = 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'receipt_persistence_failed';
+export interface NotificationDeliveryAttemptResult {
+  readonly deliveryId: string;
+  readonly attempt: number;
+  readonly status: NotificationDeliveryAttemptStatus;
+  readonly outcome: NotificationDeliveryAttemptOutcome;
+  readonly failureReason: string | null;
+}
+
+export interface NotificationDeliveryWorkResult {
+  readonly owner: string;
+  readonly claimedCount: number;
+  readonly results: readonly NotificationDeliveryAttemptResult[];
+}
+
+export interface NotificationDeliveryWorkerPolicy {
+  readonly batchSize: number;
+  readonly maxConcurrent: number;
+  readonly sendTimeoutMs: number;
+  readonly cancellationTimeoutMs: number;
+}
+
+export const DEFAULT_NOTIFICATION_DELIVERY_WORKER_POLICY: Readonly<NotificationDeliveryWorkerPolicy> = Object.freeze({
+  batchSize: 32,
+  maxConcurrent: 4,
+  sendTimeoutMs: 30_000,
+  cancellationTimeoutMs: 5_000,
+});
 
 /** createDelivery 输入（项目归属由源事件在写事务内权威派生，不由调用方声明）。 */
 export interface NotificationDeliveryCreateInput {
@@ -541,7 +676,13 @@ export interface NotificationProjectionBatchResult {
  * 校验与持久化，拒绝路径零部分写入。
  */
 export interface NotificationDeliveryStore {
-  /** 幂等创建：同 (eventId, channelId) 同摘要重放返回既有行；摘要变化冲突拒绝。 */
+  /** 点读某次结果；缺失返回 null，供发送成功后的确认重试使用。 */
+  readDeliveryResult(input: unknown): NotificationDeliveryResultRecord | null;
+  /** 短事务原子认领到期 delivery；事务外才允许调用渠道。 */
+  claimDueDeliveries(input: unknown): NotificationDeliveryClaimResult;
+  /** 仅在取消/停止已确认后释放 in_flight，旧代次和旧 owner 一律拒绝。 */
+  releaseDeliveryClaim(input: unknown): NotificationDeliveryRecord;
+
   createDelivery(input: unknown): NotificationDeliveryWriteResult;
   /** 记录一次投递结果：fencing/顺序/终态/延迟界内校验后更新 delivery 并追加本地结果。 */
   recordDeliveryResult(input: unknown): NotificationDeliveryRecord;

@@ -4337,6 +4337,14 @@ CREATE TABLE notification_delivery_results (
 CREATE UNIQUE INDEX notification_delivery_results_delivery_attempt_unique ON notification_delivery_results(delivery_id, attempt);
 `;
 
+// P07-4 / F-007：认领 owner/租约只追加字段；已有 delivery 保持未认领，
+// 旧发送者的回执仍由 claim_generation fencing 拒绝。
+const MIGRATION_062_SQL = `
+ALTER TABLE notification_deliveries ADD COLUMN claim_owner TEXT;
+ALTER TABLE notification_deliveries ADD COLUMN claim_until_at INTEGER;
+CREATE INDEX notification_deliveries_claim_index ON notification_deliveries(status, next_attempt_at, claim_until_at);
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4463,4 +4471,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 59, sql: BACKUP_RECEIPT_MIGRATION_SQL, checksum: sha256Hex(BACKUP_RECEIPT_MIGRATION_SQL), foreignKeysOff: true },
   { version: 60, sql: VERIFICATION_PROCESS_RETENTION_MESSAGE_MIGRATION_SQL, checksum: sha256Hex(VERIFICATION_PROCESS_RETENTION_MESSAGE_MIGRATION_SQL) },
   { version: 61, sql: MIGRATION_061_SQL, checksum: sha256Hex(MIGRATION_061_SQL) },
+  { version: 62, sql: MIGRATION_062_SQL, checksum: sha256Hex(MIGRATION_062_SQL) },
 ];

@@ -107,6 +107,10 @@ import type { RepositoryMoveService } from '../application/repository-move-servi
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
+import { createSqliteNotificationDeliveryStore } from './sqlite/notification-delivery-store.js';
+import { createNotificationDeliveryService } from '../application/notification-delivery.js';
+import type { NotificationDeliveryService } from '../application/notification-delivery.js';
+import type { NotificationDeliveryStore } from '../ports/notification-delivery.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
 import { createKnowledgeQueryService } from '../application/knowledge-query-service.js';
@@ -439,7 +443,9 @@ export interface CoreApplication {
   /** P03-9 / F-010：finalization-only retryFinal（新建受限 Run，不启动 Runtime）。 */
   readonly finalizationRetry: FinalizationRetryExecutionPort;
   readonly commandReceiptsService: CommandReceiptsService;
-  /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
+  /** P07-4 / F-007：本地通知认领/发送驱动；渠道调用在事务外，失败不改业务结果。 */
+  readonly notificationDeliveryStore: NotificationDeliveryStore;
+  readonly notificationDelivery: NotificationDeliveryService;
   readonly queryService: QueryService;
   /** P06-2：受信项目内文档登记/版本追加/受控读取服务。 */
   readonly documentService: DocumentService;
@@ -765,6 +771,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // P03-5 / F-001：查询门面提前装配，PathService 的 Feature 归属核验与
     // QueryService 共用同一 PlanStore 读取面（createSqliteQueryStore）。
     const queryStore = createSqliteQueryStore(session);
+    const notificationDeliveryStore = createSqliteNotificationDeliveryStore({ session, ...(nowUtcMs === undefined ? {} : { nowUtcMs }) });
+    const notificationDelivery = createNotificationDeliveryService({ store: notificationDeliveryStore });
     const documentStore = createSqliteDocumentStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
     const documentService = createDocumentService({
       documents: documentStore,
@@ -1727,6 +1735,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workRecoveryContinuation,
       documentService,
       queryService,
+      notificationDeliveryStore,
+      notificationDelivery,
       knowledgeQueryService,
       memoryService,
       memoryQueryService,

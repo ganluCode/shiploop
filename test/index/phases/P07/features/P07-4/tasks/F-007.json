@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/notifications/p07-4-f007-notification-worker.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-4-f004-notification-delivery-store.test.ts", "cases": ["upgrade-from-v60-preserves-data"] },
+        { "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts", "all": true }
+      ]
+    }
+  ]
+}
