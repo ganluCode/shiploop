@@ -84,7 +84,9 @@ async function openFakeCase(
   script: unknown,
   gates?: Record<string, ReturnType<typeof createFakeRuntimeGate>>,
 ): Promise<WiredCase> {
-  fixture = await openBindingFixture();
+  // P07-1/F-004 起：执行输入准备要求项目 Profile 已确认（profile_not_confirmed），
+  // 与 P07-2 现行夹具同一方式经公开 Core 命令面确认后再进入调度。
+  fixture = await openBindingFixture({ confirmProjectProfile: true });
   host = await startFakeHost({
     dataRoot: fixture.box.dataRoot,
     capabilityCatalog: catalog(),

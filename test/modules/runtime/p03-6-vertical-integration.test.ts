@@ -85,7 +85,9 @@ interface WiredCase {
 
 /** 显式 Fake 装配（真实文件写 + 真实受控工具进程），经 Host 扫描完成认领/准备/执行。 */
 async function openFakeCase(script: unknown, fakeExtra: Record<string, unknown> = {}): Promise<WiredCase> {
-  fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
+  // P07-1/F-004 起：执行输入准备要求项目 Profile 已确认（profile_not_confirmed），
+  // 与 P07-2 现行夹具同一方式经公开 Core 命令面确认后再进入调度。
+  fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true, confirmProjectProfile: true });
   host = await startFakeHost({
     dataRoot: fixture.box.dataRoot,
     capabilityCatalog: catalog(),
