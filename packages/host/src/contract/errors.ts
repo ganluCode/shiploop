@@ -135,6 +135,15 @@ export const APP_OPERATIONS = [
   'data.backup.verify',
   'backups.get',
   'backup.operations.get',
+  // P07-3 / F-015：项目生命周期命令（project scope + project.lifecycle.write）、
+  // 保留清理显式执行（global scope + settings.global.write）与删除操作受控
+  // 只读查询（与 Core COMMAND_OPERATIONS / PROJECT_DELETE_OPERATION_GET_OPERATION 同源）。
+  'project.archive',
+  'project.restore',
+  'project.delete.preview',
+  'project.delete.confirm',
+  'retention.cleanup.execute',
+  'project.delete.operation.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

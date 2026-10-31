@@ -234,7 +234,12 @@ describe('F-002 冻结常量与能力声明', () => {
       "project.resource.disable",
       "project.resource.revoke",
       "data.backup.create",
-      "data.backup.verify"
+      "data.backup.verify",
+      "project.archive",
+      "project.restore",
+      "project.delete.preview",
+      "project.delete.confirm",
+      "retention.cleanup.execute"
     ],
     "queries": [
       "execution.sessions.list",
@@ -306,7 +311,8 @@ describe('F-002 冻结常量与能力声明', () => {
       "repository.move.preview",
       "retention.evaluation.get",
       "backups.get",
-      "backup.operations.get"
+      "backup.operations.get",
+      "project.delete.operation.get"
     ],
     "events": {
       "transport": "sse",
@@ -325,16 +331,12 @@ describe('F-002 冻结常量与能力声明', () => {
         // P07-3 / F-014：data.backup.restore 不经 HTTP——实际恢复只在持有目标
         // 数据根 writer 锁的独立维护入口执行，不通过 HTTP 替换 Host 数据库。
         && operation !== 'data.backup.restore'
-        // P07-3 / F-015：项目生命周期命令（project.archive/restore/delete.*）
-        // 的 HostClient/CLI 公开流程属 F-015，未宣告前保持本断言的已知缺口。
-        && operation !== 'project.archive' && operation !== 'project.restore'
-        && operation !== 'project.delete.preview' && operation !== 'project.delete.confirm')
+        // P07-3 / F-015：项目生命周期命令与保留清理命令已随 F-015 宣告接线。
+        )
         .flatMap(operation => operation === 'project.register' ? [operation, 'repository.move.confirm'] : [operation]));
     // Core's optional integration-start adapter has no Host capability declaration.
     expect([...hostCapabilitiesForDelivery(true, true, true).application.commands]).toEqual(COMMAND_OPERATIONS.filter(operation => operation !== 'git.operation.start'
-        && operation !== 'data.backup.restore'
-        && operation !== 'project.archive' && operation !== 'project.restore'
-        && operation !== 'project.delete.preview' && operation !== 'project.delete.confirm')
+        && operation !== 'data.backup.restore')
       .flatMap(operation => operation === 'project.register' ? [operation, 'repository.move.confirm'] : [operation]));
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
@@ -401,6 +403,9 @@ describe('F-002 冻结常量与能力声明', () => {
       // P07-3 / F-014：备份包/操作只读查询（与 Core DATA_BACKUP_QUERY_OPERATIONS 同步）。
       'backups.get',
       'backup.operations.get',
+      // P07-3 / F-015：项目删除操作受控只读查询（与 Core
+      // PROJECT_DELETE_OPERATION_GET_OPERATION 同步；仅原始提交主体）。
+      'project.delete.operation.get',
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

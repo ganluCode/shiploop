@@ -68,6 +68,7 @@ import {
   BACKUPS_ROUTE,
   BACKUPS_ROUTE_PREFIX,
   BACKUP_OPERATIONS_ROUTE_PREFIX,
+  PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX,
   DISPATCH_QUEUE_ROUTE,
   EXECUTION_RESOURCES_ROUTE,
   EVENTS_ROUTE,
@@ -168,6 +169,9 @@ export type ApplicationOperation =
   // 同源；能力位复用 data.backup，owner 管理面）。
   | 'backups.get'
   | 'backup.operations.get'
+  // P07-3 / F-015：项目删除操作受控只读查询（最小事实；仅原始提交主体，
+  // 与 Core PROJECT_DELETE_OPERATION_GET_OPERATION 同源）。
+  | 'project.delete.operation.get'
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
@@ -294,6 +298,11 @@ export interface HostApplicationContext {
   /** P07-3 / F-014：备份包/操作只读查询（授权在 Core，复用 data.backup 能力位）。 */
   readonly dataBackupQueryService?: Pick<import('shiploop-core').DataBackupQueryService, 'getBackup' | 'getOperation'>;
   /**
+   * P07-3 / F-015：项目删除操作受控只读查询（最小事实投影；授权在 Core，
+   * 仅原始提交主体可读；未装配时 501 unsupported）。
+   */
+  readonly projectDeleteQueryService?: Pick<import('shiploop-core').ProjectDeleteQueryService, 'get'>;
+  /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
    */
@@ -360,6 +369,18 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     if (segment.length > 0 && !segment.includes('/')) {
       return {
         operation: 'backup.operations.get',
+        method: 'GET',
+        pathParam: { name: 'operationId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  // P07-3 / F-015：项目删除操作受控只读查询（单段路径参数；仅原始提交主体）。
+  if (path.startsWith(PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX)) {
+    const segment = path.slice(PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'project.delete.operation.get',
         method: 'GET',
         pathParam: { name: 'operationId', value: segment },
       };
@@ -937,7 +958,9 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     allowed: ['projectId', 'limit', 'cursor'],
     repeatable: [],
   }),
-  'projects.list': Object.freeze({ allowed: ['limit', 'cursor', 'label', 'match'], repeatable: ['label'] }),
+  // P07-3 / F-015：status 进入公开查询面（F-008 Core 已支持状态筛选；取值由
+  // Core validateProjectListFilter 单一权威复核）。
+  'projects.list': Object.freeze({ allowed: ['limit', 'cursor', 'label', 'match', 'status'], repeatable: ['label'] }),
   // P02-3 / F-006（§7.2）：path 是唯一例外查询参数（仓库根绝对路径，经
   // RepositoryInspector 校验；不是通用文件读取）。
   'projects.inspect': Object.freeze({ allowed: ['path'], repeatable: [] }),
@@ -1511,6 +1534,13 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         reject(501, 'unsupported', operation, '备份查询未在本装配中启用', { reason: 'data_backup_unsupported' });
       }
       result = await app.dataBackupQueryService.getOperation(app.principal, pathParam?.value ?? '');
+      break;
+    }
+    case 'project.delete.operation.get': {
+      if (app.projectDeleteQueryService === undefined) {
+        reject(501, 'unsupported', operation, '项目删除操作查询未在本装配中启用', { reason: 'project_delete_query_unsupported' });
+      }
+      result = await app.projectDeleteQueryService.get(app.principal, pathParam?.value ?? '');
       break;
     }
     case 'snapshot.get':

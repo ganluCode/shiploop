@@ -84,6 +84,8 @@ export const RETENTION_EVALUATION_ROUTE = '/v1/retention/evaluation';
 export const BACKUPS_ROUTE = '/v1/backups';
 export const BACKUPS_ROUTE_PREFIX = '/v1/backups/';
 export const BACKUP_OPERATIONS_ROUTE_PREFIX = '/v1/backup-operations/';
+// P07-3 / F-015：项目删除操作受控只读查询（单段路径参数；仅原始主体）。
+export const PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX = '/v1/project-delete-operations/';
 export const SNAPSHOT_ROUTE = '/v1/snapshot';
 export const EVENTS_ROUTE = '/v1/events';
 /** P02-3 / F-014 §3.2：基线分页/详情/证据正文路由（全部 GET + Bearer）。 */

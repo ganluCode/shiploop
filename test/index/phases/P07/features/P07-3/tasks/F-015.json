@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "task_id": "F-015",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/retention/p07-3-f015-retention-cleanup-command.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f015-public-lifecycle-host.test.ts", "all": true },
+        { "file": "test/modules/projects/p07-3-f015-cli-vertical.test.ts", "all": true },
+        { "file": "test/modules/cli/app-cli-args.test.ts", "all": true },
+        { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/host/host-client-application.test.ts", "all": true },
+        { "file": "test/modules/host/host-http-transport.test.ts", "all": true },
+        { "file": "test/modules/host/host-startup.test.ts", "all": true },
+        { "file": "test/modules/commands/command-register.test.ts", "all": true },
+        { "file": "test/modules/commands/command-receipts-store.test.ts", "all": true },
+        { "file": "test/modules/commands/p07-3-f008-project-lifecycle.test.ts", "all": true },
+        { "file": "test/modules/commands/p07-3-f009-project-delete-preview.test.ts", "all": true },
+        { "file": "test/modules/commands/p07-3-f010-project-delete.test.ts", "all": true },
+        { "file": "test/modules/storage/data-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f012-retention-evaluation.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f013-evidence-retention.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f012-retention-evaluation-host.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f014-backup-host.test.ts", "all": true },
+        { "file": "test/modules/cli/app-cli-execute.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-3-f014-backup-cli.test.ts", "all": true }
+      ]
+    }
+  ]
+}

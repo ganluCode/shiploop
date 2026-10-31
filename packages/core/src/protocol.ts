@@ -19,6 +19,14 @@ export {
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
 export type { DataBackupOperationQueryResult, DataBackupQueryResult } from './ports/data-backup.js';
+// P07-3 / F-015：项目删除操作受控只读查询与保留评估报告（纯线形状）。
+export type {
+  ProjectDeleteOperationQueryResult,
+  ProjectDeleteOperationStepView,
+  ProjectDeleteQueryService,
+} from './ports/project-delete-query.js';
+export { PROJECT_DELETE_OPERATION_GET_OPERATION } from './ports/project-delete-query.js';
+export type { RetentionEvaluationReport } from './ports/retention-evaluation.js';
 export { FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from './ports/feature-dag.js';
 export {
   INTEGRATION_BLOCK_REASONS,

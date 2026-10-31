@@ -76,10 +76,11 @@ const OTHER_PROJECT_ID = randomUUID();
 const RECEIPT_ID = randomUUID();
 
 describe('F-014 应用命令面（§12.1）', () => {
-  it('只暴露已交付的十四个顶层命令，不新增 run/work', () => {
+  it('只暴露已交付的顶层命令，不新增 run/work', () => {
     // P03-5 / F-012 追加 workspace（工作区状态展示与人工丢弃预览/确认）；
     // P03-8 / F-011 追加 git（Git 意图/实际提交/操作回执只读查询）；
-    // P05-1 / F-013 已交付 planning（一次性规划与候选审批）。
+    // P05-1 / F-013 已交付 planning（一次性规划与候选审批）；
+    // P07-3 / F-014 追加 backup/restore（备份与隔离恢复）；F-015 追加 retention。
     expect([...APP_CLI_COMMANDS]).toEqual([
       'project',
       'config',
@@ -95,13 +96,16 @@ describe('F-014 应用命令面（§12.1）', () => {
       'workspace',
       'git',
       'integration',
+      'backup',
+      'restore',
+      'retention',
     ]);
   });
 
   it('命令身份集合唯一且为点分 CLI 路径', () => {
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events|knowledge|baseline|phase|feature|task|planning|execution|workspace|git|integration)\.[a-z-]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|knowledge|baseline|phase|feature|task|planning|execution|workspace|git|integration|backup|restore|retention)\.[a-z-]+$/);
     }
   });
 
@@ -167,6 +171,73 @@ describe('F-014 应用命令面（§12.1）', () => {
     } else {
       throw new Error('expected project.list');
     }
+  });
+
+  it('P07-3 / F-015 project archive/restore：位置 projectId + 必填 --revision + 可选命令 ID', () => {
+    const explicit = randomUUID();
+    for (const sub of ['archive', 'restore'] as const) {
+      const parsed = parseAppCliArgs([
+        'project', sub, '11111111-1111-4111-8111-111111111111', '--revision', '4', '--command-id', explicit,
+      ]);
+      expect(parsed.kind).toBe('command');
+      if (parsed.kind !== 'command') throw new Error('unreachable');
+      expect(parsed.commandId).toBe(`project.${sub}`);
+      const scoped = parsed as typeof parsed & { projectId: string; revision: number; explicitCommandId?: string };
+      expect(scoped.projectId).toBe('11111111-1111-4111-8111-111111111111');
+      expect(scoped.revision).toBe(4);
+      expect(scoped.explicitCommandId).toBe(explicit);
+      // 缺 --revision 是结构错误（退出码 2）。
+      expect(() => parseAppCliArgs(['project', sub, '11111111-1111-4111-8111-111111111111'])).toThrow(AppCliParseError);
+    }
+  });
+
+  it('P07-3 / F-015 project delete-preview/delete-confirm/delete-operation 解析与守护', () => {
+    const preview = parseAppCliArgs(['project', 'delete-preview', '11111111-1111-4111-8111-111111111111', '--cursor', 'YWJj']);
+    expect(preview.kind).toBe('command');
+    if (preview.kind !== 'command') throw new Error('unreachable');
+    expect(preview.commandId).toBe('project.delete-preview');
+    expect((preview as typeof preview & { cursor?: string }).cursor).toBe('YWJj');
+
+    const digest = 'a'.repeat(64);
+    const confirm = parseAppCliArgs([
+      'project', 'delete-confirm', '11111111-1111-4111-8111-111111111111', '--revision', '3', '--preview-digest', digest,
+      '--expires-at-ms', '9000000000000', '--confirm',
+    ]);
+    expect(confirm.kind).toBe('command');
+    if (confirm.kind !== 'command') throw new Error('unreachable');
+    expect(confirm.commandId).toBe('project.delete-confirm');
+    const confirmScoped = confirm as typeof confirm & { revision: number; previewDigest: string; expiresAtUtcMs: number };
+    expect(confirmScoped.revision).toBe(3);
+    expect(confirmScoped.previewDigest).toBe(digest);
+    expect(confirmScoped.expiresAtUtcMs).toBe(9_000_000_000_000);
+    // 缺 --confirm / 非 64 位十六进制摘要 / 非正整数过期时间均拒绝。
+    expect(() => parseAppCliArgs(['project', 'delete-confirm', '11111111-1111-4111-8111-111111111111', '--revision', '3', '--preview-digest', digest, '--expires-at-ms', '9000000000000'])).toThrow(AppCliParseError);
+    expect(() => parseAppCliArgs(['project', 'delete-confirm', '11111111-1111-4111-8111-111111111111', '--revision', '3', '--preview-digest', 'short', '--expires-at-ms', '9000000000000', '--confirm'])).toThrow(AppCliParseError);
+    expect(() => parseAppCliArgs(['project', 'delete-confirm', '11111111-1111-4111-8111-111111111111', '--revision', '3', '--preview-digest', digest, '--expires-at-ms', '0', '--confirm'])).toThrow(AppCliParseError);
+
+    const operationUuid = randomUUID();
+    const operation = parseAppCliArgs(['project', 'delete-operation', operationUuid]);
+    expect(operation.kind).toBe('command');
+    if (operation.kind !== 'command') throw new Error('unreachable');
+    expect(operation.commandId).toBe('project.delete-operation');
+    expect((operation as typeof operation & { operationId: string }).operationId).toBe(operationUuid);
+    expect(() => parseAppCliArgs(['project', 'delete-operation', 'not-a-uuid'])).toThrow(AppCliParseError);
+  });
+
+  it('P07-3 / F-015 retention evaluation/cleanup 解析；cleanup 可选命令 ID', () => {
+    const evaluation = parseAppCliArgs(['retention', 'evaluation']);
+    expect(evaluation.kind).toBe('command');
+    if (evaluation.kind !== 'command') throw new Error('unreachable');
+    expect(evaluation.commandId).toBe('retention.evaluation');
+
+    const explicit = randomUUID();
+    const cleanup = parseAppCliArgs(['retention', 'cleanup', '--command-id', explicit]);
+    expect(cleanup.kind).toBe('command');
+    if (cleanup.kind !== 'command') throw new Error('unreachable');
+    expect(cleanup.commandId).toBe('retention.cleanup');
+    expect((cleanup as typeof cleanup & { explicitCommandId?: string }).explicitCommandId).toBe(explicit);
+    expect(() => parseAppCliArgs(['retention'])).toThrow(AppCliParseError);
+    expect(() => parseAppCliArgs(['retention', 'purge'])).toThrow(AppCliParseError);
   });
 
   it('project get/labels：只读详情与标签计数', () => {
@@ -373,7 +444,7 @@ describe('F-014 应用命令结构错误（§12.2）', () => {
     [['project', 'init'], 'missing_positional'],
     [['project', 'overview'], 'missing_positional'],
     [['project', 'rebind'], 'unknown_subcommand'],
-    [['project', 'archive'], 'unknown_subcommand'],
+    [['project', 'hard-delete'], 'unknown_subcommand'],
     [['config', 'delete'], 'unknown_subcommand'],
     [['receipt', 'list'], 'unknown_subcommand'],
     [['events', 'list'], 'too_many_positionals'],

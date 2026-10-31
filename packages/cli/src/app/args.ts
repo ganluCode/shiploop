@@ -52,6 +52,7 @@ export const APP_CLI_COMMANDS = [
   'integration',
   'backup',
   'restore',
+  'retention',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -182,7 +183,15 @@ export type AppCliCommandId =
   | 'backup.operation'
   | 'restore.verify'
   | 'restore.prepare'
-  | 'restore.confirm';
+  | 'restore.confirm'
+  // P07-3 / F-015：项目生命周期与保留管理命令。
+  | 'project.archive'
+  | 'project.restore'
+  | 'project.delete-preview'
+  | 'project.delete-confirm'
+  | 'project.delete-operation'
+  | 'retention.evaluation'
+  | 'retention.cleanup';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.resource-source-register',
@@ -305,6 +314,13 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'restore.verify',
   'restore.prepare',
   'restore.confirm',
+  'project.archive',
+  'project.restore',
+  'project.delete-preview',
+  'project.delete-confirm',
+  'project.delete-operation',
+  'retention.evaluation',
+  'retention.cleanup',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -394,6 +410,8 @@ export type AppCliParseReason =
   | 'invalid_check_plan'
   | 'empty_command'
   | 'invalid_argv'
+  | 'invalid_expires_at_ms'
+  | 'invalid_delete_cursor'
   | 'invalid_check_key'
   | 'duplicate_check_key'
   | 'invalid_check_kind'
@@ -481,6 +499,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   conflicting_options: '参数组合冲突',
   invalid_input_json: '输入 JSON 不是合法对象',
   invalid_operation_id: 'operationId 必须是 UUID v4',
+  invalid_expires_at_ms: 'expires-at-ms 必须是正整数（毫秒）',
+  invalid_delete_cursor: 'cursor 必须是有效的分页游标',
   invalid_artifact_id: 'artifactId 必须是稳定 ID（字母数字开头，仅含 [A-Za-z0-9._-]）',
   invalid_baseline_limit: 'limit 必须是 1..100 的整数',
   invalid_check_plan: '检查计划不合法',
@@ -696,7 +716,8 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.list': {
     command: 'project',
     commandId: 'project.list',
-    valueFlags: ['--label', '--match', '--limit', '--cursor'],
+    // P07-3 / F-015：状态筛选（visible/all/具体状态；取值由 Core 复核）。
+    valueFlags: ['--label', '--match', '--limit', '--cursor', '--status'],
     boolFlags: [],
     repeatableFlags: ['--label'],
     minPositionals: 0,
@@ -1145,6 +1166,13 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'restore.verify': { command: 'restore', commandId: 'restore.verify', valueFlags: ['--data-root', '--package', '--expected-backup-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'restore.prepare': { command: 'restore', commandId: 'restore.prepare', valueFlags: ['--data-root', '--package', '--operation-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'restore.confirm': { command: 'restore', commandId: 'restore.confirm', valueFlags: ['--data-root', '--operation-id', '--confirmation-file'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.archive': { command: 'project', commandId: 'project.archive', valueFlags: ['--revision', '--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['projectId'] },
+  'project.restore': { command: 'project', commandId: 'project.restore', valueFlags: ['--revision', '--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['projectId'] },
+  'project.delete-preview': { command: 'project', commandId: 'project.delete-preview', valueFlags: ['--cursor', '--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['projectId'] },
+  'project.delete-confirm': { command: 'project', commandId: 'project.delete-confirm', valueFlags: ['--revision', '--preview-digest', '--expires-at-ms', '--cursor', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['projectId'] },
+  'project.delete-operation': { command: 'project', commandId: 'project.delete-operation', valueFlags: [], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['operationId'] },
+  'retention.evaluation': { command: 'retention', commandId: 'retention.evaluation', valueFlags: [], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'retention.cleanup': { command: 'retention', commandId: 'retention.cleanup', valueFlags: ['--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'feature.final-approve': {
     command: 'feature',
     commandId: 'feature.final-approve',
@@ -1686,6 +1714,15 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       get: 'project.get',
       edit: 'project.edit',
       labels: 'project.labels',
+      archive: 'project.archive',
+      restore: 'project.restore',
+      'delete-preview': 'project.delete-preview',
+      'delete-confirm': 'project.delete-confirm',
+      'delete-operation': 'project.delete-operation',
+    },
+    retention: {
+      evaluation: 'retention.evaluation',
+      cleanup: 'retention.cleanup',
     },
     config: {
       create: 'config.create',
@@ -2583,6 +2620,8 @@ export interface ParsedProjectList {
   readonly dataRoot?: string;
   readonly labels: readonly string[];
   readonly match: 'any' | 'all';
+  /** P07-3 / F-015：状态筛选（缺省 visible 隐藏归档项目）。 */
+  readonly status?: 'visible' | 'all' | 'active' | 'archiving' | 'archived' | 'deleting';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -3300,6 +3339,8 @@ export interface ParsedExecutionRuns {
   readonly batchId?: string;
   readonly labels: readonly string[];
   readonly match: 'any' | 'all';
+  /** P07-3 / F-015：状态筛选（缺省 visible 隐藏归档项目）。 */
+  readonly status?: 'visible' | 'all' | 'active' | 'archiving' | 'archived' | 'deleting';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -4037,6 +4078,86 @@ export interface ParsedRestoreConfirm {
   readonly confirmationFile: string;
 }
 
+export interface ParsedProjectArchive {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.archive';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectRestore {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.restore';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectDeletePreview {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.delete-preview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly cursor?: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectDeleteConfirm {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.delete-confirm';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly previewDigest: string;
+  readonly expiresAtUtcMs: number;
+  readonly cursor?: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectDeleteOperation {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.delete-operation';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly operationId: string;
+}
+
+export interface ParsedRetentionEvaluation {
+  readonly kind: 'command';
+  readonly command: 'retention';
+  readonly commandId: 'retention.evaluation';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+}
+
+export interface ParsedRetentionCleanup {
+  readonly kind: 'command';
+  readonly command: 'retention';
+  readonly commandId: 'retention.cleanup';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly explicitCommandId?: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectResource
   | ParsedPlanningStart
@@ -4138,7 +4259,14 @@ export type ParsedAppCliCommand =
   | ParsedBackupOperation
   | ParsedRestoreVerify
   | ParsedRestorePrepare
-  | ParsedRestoreConfirm;
+  | ParsedRestoreConfirm
+  | ParsedProjectArchive
+  | ParsedProjectRestore
+  | ParsedProjectDeletePreview
+  | ParsedProjectDeleteConfirm
+  | ParsedProjectDeleteOperation
+  | ParsedRetentionEvaluation
+  | ParsedRetentionCleanup;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -4229,6 +4357,20 @@ function buildProjectProfile(scan: ScanResult, state: ParseState, spec: AppComma
     default:
       return fail(state, 'unknown_subcommand');
   }
+}
+
+function buildRetention(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  if (spec.commandId === 'retention.evaluation') {
+    return { ...base, command: 'retention', commandId: 'retention.evaluation' };
+  }
+  return {
+    ...base,
+    command: 'retention',
+    commandId: 'retention.cleanup',
+    ...(optionalCommandId(scan, state) === undefined ? {} : { explicitCommandId: optionalCommandId(scan, state) }),
+  };
 }
 
 function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
@@ -4385,12 +4527,23 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
       if (cursor !== undefined && (cursor.length === 0 || cursor.includes('\0'))) {
         fail(state, 'invalid_cursor', 'cursor');
       }
+      // P07-3 / F-015：状态筛选（visible/all/active/archiving/archived/deleting；
+      // 缺省 visible 隐藏归档项目；取值由 Core 单一权威复核）。
+      const statusRaw = takeOption(scan, '--status');
+      let status: 'visible' | 'all' | 'active' | 'archiving' | 'archived' | 'deleting' | undefined;
+      if (statusRaw !== undefined) {
+        if (!(['visible', 'all', 'active', 'archiving', 'archived', 'deleting'] as const).includes(statusRaw as 'visible')) {
+          fail(state, 'invalid_match', 'status');
+        }
+        status = statusRaw as typeof status;
+      }
       return {
         ...base,
         command: 'project',
         commandId: 'project.list',
         labels: takeLabels(scan, state),
         match,
+        ...(status === undefined ? {} : { status }),
         ...(limit !== undefined ? { limit } : {}),
         ...(cursor !== undefined ? { cursor } : {}),
       };
@@ -4425,6 +4578,66 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
         ...(labels !== undefined ? { labels } : {}),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
+    }
+    case 'project.archive':
+    case 'project.restore': {
+      const projectId = requireProjectId(scan.positionals[0] as string, state);
+      const revision = parseUnsignedInteger(requireOption(scan, '--revision', state, 'revision'));
+      if (revision === undefined || !Number.isSafeInteger(revision)) fail(state, 'invalid_revision', 'revision');
+      return {
+        ...base,
+        command: 'project',
+        commandId: spec.commandId,
+        projectId,
+        revision,
+        ...(optionalCommandId(scan, state) === undefined ? {} : { explicitCommandId: optionalCommandId(scan, state) }),
+      };
+    }
+    case 'project.delete-preview': {
+      const projectId = requireProjectId(scan.positionals[0] as string, state);
+      const cursor = takeOption(scan, '--cursor');
+      if (cursor !== undefined && (cursor.length === 0 || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor))) {
+        fail(state, 'invalid_delete_cursor', 'cursor');
+      }
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.delete-preview',
+        projectId,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(optionalCommandId(scan, state) === undefined ? {} : { explicitCommandId: optionalCommandId(scan, state) }),
+      };
+    }
+    case 'project.delete-confirm': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const projectId = requireProjectId(scan.positionals[0] as string, state);
+      const revision = parseUnsignedInteger(requireOption(scan, '--revision', state, 'revision'));
+      if (revision === undefined || !Number.isSafeInteger(revision)) fail(state, 'invalid_revision', 'revision');
+      const expiresRaw = requireOption(scan, '--expires-at-ms', state, 'expires-at-ms');
+      const expiresAtUtcMs = parseUnsignedInteger(expiresRaw);
+      if (expiresAtUtcMs === undefined || !Number.isSafeInteger(expiresAtUtcMs) || expiresAtUtcMs < 1) fail(state, 'invalid_expires_at_ms', 'expires-at-ms');
+      const cursor = takeOption(scan, '--cursor');
+      if (cursor !== undefined && (cursor.length === 0 || cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor))) {
+        fail(state, 'invalid_delete_cursor', 'cursor');
+      }
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.delete-confirm',
+        projectId,
+        revision,
+        previewDigest: requireSha256Option(scan, '--preview-digest', state, 'preview-digest'),
+        expiresAtUtcMs,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(optionalCommandId(scan, state) === undefined ? {} : { explicitCommandId: optionalCommandId(scan, state) }),
+      };
+    }
+    case 'project.delete-operation': {
+      const operationId = scan.positionals[0] as string;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operationId)) {
+        fail(state, 'invalid_operation_id', 'operationId');
+      }
+      return { ...base, command: 'project', commandId: 'project.delete-operation', operationId };
     }
     case 'project.labels': {
       // P06-6 / F-007：无参保持项目层计数旧形态；提供 --entity 进入四层计数
@@ -6164,6 +6377,8 @@ export function parseAppCliArgs(
       return buildBackup(scan, state, spec);
     case 'restore':
       return buildRestore(scan, state, spec);
+    case 'retention':
+      return buildRetention(scan, state, spec);
     case 'integration':
       return buildPlanEntity(scan, state, spec);
     default:

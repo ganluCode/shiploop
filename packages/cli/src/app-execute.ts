@@ -1247,6 +1247,88 @@ function resourceConfigurationView(result: Awaited<ReturnType<HostClient['listPr
       required: resource.required, onUnavailable: resource.onUnavailable, enabled: resource.enabled, status: resource.status })) };
 }
 
+function formatArchiveBlockers(blockers: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(blockers)) {
+    if (typeof value === 'number' && value > 0) lines.push(`  阻塞 ${key}=${value}`);
+  }
+  if (lines.length === 0) lines.push('  无活动执行阻塞');
+  return lines.join('\n');
+}
+
+function formatDeletePreviewView(projectId: string, page: unknown): string {
+  const preview = page as {
+    projectStatus?: string; projectRevision?: number; previewDigest?: string; expiresAtUtcMs?: number;
+    summary?: { objects?: { total?: number; deletions?: number; retainedMinimal?: number };
+      references?: Record<string, unknown>; retained?: readonly { kind?: string; id?: string; reasons?: readonly string[] }[];
+      activity?: Record<string, unknown> };
+    pagination?: { complete?: boolean; nextCursor?: string | null };
+  };
+  const summary = preview.summary ?? {};
+  const lines = [
+    `shiploop project delete-preview: project=${projectId} status=${String(preview.projectStatus)} revision=${String(preview.projectRevision)}`,
+    `  previewDigest=${String(preview.previewDigest)} expiresAtMs=${String(preview.expiresAtUtcMs)}`,
+    `  objects total=${Number(summary.objects?.total ?? 0)} deletions=${Number(summary.objects?.deletions ?? 0)} retainedMinimal=${Number(summary.objects?.retainedMinimal ?? 0)}`,
+  ];
+  for (const [key, value] of Object.entries(summary.activity ?? {})) {
+    if (typeof value === 'number' && value > 0) lines.push(`  阻塞 ${key}=${value}`);
+  }
+  for (const item of summary.retained ?? []) {
+    lines.push(`  保留 ${String(item.kind)} ${String(item.id)}${(item.reasons ?? []).length === 0 ? '' : ` reasons=${(item.reasons ?? []).join(',')}`}`);
+  }
+  if (summary.references !== undefined) {
+    for (const [key, value] of Object.entries(summary.references)) {
+      if (typeof value === 'number' && value > 0) lines.push(`  引用 ${key}=${value}`);
+    }
+  }
+  if (preview.pagination?.complete === false) {
+    lines.push(`  清单未完；续页：--cursor ${String(preview.pagination.nextCursor)}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+async function executeRetentionCommand(
+  io: AppCliIo,
+  command: ParsedRetentionCommand,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  if (command.commandId === 'retention.evaluation') {
+    const report = await client.getRetentionEvaluation();
+    const view = { ...report };
+    const lines = [`shiploop retention evaluation: policy=${report.policy.status} disk=${report.disk.status}` +
+      ` thresholds=${report.thresholds.status} cleanable=${report.cleanable.status} referencedRetained=${report.referencedRetained.status}`];
+    for (const trigger of report.thresholds.triggers) {
+      lines.push(`  trigger ${trigger.kind}: ${trigger.assessment}${trigger.observedValue === undefined ? '' : ` observed=${trigger.observedValue}`} configured=${trigger.configuredValue}`);
+    }
+    for (const component of report.cleanable.components) {
+      lines.push(`  cleanable ${component.kind}: ${component.status}${component.bytes === undefined ? '' : ` bytes=${component.bytes}`}`);
+    }
+    for (const component of report.referencedRetained.components) {
+      lines.push(`  retained ${component.kind}: ${component.status}${component.bytes === undefined ? '' : ` bytes=${component.bytes}`}`);
+    }
+    lines.push('');
+    return emitSuccess(io, command, view, lines.join('\n'));
+  }
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  const receipt = await client.submitRetentionCleanup(
+    { ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+      ...(issuedAt !== undefined ? { issuedAt } : {}) },
+    envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+  );
+  return emitDomainReceipt(io, command, receipt, (commandId, replayed, result) => ({ commandId, replayed, summary: result }),
+    view => {
+      const summary = view.summary as { status?: string; itemsDeleted?: number; bytesDeleted?: number; candidateCount?: number; retainedCount?: number; skippedCount?: number; reasons?: readonly string[] };
+      const lines = [`shiploop retention cleanup: ${String(summary.status)} items=${Number(summary.itemsDeleted ?? 0)} bytes=${Number(summary.bytesDeleted ?? 0)}` +
+        ` candidates=${Number(summary.candidateCount ?? 0)} retained=${Number(summary.retainedCount ?? 0)} skipped=${Number(summary.skippedCount ?? 0)}${view.replayed ? '（replayed）' : ''}`];
+      if (summary.reasons !== undefined && summary.reasons.length > 0) {
+        lines.push(`  reasons=${summary.reasons.join(',')}`);
+      }
+      lines.push('');
+      return lines.join('\n');
+    });
+}
+
 async function executeProjectCommand(
   io: AppCliIo,
   command: ParsedAppCliCommand,
@@ -1360,10 +1442,101 @@ async function executeProjectCommand(
       };
       return submitCommandAndEmit(io, command, client, input);
     }
+    case 'project.archive':
+    case 'project.restore': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const isArchive = command.commandId === 'project.archive';
+      const receipt = isArchive
+        ? await client.submitProjectArchive(
+          { projectId: command.projectId, expectedRevision: command.revision,
+            ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+            ...(issuedAt !== undefined ? { issuedAt } : {}) },
+          envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+        )
+        : await client.submitProjectRestore(
+          { projectId: command.projectId, expectedRevision: command.revision,
+            ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+            ...(issuedAt !== undefined ? { issuedAt } : {}) },
+          envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+        );
+      return emitDomainReceipt(io, command, receipt, (commandId, replayed, result) => {
+        const lifecycle = result as {
+          status?: string; settled?: boolean; blockers?: Record<string, unknown>;
+          project?: { id?: string; revision?: number; status?: string };
+        };
+        return { commandId, replayed, status: lifecycle.status, settled: lifecycle.settled,
+          ...(lifecycle.project === undefined ? {} : {
+            project: { id: lifecycle.project.id, revision: lifecycle.project.revision, status: lifecycle.project.status },
+          }),
+          ...(lifecycle.blockers === undefined ? {} : { blockers: lifecycle.blockers }) };
+      }, view => {
+        const lines = [`shiploop ${command.commandId}: ${String(view.status)} project=${command.projectId}` +
+          `${view.settled === true ? '' : '（未收尾，稍后复查状态）'}${view.replayed ? '（replayed）' : ''}`];
+        if (view.blockers !== undefined) {
+          lines.push(formatArchiveBlockers(view.blockers));
+        }
+        lines.push('');
+        return lines.join('\n');
+      });
+    }
+    case 'project.delete-preview': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.submitProjectDeletePreview(
+        { projectId: command.projectId,
+          ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+          ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+          ...(issuedAt !== undefined ? { issuedAt } : {}) },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(io, command, receipt, (commandId, replayed, result) => ({ commandId, replayed, page: result }),
+        view => formatDeletePreviewView(command.projectId, view.page));
+    }
+    case 'project.delete-confirm': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.submitProjectDeleteConfirm(
+        { projectId: command.projectId, expectedRevision: command.revision, previewDigest: command.previewDigest,
+          expiresAtUtcMs: command.expiresAtUtcMs,
+          ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+          ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+          ...(issuedAt !== undefined ? { issuedAt } : {}) },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      if (receipt.status === 'rejected') {
+        return emitFailure(io, command.json, {
+          exitCode: exitCodeForReceiptStatus('rejected'),
+          command: command.commandId,
+          code: receipt.error.code,
+          message: receipt.error.message,
+          commandId: receipt.commandId,
+          ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+        });
+      }
+      if (receipt.status !== 'accepted') {
+        throw new HostProtocolError('response_malformed', 'commands.submit', undefined, {
+          details: { reason: 'project_delete_confirm_receipt_invalid' },
+        });
+      }
+      const view = { commandId: receipt.commandId, status: 'accepted' as const, replayed: receipt.replayed === true, operationId: receipt.operationId };
+      const human = `shiploop project delete-confirm: accepted project=${command.projectId} operation=${receipt.operationId}` +
+        `${receipt.replayed === true ? '（replayed）' : ''}\n` +
+        `accepted ≠ 已删除；完成状态：shiploop project delete-operation ${receipt.operationId}\n`;
+      return emitSuccess(io, command, view, human);
+    }
+    case 'project.delete-operation': {
+      const result = await client.getProjectDeleteOperation(command.operationId);
+      const view = { operation: result.operation, schemaVersion: result.schemaVersion, operationId: result.operationId,
+        projectId: result.projectId, status: result.status, failedStep: result.failedStep, steps: result.steps, fence: result.fence };
+      const lines = [`shiploop project delete-operation: ${result.status} operation=${result.operationId} project=${result.projectId} fence=${result.fence}`];
+      if (result.failedStep !== null) lines.push(`  failedStep=${result.failedStep}`);
+      for (const step of result.steps) lines.push(`  step ${step.step}: ${step.status}`);
+      lines.push('');
+      return emitSuccess(io, command, view, lines.join('\n'));
+    }
     case 'project.list': {
       const result = await client.listProjects({
         ...(command.labels.length > 0 ? { labels: [...command.labels] } : {}),
         match: command.match,
+        ...(command.status === undefined ? {} : { status: command.status }),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -2588,6 +2761,7 @@ function emitControlFailure(
 
 type ParsedGitCommand = Extract<ParsedAppCliCommand, { command: 'git' }>;
 type ParsedBackupCommand = Extract<ParsedAppCliCommand, { command: 'backup' }>;
+type ParsedRetentionCommand = Extract<ParsedAppCliCommand, { command: 'retention' }>;
 type ParsedRestoreCommand = Extract<ParsedAppCliCommand, { command: 'restore' }>;
 
 async function executeGitCommand(
@@ -4508,6 +4682,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
     if (command.command === 'backup') {
       return await executeBackupCommand(io, command, client);
+    }
+    if (command.command === 'retention') {
+      return await executeRetentionCommand(io, command, client);
     }
     return await executeProjectCommand(io, command, client, profilePayload, repositoryMovePreview);
   } catch (error) {

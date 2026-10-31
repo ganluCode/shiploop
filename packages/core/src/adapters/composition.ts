@@ -250,6 +250,10 @@ import { createProjectDeleteFiles } from './fs/project-delete-files.js';
 import type { ProjectDeleteExecutor } from '../ports/project-delete-executor.js';
 import type { ProjectDeleteStore } from '../ports/project-delete.js';
 import { createProjectDeleteCommandHandler } from '../application/project-delete.js';
+import { createProjectDeleteQueryService } from '../application/project-delete-query.js';
+import type { ProjectDeleteQueryService } from '../ports/project-delete-query.js';
+import { createRetentionCleanupCommandHandler } from '../application/retention-cleanup-command.js';
+import type { RetentionCleanupCommandHandler } from '../application/retention-cleanup-command.js';
 import { createSqliteProjectDeleteStore } from './sqlite/project-delete.js';
 import { createSqliteMaintenanceWriteGate } from './sqlite/data-maintenance.js';
 import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
@@ -391,6 +395,10 @@ export interface CoreApplication {
   /** P07-3 / F-010：可信内部删除执行/续核端口，不直接暴露给客户端。 */
   readonly projectDeleteStore: ProjectDeleteStore;
   readonly projectDeleteExecutor: ProjectDeleteExecutor;
+  /** P07-3 / F-015：删除操作受控只读查询（最小事实；仅原始主体）。 */
+  readonly projectDeleteQueryService: ProjectDeleteQueryService;
+  /** P07-3 / F-015：保留清理显式执行命令句柄（经 commandService 公开）。 */
+  readonly retentionCleanupCommand: RetentionCleanupCommandHandler;
   /** P07-3 / F-009：项目删除只读预览服务（命令面 project.delete.preview 同一能力）。 */
   readonly projectDeletePreview: ProjectDeletePreviewService;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
@@ -1455,8 +1463,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       verifyProcessStop: verifyWorkspaceStop,
     });
     const projectDelete = createProjectDeleteCommandHandler({ store: projectDeleteStore, preview: projectDeletePreview, nowUtcMs });
+    const projectDeleteQueryService = createProjectDeleteQueryService({ store: projectDeleteStore });
+    const retentionCleanupCommand = createRetentionCleanupCommandHandler({
+      cleanup: retentionCleanupService,
+      settings: configurationService,
+      atomicStore,
+      nowUtcMs,
+    });
     const commandService = createCommandService({
       projectDelete,
+      retentionCleanupCommand,
       maintenanceGate,
       atomicStore,
       projectLifecycle,
@@ -1692,6 +1708,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       projectLifecycle,
       projectDeleteStore,
       projectDeleteExecutor,
+      projectDeleteQueryService,
+      retentionCleanupCommand,
       projectDeletePreview,
       integrationPlanGeneration,
       integrationPlanControl,

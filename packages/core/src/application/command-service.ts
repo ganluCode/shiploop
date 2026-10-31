@@ -113,6 +113,7 @@ import type {
   WorkspaceDiscardPreview,
 } from '../ports/workspace-discard.js';
 import type { ProjectDeleteCommandHandler } from '../ports/project-delete.js';
+import type { RetentionCleanupCommandHandler } from './retention-cleanup-command.js';
 import { PROJECT_DELETE_PREVIEW_OPERATION } from '../ports/project-delete-preview.js';
 import type { ProjectDeletePreviewPage } from '../ports/project-delete-preview.js';
 import type { ProjectDeletePreviewService } from './project-delete-preview.js';
@@ -287,6 +288,11 @@ export interface CommandServiceOptions {
    * （Host 分流 data.backup.create）在回执事务提交后驱动。
    */
   readonly dataBackup?: DataBackupCommandPort;
+  /**
+   * P07-3 / F-015：保留清理显式执行命令句柄（缺省时 unsupported，不冒充
+   * 能力）；文件副作用在命令回执事务外，由 F-013 清理服务自身维护互斥。
+   */
+  readonly retentionCleanupCommand?: RetentionCleanupCommandHandler;
   readonly nowUtcMs?: () => number;
 }
 
@@ -300,6 +306,8 @@ function maintenanceWriteKind(operation: string): MaintenanceWriteKind | null {
   if (operation === 'project.resource.import' || operation === 'project.resource.enable' || operation === 'project.resource.disable' || operation === 'project.resource.revoke') return 'configuration';
   // P07-3 / F-008：项目生命周期状态写入与项目元数据同一维护类别。
   if (operation === 'project.archive' || operation === 'project.restore') return 'configuration';
+  // P07-3 / F-015：保留清理与项目删除同一清理维护类别（存储内另有备份互斥）。
+  if (operation === 'retention.cleanup.execute') return 'cleanup';
   return null;
 }
 
@@ -787,6 +795,19 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'project.delete.confirm') {
           if (!options.projectDelete) throw new PublicError('unsupported', operation);
           return await options.projectDelete.submit(principal, envelope, computeCommandRequestDigest(envelope));
+        }
+        // P07-3 / F-015：保留清理显式执行（政策来自全局当前配置；未装配端口
+        // 时 unsupported，重放仍可取回既有 completed/rejected 回执）。
+        if (envelope.operation === 'retention.cleanup.execute') {
+          const digest = computeCommandRequestDigest(envelope);
+          if (options.retentionCleanupCommand === undefined) {
+            const receipt = store.transact(operation, transaction =>
+              replay(principal, transaction.findReceipt(principal.principalId, envelope.commandId), digest, operation));
+            if (receipt) return receipt;
+            checkTiming(envelope, nowUtcMs());
+            throw new PublicError('unsupported', operation);
+          }
+          return await options.retentionCleanupCommand.submit(principal, envelope, digest);
         }
         if (envelope.operation === 'project.archive' || envelope.operation === 'project.restore') {
           const digest = computeCommandRequestDigest(envelope);

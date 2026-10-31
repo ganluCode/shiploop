@@ -2332,6 +2332,39 @@ const PLANNING_DECISION_HELP = (decision: 'approve' | 'reject') => [
   '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
 ].join('\n');
 
+const PROJECT_LIFECYCLE_HELP = [
+  'usage: shiploop project <archive|restore|delete-preview|delete-confirm|delete-operation> ...',
+  '',
+  '项目生命周期 owner 管理入口（project scope + project.lifecycle.write）：',
+  '  project archive <projectId> --revision <int>                 软归档（active→archiving/archived）',
+  '  project restore <projectId> --revision <int>                 显式恢复（archived→active；不启动 Run）',
+  '  project delete-preview <projectId> [--cursor <c>]            删除只读预览（清单/保留项/阻塞/游标）',
+  '  project delete-confirm <projectId> --revision <int> --preview-digest <sha256> --expires-at-ms <ms> --confirm',
+  '                                                              显式确认删除（accepted + operationId）',
+  '  project delete-operation <operationId>                       删除操作受控只读查询（仅原始主体）',
+  '',
+  '归档/删除输出列出阻塞与保留项；删除完成状态经 project delete-operation 查询，',
+  'accepted 不等于已删除。项目恢复 ≠ 备份恢复：整库恢复使用 shiploop restore。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RETENTION_HELP = [
+  'usage: shiploop retention <evaluation|cleanup> [options]',
+  '',
+  '保留管理 owner 入口（政策唯一来源是全局当前配置 policies.retentionPolicy）：',
+  '  retention evaluation       只读评估（磁盘阈值/可清理量/被引用保留量；区分未知）',
+  '  retention cleanup [--command-id <uuid>]   按当前政策执行一次有界清理（引用保护）',
+  '',
+  '未配置政策时 cleanup 返回 rejected（conflict），不注入默认值也不伪造执行。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.resource-list': 'usage: shiploop project resource-list --project <id> [--json]\n' + EXIT_CODE_BLOCK,
@@ -2481,6 +2514,15 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'restore.verify': RESTORE_VERIFY_HELP,
   'restore.prepare': RESTORE_PREPARE_HELP,
   'restore.confirm': RESTORE_CONFIRM_HELP,
+  // P07-3 / F-015：项目生命周期与保留管理命令帮助。
+  'project.archive': PROJECT_LIFECYCLE_HELP,
+  'project.restore': PROJECT_LIFECYCLE_HELP,
+  'project.delete-preview': PROJECT_LIFECYCLE_HELP,
+  'project.delete-confirm': PROJECT_LIFECYCLE_HELP,
+  'project.delete-operation': PROJECT_LIFECYCLE_HELP,
+  retention: RETENTION_HELP,
+  'retention.evaluation': RETENTION_HELP,
+  'retention.cleanup': RETENTION_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

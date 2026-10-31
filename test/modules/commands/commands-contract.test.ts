@@ -225,6 +225,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'project.resource.revoke',
       'data.backup.create', 'data.backup.verify', 'data.backup.restore',
       'project.archive', 'project.restore', 'project.delete.preview', 'project.delete.confirm',
+      // P07-3 / F-015：保留清理显式执行（global scope + settings.global.write；
+      // 政策唯一来源是全局当前配置，payload 恒为空对象）。
+      'retention.cleanup.execute',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
@@ -289,6 +292,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'project.restore': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
       'project.delete.preview': { scopeKind: 'project', mutation: 'create', capability: 'project.lifecycle.write' },
       'project.delete.confirm': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
+    'retention.cleanup.execute': { scopeKind: 'global', mutation: 'create', capability: 'settings.global.write' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

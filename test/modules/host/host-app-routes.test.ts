@@ -792,6 +792,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'project.restore',
         'project.delete.preview',
         'project.delete.confirm',
+        // P07-3 / F-015：保留清理显式执行进入命令白名单。
+        'retention.cleanup.execute',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -1071,6 +1073,12 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P07-3 / F-014：备份创建/核验命令随默认装配进入接线宣告。
         'data.backup.create',
         'data.backup.verify',
+        // P07-3 / F-015：项目生命周期命令与保留清理显式执行进入接线宣告。
+        'project.archive',
+        'project.restore',
+        'project.delete.preview',
+        'project.delete.confirm',
+        'retention.cleanup.execute',
       ],
       queries: [
         'execution.sessions.list',
@@ -1164,6 +1172,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // 同步；能力位复用 data.backup）。
         'backups.get',
         'backup.operations.get',
+        // P07-3 / F-015：项目删除操作受控只读查询进入接线宣告。
+        'project.delete.operation.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

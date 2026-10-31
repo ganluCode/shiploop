@@ -141,6 +141,8 @@ import {
   GIT_REPAIRS_ROUTE_PREFIX,
   BACKUPS_ROUTE_PREFIX,
   BACKUP_OPERATIONS_ROUTE_PREFIX,
+  PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX,
+  RETENTION_EVALUATION_ROUTE,
   INTEGRATION_PLANS_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
@@ -218,8 +220,11 @@ import {
   validateGitAgentRepairQueryResultWire,
 } from './app-wire.js';
 import { validateDataBackupQueryResultWire } from './data-backup-wire.js';
+import { validateProjectDeleteOperationQueryResultWire, validateRetentionEvaluationReportWire } from './project-lifecycle-wire.js';
 import type { DataBackupOperationQueryResult, DataBackupQueryResult } from 'shiploop-core/protocol';
 export type { DataBackupOperationQueryResult, DataBackupQueryResult };
+import type { ProjectDeleteOperationQueryResult, RetentionEvaluationReport } from 'shiploop-core/protocol';
+export type { ProjectDeleteOperationQueryResult, RetentionEvaluationReport };
 
 /** P07-3 / F-014：备份创建命令输入（global scope；target 缺省受控 default）。 */
 export interface SubmitDataBackupCreateInput {
@@ -233,6 +238,39 @@ export interface SubmitDataBackupCreateInput {
 export interface SubmitDataBackupVerifyInput {
   readonly backupId: string;
   readonly manifestDigest: string;
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+}
+
+/** P07-3 / F-015：项目软归档/显式恢复命令输入（project scope + 项目 CAS）。 */
+export interface SubmitProjectLifecycleInput {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+}
+
+/** P07-3 / F-015：项目删除只读预览命令输入（分页游标可选）。 */
+export interface SubmitProjectDeletePreviewInput {
+  readonly projectId: string;
+  readonly cursor?: string;
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+}
+
+/** P07-3 / F-015：项目删除确认命令输入（previewDigest + 过期时间绑定预览）。 */
+export interface SubmitProjectDeleteConfirmInput {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly previewDigest: string;
+  readonly expiresAtUtcMs: number;
+  readonly cursor?: string;
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+}
+
+/** P07-3 / F-015：保留清理显式执行命令输入（政策来自全局当前配置；payload 恒空）。 */
+export interface SubmitRetentionCleanupInput {
   readonly commandId?: string;
   readonly issuedAt?: string;
 }
@@ -893,6 +931,25 @@ export interface HostClientApplication {
   getBackup(backupId: string): Promise<DataBackupQueryResult>;
   /** P07-3 / F-014：备份操作日志查询（稳定 operationId；完成状态收自持久结果）。 */
   getBackupOperation(operationId: string): Promise<DataBackupOperationQueryResult>;
+  /**
+   * P07-3 / F-015：项目软归档（active→archiving/archived；阻塞项在回执 result
+   * blockers 列出）。项目恢复 ≠ 备份恢复：后者不经 HTTP。
+   */
+  submitProjectArchive(input: SubmitProjectLifecycleInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** P07-3 / F-015：项目显式恢复（archived→active；不启动任何 Run）。 */
+  submitProjectRestore(input: SubmitProjectLifecycleInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** P07-3 / F-015：项目删除只读预览（completed 回执 result 携带清单/保留项/游标）。 */
+  submitProjectDeletePreview(input: SubmitProjectDeletePreviewInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** P07-3 / F-015：项目删除确认（accepted 回执携带 operationId；文件制作用
+   * F-011 执行器推进，完成状态经 getProjectDeleteOperation 查询）。 */
+  submitProjectDeleteConfirm(input: SubmitProjectDeleteConfirmInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** P07-3 / F-015：项目删除操作受控只读查询（最小事实；仅原始提交主体可读）。 */
+  getProjectDeleteOperation(operationId: string): Promise<ProjectDeleteOperationQueryResult>;
+  /** P07-3 / F-015：保留评估只读查询（磁盘阈值/可清理量/被引用保留量观测）。 */
+  getRetentionEvaluation(): Promise<RetentionEvaluationReport>;
+  /** P07-3 / F-015：保留清理显式执行（completed 回执 result 携带有界摘要；
+   * 政策未配置返回 rejected conflict，不伪造执行）。 */
+  submitRetentionCleanup(input: SubmitRetentionCleanupInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getSnapshot(scope: { readonly kind: 'project'; readonly projectId: string }): Promise<ProjectSnapshotResult>;
   getSnapshot(scope: { readonly kind: 'global' }): Promise<GlobalSnapshotResult>;
   getSnapshot(scope: SettingsScope): Promise<SnapshotResult>;
@@ -3207,6 +3264,117 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const id = requireStableIdInput(op, operationId, 'operationId');
       const json = await getJson(op, `${BACKUP_OPERATIONS_ROUTE_PREFIX}${encodeURIComponent(id)}`);
       return validateDataBackupQueryResultWire(json, op) as DataBackupOperationQueryResult;
+    },
+
+    /* ------------------------------------------------------------ *
+     * P07-3 / F-015 项目生命周期命令、删除操作查询与保留管理
+     * ------------------------------------------------------------ */
+
+    async submitProjectArchive(
+      input: SubmitProjectLifecycleInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'expectedRevision', 'commandId', 'issuedAt']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const expectedRevision = requireExpectedRevisionInput(op, object.expectedRevision);
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'project.archive',
+        scope: { kind: 'project', projectId },
+        expectedRevision,
+        payload: { projectId },
+      }, options);
+    },
+
+    async submitProjectRestore(
+      input: SubmitProjectLifecycleInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'expectedRevision', 'commandId', 'issuedAt']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const expectedRevision = requireExpectedRevisionInput(op, object.expectedRevision);
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'project.restore',
+        scope: { kind: 'project', projectId },
+        expectedRevision,
+        payload: { projectId },
+      }, options);
+    },
+
+    async submitProjectDeletePreview(
+      input: SubmitProjectDeletePreviewInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'cursor', 'commandId', 'issuedAt']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      if (object.cursor !== undefined && (typeof object.cursor !== 'string' || object.cursor.length === 0 || object.cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(object.cursor))) {
+        throw invalidInput(op, 'invalid_cursor', 'cursor');
+      }
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'project.delete.preview',
+        scope: { kind: 'project', projectId },
+        payload: { projectId, ...(object.cursor === undefined ? {} : { cursor: object.cursor }) },
+      }, options);
+    },
+
+    async submitProjectDeleteConfirm(
+      input: SubmitProjectDeleteConfirmInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'expectedRevision', 'previewDigest', 'expiresAtUtcMs', 'cursor', 'commandId', 'issuedAt']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const previewDigest = requireStableIdInput('project.delete.confirm', object.previewDigest, 'previewDigest');
+      if (typeof object.expiresAtUtcMs !== 'number' || !Number.isSafeInteger(object.expiresAtUtcMs) || object.expiresAtUtcMs < 1) {
+        throw invalidInput(op, 'invalid_expires_at_ms', 'expiresAtUtcMs');
+      }
+      if (object.cursor !== undefined && (typeof object.cursor !== 'string' || object.cursor.length === 0 || object.cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(object.cursor))) {
+        throw invalidInput(op, 'invalid_cursor', 'cursor');
+      }
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'project.delete.confirm',
+        scope: { kind: 'project', projectId },
+        expectedRevision: requireExpectedRevisionInput(op, object.expectedRevision),
+        payload: { projectId, previewDigest, confirmed: true, expiresAtUtcMs: object.expiresAtUtcMs, ...(object.cursor === undefined ? {} : { cursor: object.cursor }) },
+      }, options);
+    },
+
+    async getProjectDeleteOperation(operationId: string): Promise<ProjectDeleteOperationQueryResult> {
+      const op = 'project.delete.operation.get';
+      const id = requireStableIdInput(op, operationId, 'operationId');
+      const json = await getJson(op, `${PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX}${encodeURIComponent(id)}`);
+      return validateProjectDeleteOperationQueryResultWire(json, op);
+    },
+
+    async getRetentionEvaluation(): Promise<RetentionEvaluationReport> {
+      const op = 'retention.evaluation.get';
+      const json = await getJson(op, RETENTION_EVALUATION_ROUTE);
+      return validateRetentionEvaluationReportWire(json, op);
+    },
+
+    async submitRetentionCleanup(
+      input: SubmitRetentionCleanupInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['commandId', 'issuedAt']);
+      return submitCommand({
+        ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+        ...(typeof object.issuedAt === 'string' ? { issuedAt: object.issuedAt } : {}),
+        operation: 'retention.cleanup.execute',
+        scope: { kind: 'global' },
+        payload: {},
+      }, options);
     },
 
     getSnapshot,

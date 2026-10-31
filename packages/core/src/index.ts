@@ -221,6 +221,10 @@ export * from './ports/retention-evaluation.js';
 export * from './application/retention-evaluation.js';
 export * from './ports/evidence-retention.js';
 export * from './application/evidence-retention.js';
+// P07-3 / F-015：保留清理命令句柄与项目删除操作受控只读查询。
+export * from './application/retention-cleanup-command.js';
+export * from './ports/project-delete-query.js';
+export * from './application/project-delete-query.js';
 export * from './application/command-receipts-service.js';
 export * from './application/command-service.js';
 export * from './application/query-service.js';

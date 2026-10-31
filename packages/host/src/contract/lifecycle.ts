@@ -146,6 +146,14 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // 维护入口执行，不经 HTTP 替换任何 Host 已打开的数据库。
   'data.backup.create',
   'data.backup.verify',
+  // P07-3 / F-015：项目软归档/显式恢复与删除预览/确认经既有 POST /v1/commands
+  // 通用路由接线（与 Core project.* 命令面同源；项目恢复 ≠ 备份恢复，后者
+  // 仍不经 HTTP）；保留清理显式执行同一命令面（政策来自全局当前配置）。
+  'project.archive',
+  'project.restore',
+  'project.delete.preview',
+  'project.delete.confirm',
+  'retention.cleanup.execute',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
@@ -254,6 +262,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // DATA_BACKUP_QUERY_OPERATIONS 同步，不漂移）。
   'backups.get',
   'backup.operations.get',
+  // P07-3 / F-015：项目删除操作受控只读查询（最小事实；能力位复用
+  // project.lifecycle.write，仅原始提交主体可读，与 Core 同步不漂移）。
+  'project.delete.operation.get',
 ] as const;
 
 /**

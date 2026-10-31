@@ -272,6 +272,9 @@ export const COMMAND_OPERATIONS = [
   ...PROJECT_RESOURCE_COMMAND_OPERATIONS,
   // P07-3：备份/恢复与项目生命周期命令；整库操作仅限 local-owner。
   ...DATA_LIFECYCLE_OPERATIONS,
+  // P07-3 / F-015：保留清理显式执行（global scope + settings.global.write；
+  // 政策唯一来源是全局当前配置，payload 恒为空对象）。
+  'retention.cleanup.execute',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -479,6 +482,9 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'project.restore': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
     'project.delete.preview': { scopeKind: 'project', mutation: 'create', capability: 'project.lifecycle.write' },
     'project.delete.confirm': { scopeKind: 'project', mutation: 'update', capability: 'project.lifecycle.write' },
+    // P07-3 / F-015：保留清理执行能力位复用全局配置写入（政策域同一；评估
+    // 复用 settings.global.read，清理是显式执行该政策的破坏性面）。
+    'retention.cleanup.execute': { scopeKind: 'global', mutation: 'create', capability: 'settings.global.write' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -1316,6 +1322,14 @@ export type ValidatedCommandEnvelope =
         | { readonly kind: 'global' }
         | { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number | null;
+      readonly payload: Readonly<Record<string, unknown>>;
+    })
+  // P07-3 / F-015：保留清理显式执行命令信封（global scope；payload 恒为空
+  // 对象——政策唯一来源是全局当前配置，不接客户端自带政策/限额/强制标志）。
+  | (EnvelopeCommon & {
+      readonly operation: 'retention.cleanup.execute';
+      readonly scope: { readonly kind: 'global' };
+      readonly expectedRevision: null;
       readonly payload: Readonly<Record<string, unknown>>;
     })
   | (EnvelopeCommon & {
@@ -2662,6 +2676,20 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision,
       payload,
+    } as ValidatedCommandEnvelope;
+  }
+  if (operation === 'retention.cleanup.execute') {
+    // P07-3 / F-015：清理政策唯一来源是全局当前配置；payload 恒为空对象
+    //（不接客户端自带政策/限额/强制标志）。
+    if (scope.kind !== 'global') fail(operation, 'invalid_input', 'scope.kind', '保留清理命令必须使用 global scope');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是对象');
+    exactKeys(operation, object.payload, [], 'payload.');
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: {},
     } as ValidatedCommandEnvelope;
   }
   if (operation === 'project.resource.import' || operation === 'project.resource.enable'

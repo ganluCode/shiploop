@@ -536,6 +536,9 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         // 真实接线；与握手能力宣告一致，不宣告未接线接口）。
         dataBackupExecutionService: locked.writer.dataBackupExecution,
         dataBackupQueryService: locked.writer.dataBackupQueryService,
+        // P07-3 / F-015：项目删除操作受控只读查询（最小事实；仅原始提交主体，
+        // 授权在 Core 复核；与握手能力宣告一致）。
+        projectDeleteQueryService: locked.writer.projectDeleteQueryService,
         // P02-3 / F-006（§7.2/§7.3）：静态接入用例只经 Core 窄端口接线。
         onboardingService: locked.writer.onboardingService,
         projectProfileService: locked.writer.projectProfileService,
