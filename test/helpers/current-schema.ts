@@ -11,5 +11,8 @@
 // P07-3 / F-002：维护占用单行 fencing（v55）；修复当时未同步本常量的遗漏。
 // P07-3 / F-010：项目删除 operation、分步进展与最小回执（v56）。
 // P07-3 / F-011：删除 operation 的逐步持久检查点（v57）。
-export const currentSchemaVersion = 57;
+// P07-3 / F-013：受控保留清理与轮换进度（v58）。
+// P07-3 / F-014：备份接受回执的 backup_id 与 v8 关联（v59）。
+// P07-3 / repair：恢复验证进程不可变删除错误语义（v60）。
+export const currentSchemaVersion = 60;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

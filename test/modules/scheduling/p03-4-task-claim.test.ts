@@ -298,7 +298,7 @@ describe('F-004 atomic Task claim', () => {
       expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual(SQLITE_MIGRATIONS.slice(15).map(migration => migration.version));
       before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
       before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
-      before.command_receipts = before.command_receipts!.map(row => ({ ...row as Record<string, unknown>, planning_task_id: null, candidate_id: null }));
+      before.command_receipts = before.command_receipts!.map(row => ({ ...row as Record<string, unknown>, planning_task_id: null, candidate_id: null, backup_id: null }));
       before.phases = before.phases!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested', delivery_approval_id: null, delivery_candidate_id: null, delivery_batch_id: null, delivery_summary_digest: null }));
       before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, labels: '[]', pause_requested_at: null }));
       before.execution_batches = before.execution_batches!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));
