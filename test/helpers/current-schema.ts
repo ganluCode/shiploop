@@ -14,6 +14,7 @@
 // P07-3 / F-013：受控保留清理与轮换进度（v58）。
 // P07-3 / F-014：备份接受回执的 backup_id 与 v8 关联（v59）。
 // P07-3 / repair：恢复验证进程不可变删除错误语义（v60）。
-// P07-4 / F-007：notification delivery 的 owner/lease fencing（v62）。
-export const currentSchemaVersion = 62;
+// P07-4 / F-007：notification delivery 的 owner/lease fencing（v62）；
+// P07-4 / integration repair：v63 重建 delivery 表以落实新增认领约束。
+export const currentSchemaVersion = 63;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);
