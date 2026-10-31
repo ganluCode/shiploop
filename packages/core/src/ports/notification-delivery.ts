@@ -22,6 +22,14 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { isUuidV4 } from './commands.js';
 import { StorageError } from './errors.js';
+import type { PublicStateEvent } from './events.js';
+import {
+  TASK_TERMINAL_EVENT_TYPE,
+  TASK_ACTION_REQUIRED_EVENT_TYPE,
+  EXECUTION_RUN_TERMINAL_EVENT_TYPE,
+  FEATURE_FINALIZED_EVENT_TYPE,
+  FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
+} from './execution-store.js';
 import {
   isPlainObject,
   requirePlainObject,
@@ -376,10 +384,161 @@ export function validateNotificationScanAdvanceInput(
   return { channelId, lastScannedSequence: raw.lastScannedSequence };
 }
 
+/* ------------------------------------------------------------------ *
+ * P07-4 / F-006：持久 state_events → 脱敏 delivery 的有界幂等投影契约
+ * （PRD FR-2、设计 03 §5、07 §5；事件事实源是持久审计表，不是 SSE/内存回调）
+ * ------------------------------------------------------------------ */
+
+/** 投影操作名（结构化错误归属）。 */
+export const NOTIFICATION_PROJECTION_OPERATION = 'NotificationDelivery.projectBatch';
+/** 单批扫描事件数默认值。 */
+export const NOTIFICATION_PROJECTION_BATCH_DEFAULT = 100 as const;
+/** 单批扫描事件数硬上限（与 §13 事件补读分页上限同界）。 */
+export const NOTIFICATION_PROJECTION_BATCH_MAX = 500 as const;
+/** 投影摘要契约版本（未知版本的派生结果拒绝持久化）。 */
+export const NOTIFICATION_SUMMARY_SCHEMA_VERSION = 1 as const;
+
 /**
- * 独立通知持久写模型窄端口（F-004 交付持久结构与原子校验；投影/认领/续投
- * 由后续 Task 在此端口上扩展）。全部写入在单事务内完成原子校验与持久化，
- * 拒绝路径零部分写入。
+ * 默认订阅注册表（冻结词汇；设计 07 §5“默认订阅 Feature 完成、Run 结束、
+ * 失败和需人处理”+ F-005 定案补 Task 终态）：
+ * - task.terminal：Task 终态（含失败/取消）；
+ * - task.action_required：需人处理（人工审批阻塞）；
+ * - execution.run.ended：Run 结束（含失败）；
+ * - feature.finalized / feature.finalization_blocked：Feature 最终交付完成/受阻。
+ * execution.batch.ended 等其余白名单事件是非订阅事件：扫描位置照常推进，
+ * 不产生 delivery；新订阅类型经端口版本化扩展，不猜下游渠道。
+ */
+export const NOTIFICATION_SUBSCRIPTION_EVENT_TYPES = [
+  TASK_TERMINAL_EVENT_TYPE,
+  TASK_ACTION_REQUIRED_EVENT_TYPE,
+  EXECUTION_RUN_TERMINAL_EVENT_TYPE,
+  FEATURE_FINALIZED_EVENT_TYPE,
+  FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
+] as const;
+export type NotificationSubscriptionEventType = (typeof NOTIFICATION_SUBSCRIPTION_EVENT_TYPES)[number];
+
+/** 是否默认订阅事件类型（冻结词汇判断，不猜测降级）。 */
+export function isNotificationSubscriptionEventType(value: string): value is NotificationSubscriptionEventType {
+  return (NOTIFICATION_SUBSCRIPTION_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * 从已验证公开事件派生脱敏摘要（纯函数、确定性、无 I/O）：
+ * - 只取冻结 kind、固定身份（聚合 ID）、结果类别（受控枚举）、安全引用
+ *   （稳定 ID/受控字符串），不复制 payload 原文、错误正文、路径或凭据；
+ * - 输入必须已经过 mapStateEvent 白名单/形状校验（未知类型不进入本函数）；
+ * - 非订阅事件返回 null（扫描位置照常推进，不产生 delivery）；
+ * - 历史 feature.finalized/blocked 旧短形态（{finalized:true}/{blocked:true}）
+ *   只携带固定身份与 kind，不伪造结果轴。
+ */
+export function deriveNotificationSummary(
+  event: PublicStateEvent,
+): Readonly<Record<string, unknown>> | null {
+  const aggregateId = event.aggregate.id;
+  switch (event.type) {
+    case TASK_TERMINAL_EVENT_TYPE: {
+      const payload = event.payload as { status: string; resultCategory: string; attemptId: string; runId: string; resultRef: string | null };
+      return {
+        schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION,
+        kind: 'task_terminal',
+        taskId: aggregateId,
+        status: payload.status,
+        resultCategory: payload.resultCategory,
+        attemptId: payload.attemptId,
+        runId: payload.runId,
+        resultRef: payload.resultRef,
+      };
+    }
+    case TASK_ACTION_REQUIRED_EVENT_TYPE: {
+      const payload = event.payload as { action: string; itemId: string; reason: string };
+      return {
+        schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION,
+        kind: 'task_action_required',
+        taskId: aggregateId,
+        action: payload.action,
+        itemId: payload.itemId,
+        reason: payload.reason,
+      };
+    }
+    case EXECUTION_RUN_TERMINAL_EVENT_TYPE: {
+      const payload = event.payload as { status: string; resultCategory: string; resultRef: string | null; batchId: string; featureId: string };
+      return {
+        schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION,
+        kind: 'run_ended',
+        runId: aggregateId,
+        status: payload.status,
+        resultCategory: payload.resultCategory,
+        resultRef: payload.resultRef,
+        batchId: payload.batchId,
+        featureId: payload.featureId,
+      };
+    }
+    case FEATURE_FINALIZED_EVENT_TYPE:
+    case FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE: {
+      const blocked = event.type === FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE;
+      if (!blocked && (event.payload as { finalized?: true }).finalized === true) {
+        return { schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION, kind: 'feature_finalized', featureId: aggregateId };
+      }
+      if (blocked && (event.payload as { blocked?: true }).blocked === true) {
+        return { schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION, kind: 'feature_finalization_blocked', featureId: aggregateId };
+      }
+      const payload = event.payload as { outcome: string; deliveryStatus: string; reasonCode: string; runId: string; batchId: string; operationId: string | null };
+      return {
+        schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION,
+        kind: blocked ? 'feature_finalization_blocked' : 'feature_finalized',
+        featureId: aggregateId,
+        outcome: payload.outcome,
+        deliveryStatus: payload.deliveryStatus,
+        reasonCode: payload.reasonCode,
+        runId: payload.runId,
+        batchId: payload.batchId,
+        operationId: payload.operationId,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** 单批投影请求：内置渠道 + 可选批大小（缺省默认值，上限硬约束）。 */
+export interface NotificationProjectionBatchRequest {
+  readonly channelId: NotificationChannelId;
+  readonly batchSize?: number;
+}
+
+/** 校验单批投影请求：未知渠道/未知键拒绝，批大小缺省默认且 1..上限。 */
+export function validateNotificationProjectionBatchRequest(
+  value: unknown,
+  operation: string = NOTIFICATION_PROJECTION_OPERATION,
+): { channelId: NotificationChannelId; batchSize: number } {
+  const context: ValidationContext = { operation };
+  const raw = requirePlainObject(value, context, 'request');
+  rejectUnknownKeys(raw, ['channelId', 'batchSize'], context, 'request.');
+  const channelId = validateNotificationChannelId(raw.channelId, context, 'channelId');
+  if (raw.batchSize !== undefined && (typeof raw.batchSize !== 'number' || !Number.isInteger(raw.batchSize)
+    || raw.batchSize < 1 || raw.batchSize > NOTIFICATION_PROJECTION_BATCH_MAX)) {
+    throw validationError(context, 'batchSize', 'batch_size_out_of_range', raw.batchSize);
+  }
+  return { channelId, batchSize: raw.batchSize ?? NOTIFICATION_PROJECTION_BATCH_DEFAULT };
+}
+
+/** 单批投影结果（全部字段有界；createdDeliveries 只列本批新建行）。 */
+export interface NotificationProjectionBatchResult {
+  readonly channelId: NotificationChannelId;
+  /** 本批推进后的持久消费水位（空批为原水位，不变）。 */
+  readonly lastScannedSequence: number;
+  /** 本批实际扫描的持久事件行数（含非订阅事件）。 */
+  readonly scannedCount: number;
+  /** 本批新建的 delivery（幂等重放/已存在行不重复列出）。 */
+  readonly createdDeliveries: readonly NotificationDeliveryRecord[];
+  /** 本批后是否可能仍有未扫描事件（扫描满批即保守为 true）。 */
+  readonly moreAvailable: boolean;
+}
+
+/**
+ * 独立通知持久写模型窄端口（F-004 交付持久结构与原子校验；F-006 扩展事件
+ * 投影，认领/续投由后续 Task 在此端口上扩展）。全部写入在单事务内完成原子
+ * 校验与持久化，拒绝路径零部分写入。
  */
 export interface NotificationDeliveryStore {
   /** 幂等创建：同 (eventId, channelId) 同摘要重放返回既有行；摘要变化冲突拒绝。 */
@@ -392,6 +551,12 @@ export interface NotificationDeliveryStore {
   readDelivery(input: unknown): NotificationDeliveryRecord;
   /** 点读扫描水位（未建立返回 null，调用方按 0 处理）。 */
   readScanState(input: unknown): NotificationScanStateRecord | null;
+  /**
+   * F-006：单短事务内有界扫描一批持久事件，为订阅事件幂等创建 delivery 并
+   * 原子推进消费水位；损坏事件/水位断档显式失败（corrupt，带 sequence 定位，
+   * 不回显原文），不静默越过；空批次零写入。
+   */
+  projectNotificationBatch(input: unknown): NotificationProjectionBatchResult;
 }
 
 /** 行列映射时未知状态/结果/渠道一律持久损坏（写入路径只产生冻结词汇）。 */

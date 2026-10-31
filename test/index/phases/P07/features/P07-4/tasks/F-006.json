@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-4-f004-notification-delivery-store.test.ts", "all": true },
+        { "file": "test/modules/events/p07-4-f005-result-events.test.ts", "all": true },
+        { "file": "test/modules/events/events-contract.test.ts", "all": true },
+        { "file": "test/modules/events/snapshot-and-events.test.ts", "all": true }
+      ]
+    }
+  ]
+}

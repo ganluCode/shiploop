@@ -1,5 +1,6 @@
 /**
- * P07-4 / F-004 独立通知持久模型的 SQLite 适配器（adapters 层）。
+ * P07-4 独立通知持久模型的 SQLite 适配器（adapters 层；F-004 交付持久写模型，
+ * F-006 增加持久事件 → delivery 的有界幂等投影）。
  *
  * 纪律（PRD FR-2、设计 03 §3/§5、07 §5）：
  * - 全部写入在单条 BEGIN IMMEDIATE 短事务内完成“原子校验 + 持久化”，拒绝路径
@@ -9,9 +10,15 @@
  * - 次数/代次/终态/时间一致性与退避上界在写事务内校验：乱序、迟到代次、
  *   终态覆盖、时钟回退、超界显式退避一律结构化 conflict/validation 拒绝；
  * - 扫描水位单调且不超前当前事件水位（同事务读 MAX(sequence)）；
- * - 行列→记录映射只接受冻结词汇（未知状态/渠道/结果为持久损坏 fail-closed）。
+ * - 行列→记录映射只接受冻结词汇（未知状态/渠道/结果为持久损坏 fail-closed）；
+ * - F-006 投影：单事务内“有界扫描 → 订阅事件幂等建 delivery → 水位推进”，
+ *   损坏事件/未知必需事件版本/水位断档显式 corrupt（带 sequence 定位，不回显
+ *   行列原文），空批次零写入；事件事实源是持久审计表，不是 SSE/内存回调。
  */
+import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import { PublicError } from '../../ports/commands.js';
+import { mapStateEvent } from '../../ports/events.js';
 import {
   DEFAULT_NOTIFICATION_DELIVERY_POLICY,
   NOTIFICATION_DELIVERY_CREATE_OPERATION,
@@ -22,18 +29,23 @@ import {
   NOTIFICATION_DELIVERY_SCAN_OPERATION,
   NOTIFICATION_DELIVERY_SCHEMA_VERSION,
   NOTIFICATION_DELIVERY_STATUSES,
+  NOTIFICATION_PROJECTION_OPERATION,
   canonicalNotificationJson,
   computeNotificationPolicyDigest,
   computeNotificationRetryDelayMs,
+  deriveNotificationSummary,
   notificationDeliveryCorrupt,
   validateNotificationDeliveryCreateInput,
   validateNotificationDeliveryResultInput,
   validateNotificationScanAdvanceInput,
+  validateNotificationProjectionBatchRequest,
   validateNotificationChannelId,
+  validateNotificationSummary,
   type NotificationDeliveryRecord,
   type NotificationDeliveryResultInput,
   type NotificationDeliveryStore,
   type NotificationDeliveryWriteResult,
+  type NotificationProjectionBatchResult,
   type NotificationScanStateRecord,
 } from '../../ports/notification-delivery.js';
 import { StorageError } from '../../ports/errors.js';
@@ -49,6 +61,12 @@ type DeliveryRow = {
 
 type ScanRow = {
   channel_id: string; revision: number; created_at: number; updated_at: number; last_scanned_sequence: number;
+};
+
+/** F-006：投影扫描的 state_events 行（列名与查询存储同一形态）。 */
+type ScanEventRow = {
+  id: string; sequence: number; event_type: string; aggregate_type: string; aggregate_id: string;
+  aggregate_revision: number; project_id: string | null; payload: string; occurred_at: number;
 };
 
 function parseJsonObject(value: unknown, operation: string, reason: string): Readonly<Record<string, unknown>> {
@@ -128,54 +146,71 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
     });
   }
 
+  /**
+   * 事务内幂等插入 delivery（createDelivery 与 F-006 投影共用）：项目归属由
+   * 源 state_events 行在当前写事务内权威派生；(event_id,channel_id) 已存在时
+   * 同摘要幂等返回既有行，摘要变化冲突拒绝。
+   */
+  function insertDeliveryInTransaction(
+    db: Database.Database,
+    operation: string,
+    eventId: string,
+    channelId: string,
+    summary: Readonly<Record<string, unknown>>,
+    timestamp: number,
+  ): NotificationDeliveryWriteResult {
+    const existing = db.prepare<[string, string], DeliveryRow>(
+      'SELECT * FROM notification_deliveries WHERE event_id = ? AND channel_id = ?',
+    ).get(eventId, channelId);
+    if (existing !== undefined) {
+      // 幂等：同 (event,channel) 同摘要（规范化比较）返回既有行；摘要变化冲突。
+      const existingSummary = parseJsonObject(existing.summary_json, operation, 'invalid_summary_json');
+      if (canonicalNotificationJson(existingSummary) !== canonicalNotificationJson(summary)) {
+        throw conflict(operation, 'summary_mismatch', existing.id);
+      }
+      return { created: false, delivery: mapDeliveryRow(existing) };
+    }
+    const event = db.prepare<[string], { project_id: string | null; sequence: number; event_type: string; occurred_at: number }>(
+      'SELECT project_id, sequence, event_type, occurred_at FROM state_events WHERE id = ?',
+    ).get(eventId);
+    if (event === undefined) {
+      throw new StorageError('not_found', operation, `事件 ${eventId} 不存在`, {
+        entity: { type: 'state_event', id: eventId },
+      });
+    }
+    const context = readContext(operation);
+    if (event.project_id === null) {
+      throw validationError(context, 'eventId', 'event_not_project_scoped', eventId);
+    }
+    if (!Number.isSafeInteger(event.sequence) || event.sequence < 1 || typeof event.event_type !== 'string' || event.event_type.length === 0) {
+      throw notificationDeliveryCorrupt(operation, 'invalid_event_row');
+    }
+    // 时间一致性：delivery 不得早于源事件发生时间（时钟回退是环境异常，冲突拒绝）。
+    if (!Number.isSafeInteger(timestamp) || timestamp < event.occurred_at) {
+      throw conflict(operation, 'non_monotonic_time');
+    }
+    const deliveryId = randomUUID();
+    const summaryJson = canonicalNotificationJson(summary);
+    db.prepare(
+      'INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest, claim_generation, last_receipt) ' +
+        "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, 0, NULL)",
+    ).run(
+      deliveryId, timestamp, timestamp, event.project_id, eventId, channelId,
+      event.sequence, event.event_type, summaryJson, timestamp,
+      NOTIFICATION_DELIVERY_POLICY_VERSION, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY),
+    );
+    const row = db.prepare<[string], DeliveryRow>('SELECT * FROM notification_deliveries WHERE id = ?').get(deliveryId);
+    if (row === undefined) throw notificationDeliveryCorrupt(operation, 'insert_missing');
+    return { created: true, delivery: mapDeliveryRow(row) };
+  }
+
   function createDelivery(input: unknown): NotificationDeliveryWriteResult {
     const request = validateNotificationDeliveryCreateInput(input);
-    return session.transactWrite(NOTIFICATION_DELIVERY_CREATE_OPERATION, (db) => {
-      const timestamp = now();
-      const existing = db.prepare<[string, string], DeliveryRow>(
-        'SELECT * FROM notification_deliveries WHERE event_id = ? AND channel_id = ?',
-      ).get(request.eventId, request.channelId);
-      if (existing !== undefined) {
-        // 幂等：同 (event,channel) 同摘要（规范化比较）返回既有行；摘要变化冲突。
-        const existingSummary = parseJsonObject(existing.summary_json, NOTIFICATION_DELIVERY_CREATE_OPERATION, 'invalid_summary_json');
-        if (canonicalNotificationJson(existingSummary) !== canonicalNotificationJson(request.summary)) {
-          throw conflict(NOTIFICATION_DELIVERY_CREATE_OPERATION, 'summary_mismatch', existing.id);
-        }
-        return { created: false, delivery: mapDeliveryRow(existing) };
-      }
-      const event = db.prepare<[string], { project_id: string | null; sequence: number; event_type: string; occurred_at: number }>(
-        'SELECT project_id, sequence, event_type, occurred_at FROM state_events WHERE id = ?',
-      ).get(request.eventId);
-      if (event === undefined) {
-        throw new StorageError('not_found', NOTIFICATION_DELIVERY_CREATE_OPERATION, `事件 ${request.eventId} 不存在`, {
-          entity: { type: 'state_event', id: request.eventId },
-        });
-      }
-      const context = readContext(NOTIFICATION_DELIVERY_CREATE_OPERATION);
-      if (event.project_id === null) {
-        throw validationError(context, 'eventId', 'event_not_project_scoped', request.eventId);
-      }
-      if (!Number.isSafeInteger(event.sequence) || event.sequence < 1 || typeof event.event_type !== 'string' || event.event_type.length === 0) {
-        throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_CREATE_OPERATION, 'invalid_event_row');
-      }
-      // 时间一致性：delivery 不得早于源事件发生时间（时钟回退是环境异常，冲突拒绝）。
-      if (!Number.isSafeInteger(timestamp) || timestamp < event.occurred_at) {
-        throw conflict(NOTIFICATION_DELIVERY_CREATE_OPERATION, 'non_monotonic_time');
-      }
-      const deliveryId = randomUUID();
-      const summaryJson = canonicalNotificationJson(request.summary);
-      db.prepare(
-        'INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest, claim_generation, last_receipt) ' +
-          "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, 0, NULL)",
-      ).run(
-        deliveryId, timestamp, timestamp, event.project_id, request.eventId, request.channelId,
-        event.sequence, event.event_type, summaryJson, timestamp,
-        NOTIFICATION_DELIVERY_POLICY_VERSION, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY),
-      );
-      const row = db.prepare<[string], DeliveryRow>('SELECT * FROM notification_deliveries WHERE id = ?').get(deliveryId);
-      if (row === undefined) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_CREATE_OPERATION, 'insert_missing');
-      return { created: true, delivery: mapDeliveryRow(row) };
-    });
+    return session.transactWrite(NOTIFICATION_DELIVERY_CREATE_OPERATION, (db) =>
+      insertDeliveryInTransaction(
+        db, NOTIFICATION_DELIVERY_CREATE_OPERATION, request.eventId, request.channelId, request.summary, now(),
+      ),
+    );
   }
 
   function recordDeliveryResult(input: unknown): NotificationDeliveryRecord {
@@ -247,6 +282,35 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
     });
   }
 
+  /** 事务内单调推进渠道扫描水位（advanceScanState 与 F-006 投影共用）。 */
+  function upsertScanStateInTransaction(
+    db: Database.Database,
+    operation: string,
+    channelId: string,
+    lastScannedSequence: number,
+    timestamp: number,
+  ): void {
+    const existing = db.prepare<[string], ScanRow>('SELECT * FROM notification_scan_state WHERE channel_id = ?').get(channelId);
+    if (existing === undefined) {
+      db.prepare(
+        'INSERT INTO notification_scan_state (channel_id, revision, created_at, updated_at, last_scanned_sequence) VALUES (?, 1, ?, ?, ?)',
+      ).run(channelId, timestamp, timestamp, lastScannedSequence);
+      return;
+    }
+    if (lastScannedSequence < existing.last_scanned_sequence) {
+      throw conflict(operation, 'watermark_regression');
+    }
+    if (lastScannedSequence === existing.last_scanned_sequence) {
+      return;
+    }
+    if (!Number.isSafeInteger(timestamp) || timestamp < existing.created_at) {
+      throw conflict(operation, 'non_monotonic_time');
+    }
+    db.prepare(
+      'UPDATE notification_scan_state SET revision = revision + 1, updated_at = ?, last_scanned_sequence = ? WHERE channel_id = ?',
+    ).run(timestamp, lastScannedSequence, channelId);
+  }
+
   function advanceScanState(input: unknown): NotificationScanStateRecord {
     const request = validateNotificationScanAdvanceInput(input);
     return session.transactWrite(NOTIFICATION_DELIVERY_SCAN_OPERATION, (db) => {
@@ -259,25 +323,7 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
       if (request.lastScannedSequence > maxSequence) {
         throw conflict(NOTIFICATION_DELIVERY_SCAN_OPERATION, 'sequence_beyond_event_watermark');
       }
-      const existing = db.prepare<[string], ScanRow>('SELECT * FROM notification_scan_state WHERE channel_id = ?').get(request.channelId);
-      if (existing === undefined) {
-        db.prepare(
-          'INSERT INTO notification_scan_state (channel_id, revision, created_at, updated_at, last_scanned_sequence) VALUES (?, 1, ?, ?, ?)',
-        ).run(request.channelId, timestamp, timestamp, request.lastScannedSequence);
-      } else {
-        if (request.lastScannedSequence < existing.last_scanned_sequence) {
-          throw conflict(NOTIFICATION_DELIVERY_SCAN_OPERATION, 'watermark_regression');
-        }
-        if (request.lastScannedSequence === existing.last_scanned_sequence) {
-          return mapScanRow(existing);
-        }
-        if (!Number.isSafeInteger(timestamp) || timestamp < existing.created_at) {
-          throw conflict(NOTIFICATION_DELIVERY_SCAN_OPERATION, 'non_monotonic_time');
-        }
-        db.prepare(
-          'UPDATE notification_scan_state SET revision = revision + 1, updated_at = ?, last_scanned_sequence = ? WHERE channel_id = ?',
-        ).run(timestamp, request.lastScannedSequence, request.channelId);
-      }
+      upsertScanStateInTransaction(db, NOTIFICATION_DELIVERY_SCAN_OPERATION, request.channelId, request.lastScannedSequence, timestamp);
       const updated = db.prepare<[string], ScanRow>('SELECT * FROM notification_scan_state WHERE channel_id = ?').get(request.channelId);
       if (updated === undefined) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_SCAN_OPERATION, 'upsert_missing');
       return mapScanRow(updated);
@@ -312,5 +358,118 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
     return row === undefined ? null : mapScanRow(row);
   }
 
-  return Object.freeze({ createDelivery, recordDeliveryResult, advanceScanState, readDelivery, readScanState });
+  /** 投影扫描行 → 公开事件（白名单/形状校验；损坏显式失败、不回显原文）。 */
+  function mapScannedEvent(row: ScanEventRow): ReturnType<typeof mapStateEvent> {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(row.payload);
+    } catch {
+      throw notificationDeliveryCorrupt(NOTIFICATION_PROJECTION_OPERATION, 'event_payload_not_json');
+    }
+    try {
+      return mapStateEvent({
+        id: row.id,
+        sequence: row.sequence,
+        eventType: row.event_type,
+        aggregateType: row.aggregate_type,
+        aggregateId: row.aggregate_id,
+        aggregateRevision: row.aggregate_revision,
+        projectId: row.project_id,
+        payload,
+        occurredAtUtcMs: row.occurred_at,
+      }, NOTIFICATION_PROJECTION_OPERATION);
+    } catch (error) {
+      // 损坏/未知必需事件版本：定位到 sequence 进入可诊断状态，不携带行列原文。
+      if (error instanceof PublicError && error.code === 'corrupt_state') {
+        throw new StorageError('corrupt', NOTIFICATION_PROJECTION_OPERATION,
+          '事件投影中止：持久事件行超出公开契约（详见 reason/sequence，不回显原文）', {
+            details: { reason: 'event_mapping_failed', cause: error.details?.reason ?? 'unknown', sequence: row.sequence },
+          });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * F-006 单短事务投影：有界扫描 → 订阅事件幂等建 delivery → 消费水位同事务
+   * 原子推进。空批次零写入；损坏事件/水位断档 fail-closed，事务整体回滚，
+   * 已推进水位不受影响；重复扫描/重放依赖 (event_id,channel_id) 唯一约束与
+   * 幂等插入，两个投影者给终只保留一条 delivery。
+   */
+  function projectNotificationBatch(input: unknown): NotificationProjectionBatchResult {
+    const request = validateNotificationProjectionBatchRequest(input);
+    return session.transactWrite(NOTIFICATION_PROJECTION_OPERATION, (db) => {
+      const timestamp = now();
+      // 1) 持久消费水位（未建立按 0；损坏 fail-closed）。
+      const existingScan = db.prepare<[string], ScanRow>(
+        'SELECT * FROM notification_scan_state WHERE channel_id = ?',
+      ).get(request.channelId);
+      const watermark = existingScan === undefined ? 0 : existingScan.last_scanned_sequence;
+      if (!Number.isSafeInteger(watermark) || watermark < 0) {
+        throw notificationDeliveryCorrupt(NOTIFICATION_PROJECTION_OPERATION, 'invalid_scan_watermark');
+      }
+      // 2) 水位断档：消费水位超前真实事件日志（如恢复旧备份/库被替换）显式可诊断。
+      const maxRow = db.prepare<[], { max: unknown }>('SELECT COALESCE(MAX(sequence), 0) AS max FROM state_events').get();
+      const maxSequence = Number(maxRow?.max);
+      if (!Number.isSafeInteger(maxSequence) || maxSequence < 0) {
+        throw notificationDeliveryCorrupt(NOTIFICATION_PROJECTION_OPERATION, 'invalid_event_watermark');
+      }
+      if (watermark > maxSequence) {
+        throw notificationDeliveryCorrupt(NOTIFICATION_PROJECTION_OPERATION, 'watermark_beyond_event_log');
+      }
+      // 3) 有界扫描（sequence 升序、排他下界，与公开补读同一谓词；不建内存队列）。
+      const rows = db.prepare<[number, number], ScanEventRow>(
+        'SELECT id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, project_id, payload, occurred_at ' +
+          'FROM state_events WHERE sequence > ? ORDER BY sequence ASC LIMIT ?',
+      ).all(watermark, request.batchSize);
+      if (rows.length === 0) {
+        // 空批次：零写入（水位/revision/行数均不变）。
+        return {
+          channelId: request.channelId,
+          lastScannedSequence: watermark,
+          scannedCount: 0,
+          createdDeliveries: [],
+          moreAvailable: false,
+        };
+      }
+      // 4) 逐行白名单/形状核验 + 脱敏摘要派生；非订阅事件只推进扫描位置。
+      const context = readContext(NOTIFICATION_PROJECTION_OPERATION);
+      const created: NotificationDeliveryRecord[] = [];
+      for (const row of rows) {
+        const event = mapScannedEvent(row);
+        const summary = deriveNotificationSummary(event);
+        if (summary === null) {
+          continue;
+        }
+        // 防御性摘要上界核验（派生路径只产冻结词汇；越界属编程错误，fail-closed）。
+        validateNotificationSummary(summary, context, 'summary');
+        const result = insertDeliveryInTransaction(db, NOTIFICATION_PROJECTION_OPERATION, event.eventId, request.channelId, summary, timestamp);
+        if (result.created) {
+          created.push(result.delivery);
+        }
+      }
+      // 5) 消费水位与 delivery 同事务推进（同值幂等零变更）。
+      const newWatermark = rows[rows.length - 1]!.sequence;
+      if (!Number.isSafeInteger(newWatermark) || newWatermark < 1) {
+        throw notificationDeliveryCorrupt(NOTIFICATION_PROJECTION_OPERATION, 'invalid_batch_watermark');
+      }
+      upsertScanStateInTransaction(db, NOTIFICATION_PROJECTION_OPERATION, request.channelId, newWatermark, timestamp);
+      return {
+        channelId: request.channelId,
+        lastScannedSequence: newWatermark,
+        scannedCount: rows.length,
+        createdDeliveries: created,
+        moreAvailable: rows.length >= request.batchSize,
+      };
+    });
+  }
+
+  return Object.freeze({
+    createDelivery,
+    recordDeliveryResult,
+    advanceScanState,
+    readDelivery,
+    readScanState,
+    projectNotificationBatch,
+  });
 }
