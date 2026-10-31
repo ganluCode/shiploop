@@ -30,6 +30,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../../../../packages/core/src/adapters/sqlite/schema.ts';
 import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite/migrations.ts';
 import { validateMigrationDescriptor } from '../../../../packages/core/src/ports/migrations.ts';
+import { computeNotificationPolicyDigest, DEFAULT_NOTIFICATION_DELIVERY_POLICY } from '../../../../packages/core/src/ports/notification-delivery.ts';
 import { openSqliteConnection } from '../../../../packages/core/src/adapters/sqlite/connection.ts';
 import { withTempSandbox } from '../../../helpers/temp-sandbox.ts';
 
@@ -125,6 +126,10 @@ const SCHEMA_TABLES = [
   // P07-3 / F-013：清理/轮换的持久操作与逐项检查点（迁移 v58）。
   ['retention_operations', schema.retentionOperations],
   ['retention_operation_items', schema.retentionOperationItems],
+  // P07-4 / F-004：独立通知 delivery、扫描水位与本地结果记录（迁移 v61）。
+  ['notification_deliveries', schema.notificationDeliveries],
+  ['notification_scan_state', schema.notificationScanState],
+  ['notification_delivery_results', schema.notificationDeliveryResults],
   ['project_delete_operations', schema.projectDeleteOperations],
   ['project_delete_steps', schema.projectDeleteSteps],
   ['project_delete_receipts', schema.projectDeleteReceipts],
@@ -140,13 +145,14 @@ const EXPECTED_TABLE_NAMES = [
   'git_agent_repair_attempts',
 ].sort();
 
-/** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
+/** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。
+ * P07-4 / F-004 已建立 notification_deliveries 等三表（迁移 v61），从禁止清单移除；
+ * notification_channels（可编辑外部渠道表）仍属未来范围：内置固定本地渠道不建渠道表。 */
 const FORBIDDEN_TABLE_NAMES = [
   'chat_turns',
   'check_definitions',
   'operations',
   'notification_channels',
-  'notification_deliveries',
 ];
 
 const VALID_SHA256 = 'ab'.repeat(32);
@@ -279,6 +285,14 @@ function seedStateEvent(
     JSON.stringify({ changedFields: ['displayName'] }),
     NOW_MS,
   );
+}
+
+/** P07-4 / F-004：合法 pending delivery 种子（默认策略摘要；表级直接 SQL）。 */
+function seedNotificationDelivery(db: CoreDatabase, id = 'nd-1', projectId = 'proj-1'): void {
+  db.prepare(
+    'INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) ' +
+      "VALUES (?, 1, ?, ?, ?, '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', ?, 'pending', 0, ?, 1, ?)",
+  ).run(id, NOW_MS, NOW_MS, projectId, JSON.stringify({ cancelled: true }), NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY));
 }
 
 /** P02-2 / F-006：合法 completed 注册回执种子（registration scope，project_id NULL）。 */
@@ -591,6 +605,13 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'workspace_leases:(project_id)->projects.(id)',
         'workspace_leases:(project_id,owner_id)->attempts.(project_id,id)',
         'state_events:(project_id)->projects.(id)',
+        // P07-4 / F-004（迁移 v61）：独立通知 delivery 的项目/源事件归属链。
+        'notification_deliveries:(project_id)->projects.(id)',
+        'notification_deliveries:(event_id)->state_events.(id)',
+        'notification_deliveries:(project_id,event_id)->state_events.(project_id,id)',
+        'notification_delivery_results:(project_id)->projects.(id)',
+        'notification_delivery_results:(delivery_id)->notification_deliveries.(id)',
+        'notification_delivery_results:(project_id,delivery_id)->notification_deliveries.(project_id,id)',
         // P03-3 / F-006：Task 尝试预占账本的同项目归属外键链。
         'task_attempt_reservations:(project_id)->projects.(id)',
         'task_attempt_reservations:(project_id,batch_id)->execution_batches.(project_id,id)',
@@ -1727,6 +1748,159 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
     params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, NOW_MS],
     table: 'approvals',
     error: /CHECK constraint failed: approvals_revision_positive_check/,
+  },
+  // ---------------------------------------------------------------------
+  // P07-4 / F-004（迁移 v61）：独立通知三表的 DDL 约束失败矩阵。
+  // ---------------------------------------------------------------------
+  {
+    name: 'notification_deliveries 同 (event_id,channel_id) 至多一条（幂等去重底线）',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+      seedNotificationDelivery(db);
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-2', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', '{}', 'pending', 0, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /UNIQUE constraint failed: notification_deliveries\.event_id, notification_deliveries\.channel_id/,
+  },
+  {
+    name: 'notification_deliveries 状态只允许冻结词汇',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', '{}', 'maybe', 0, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /CHECK constraint failed: notification_deliveries_status_check/,
+  },
+  {
+    name: 'notification_deliveries 未知渠道被拒绝（内置固定本地渠道）',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'webhook', 1, 'execution.run.cancelled', '{}', 'pending', 0, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /CHECK constraint failed: notification_deliveries_channel_check/,
+  },
+  {
+    name: 'notification_deliveries 超界尝试次数被拒绝',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', '{}', 'retry_scheduled', 17, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /CHECK constraint failed: notification_deliveries_attempt_count_check/,
+  },
+  {
+    name: 'notification_deliveries 状态形状：delivered 必须携带回执',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', '{}', 'delivered', 1, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /CHECK constraint failed: notification_deliveries_delivered_shape_check/,
+  },
+  {
+    name: 'notification_deliveries 不一致时间字段（下次时间早于创建）被拒绝',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', '{}', 'pending', 0, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS - 1, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /CHECK constraint failed: notification_deliveries_next_attempt_check/,
+  },
+  {
+    name: 'notification_deliveries 跨项目事件被同项目复合外键拒绝',
+    seed: (db) => {
+      seedProject(db, 'proj-1');
+      seedProject(db, 'proj-2');
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111', 'proj-2');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'execution.run.cancelled', '{}', 'pending', 0, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /FOREIGN KEY constraint failed/,
+  },
+  {
+    name: 'notification_deliveries 全局范围事件（project_id NULL）不能产生投递',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111', null, 'global_settings');
+    },
+    statement:
+      "INSERT INTO notification_deliveries (id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence, event_type, summary_json, status, attempt_count, next_attempt_at, policy_version, policy_digest) VALUES ('nd-x', 1, ?, ?, 'proj-1', '11111111-1111-4111-8111-111111111111', 'local-results', 1, 'settings.global_updated', '{}', 'pending', 0, ?, 1, ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS, computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY)],
+    table: 'notification_deliveries',
+    error: /FOREIGN KEY constraint failed/,
+  },
+  {
+    name: 'notification_scan_state 未知渠道与负序号被拒绝',
+    seed: () => {},
+    statement:
+      "INSERT INTO notification_scan_state (channel_id, revision, created_at, updated_at, last_scanned_sequence) VALUES ('external', 1, ?, ?, -1)",
+    params: [NOW_MS, NOW_MS],
+    table: 'notification_scan_state',
+    error: /CHECK constraint failed: notification_scan_state_channel_check/,
+  },
+  {
+    name: 'notification_delivery_results 同 (delivery,attempt) 至多一条',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+      seedNotificationDelivery(db);
+      db.prepare(
+        "INSERT INTO notification_delivery_results (id, created_at, project_id, delivery_id, attempt, outcome, failure_reason, occurred_at) VALUES ('res-1', ?, 'proj-1', 'nd-1', 1, 'failed', 'busy', ?)",
+      ).run(NOW_MS, NOW_MS);
+    },
+    statement:
+      "INSERT INTO notification_delivery_results (id, created_at, project_id, delivery_id, attempt, outcome, failure_reason, occurred_at) VALUES ('res-2', ?, 'proj-1', 'nd-1', 1, 'failed', 'busy', ?)",
+    params: [NOW_MS, NOW_MS],
+    table: 'notification_delivery_results',
+    error: /UNIQUE constraint failed: notification_delivery_results\.delivery_id, notification_delivery_results\.attempt/,
+  },
+  {
+    name: 'notification_delivery_results 结果形状：failed 必须带原因且不得带回执',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+      seedNotificationDelivery(db);
+    },
+    statement:
+      "INSERT INTO notification_delivery_results (id, created_at, project_id, delivery_id, attempt, outcome, receipt, occurred_at) VALUES ('res-x', ?, 'proj-1', 'nd-1', 1, 'failed', '{}', ?)",
+    params: [NOW_MS, NOW_MS],
+    table: 'notification_delivery_results',
+    error: /CHECK constraint failed: notification_delivery_results_failed_shape_check/,
+  },
+  {
+    name: 'notification_delivery_results 跨项目投递被同项目复合外键拒绝',
+    seed: (db) => {
+      seedProject(db, 'proj-1');
+      seedProject(db, 'proj-2');
+      seedStateEvent(db, '11111111-1111-4111-8111-111111111111');
+      seedNotificationDelivery(db);
+    },
+    statement:
+      "INSERT INTO notification_delivery_results (id, created_at, project_id, delivery_id, attempt, outcome, failure_reason, occurred_at) VALUES ('res-x', ?, 'proj-2', 'nd-1', 1, 'failed', 'busy', ?)",
+    params: [NOW_MS, NOW_MS],
+    table: 'notification_delivery_results',
+    error: /FOREIGN KEY constraint failed/,
   },
 ];
 

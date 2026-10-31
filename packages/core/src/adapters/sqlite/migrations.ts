@@ -4252,6 +4252,91 @@ WHEN NEW.id IS NOT OLD.id OR NEW.fence < OLD.fence
 BEGIN SELECT RAISE(ABORT, 'maintenance occupancy identity/fence invalid'); END;
 `;
 
+const MIGRATION_061_SQL = `
+-- v61（P07-4 / F-004）：独立通知 delivery、扫描水位与本地结果记录。
+-- 通知只消费项目范围 state_events；项目归属由源事件同事务权威派生，
+-- (project_id,event_id) 复合外键在数据库级拒绝跨项目/全局事件引用。
+CREATE UNIQUE INDEX state_events_project_id_id_unique ON state_events(project_id, id);
+
+CREATE TABLE notification_deliveries (
+  id TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  event_sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  summary_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL,
+  policy_version INTEGER NOT NULL,
+  policy_digest TEXT NOT NULL,
+  claim_generation INTEGER NOT NULL DEFAULT 0,
+  last_receipt TEXT,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT,
+  FOREIGN KEY (event_id) REFERENCES state_events(id) ON DELETE RESTRICT,
+  FOREIGN KEY (project_id, event_id) REFERENCES state_events(project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT notification_deliveries_revision_check CHECK (revision >= 1),
+  CONSTRAINT notification_deliveries_updated_check CHECK (updated_at >= created_at),
+  CONSTRAINT notification_deliveries_channel_check CHECK (channel_id IN ('local-results')),
+  CONSTRAINT notification_deliveries_status_check CHECK (status IN ('pending','in_flight','delivered','retry_scheduled','exhausted')),
+  CONSTRAINT notification_deliveries_attempt_count_check CHECK (attempt_count BETWEEN 0 AND 16),
+  CONSTRAINT notification_deliveries_claim_generation_check CHECK (claim_generation >= 0),
+  CONSTRAINT notification_deliveries_event_sequence_check CHECK (event_sequence >= 1),
+  CONSTRAINT notification_deliveries_policy_version_check CHECK (policy_version >= 1),
+  CONSTRAINT notification_deliveries_policy_digest_check CHECK (length(policy_digest) = 64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT notification_deliveries_summary_check CHECK (json_valid(summary_json) AND json_type(summary_json) = 'object' AND length(summary_json) <= 4096),
+  CONSTRAINT notification_deliveries_receipt_check CHECK (last_receipt IS NULL OR (json_valid(last_receipt) AND json_type(last_receipt) = 'object' AND length(last_receipt) <= 8192)),
+  CONSTRAINT notification_deliveries_next_attempt_check CHECK (next_attempt_at >= created_at),
+  CONSTRAINT notification_deliveries_pending_shape_check CHECK (status <> 'pending' OR (attempt_count = 0 AND last_receipt IS NULL)),
+  CONSTRAINT notification_deliveries_in_flight_shape_check CHECK (status <> 'in_flight' OR last_receipt IS NULL),
+  CONSTRAINT notification_deliveries_delivered_shape_check CHECK (status <> 'delivered' OR last_receipt IS NOT NULL),
+  CONSTRAINT notification_deliveries_retry_shape_check CHECK (status NOT IN ('retry_scheduled','exhausted') OR attempt_count >= 1)
+);
+CREATE UNIQUE INDEX notification_deliveries_event_channel_unique ON notification_deliveries(event_id, channel_id);
+CREATE UNIQUE INDEX notification_deliveries_project_id_id_unique ON notification_deliveries(project_id, id);
+CREATE INDEX notification_deliveries_due_index ON notification_deliveries(status, next_attempt_at);
+CREATE INDEX notification_deliveries_project_status_index ON notification_deliveries(project_id, status);
+
+CREATE TABLE notification_scan_state (
+  channel_id TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_scanned_sequence INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT notification_scan_state_revision_check CHECK (revision >= 1),
+  CONSTRAINT notification_scan_state_updated_check CHECK (updated_at >= created_at),
+  CONSTRAINT notification_scan_state_channel_check CHECK (channel_id IN ('local-results')),
+  CONSTRAINT notification_scan_state_sequence_check CHECK (last_scanned_sequence >= 0)
+);
+
+CREATE TABLE notification_delivery_results (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  delivery_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  outcome TEXT NOT NULL,
+  receipt TEXT,
+  failure_reason TEXT,
+  occurred_at INTEGER NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT,
+  FOREIGN KEY (delivery_id) REFERENCES notification_deliveries(id) ON DELETE RESTRICT,
+  FOREIGN KEY (project_id, delivery_id) REFERENCES notification_deliveries(project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT notification_delivery_results_attempt_check CHECK (attempt BETWEEN 1 AND 16),
+  CONSTRAINT notification_delivery_results_outcome_check CHECK (outcome IN ('succeeded','failed')),
+  CONSTRAINT notification_delivery_results_receipt_check CHECK (receipt IS NULL OR (json_valid(receipt) AND json_type(receipt) = 'object' AND length(receipt) <= 8192)),
+  CONSTRAINT notification_delivery_results_failure_reason_check CHECK (failure_reason IS NULL OR length(failure_reason) BETWEEN 1 AND 256),
+  CONSTRAINT notification_delivery_results_occurred_check CHECK (occurred_at >= 1),
+  CONSTRAINT notification_delivery_results_succeeded_shape_check CHECK (outcome <> 'succeeded' OR (receipt IS NOT NULL AND failure_reason IS NULL)),
+  CONSTRAINT notification_delivery_results_failed_shape_check CHECK (outcome <> 'failed' OR (receipt IS NULL AND failure_reason IS NOT NULL))
+);
+CREATE UNIQUE INDEX notification_delivery_results_delivery_attempt_unique ON notification_delivery_results(delivery_id, attempt);
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4377,4 +4462,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 58, sql: RETENTION_CLEANUP_MIGRATION_SQL, checksum: sha256Hex(RETENTION_CLEANUP_MIGRATION_SQL), foreignKeysOff: true },
   { version: 59, sql: BACKUP_RECEIPT_MIGRATION_SQL, checksum: sha256Hex(BACKUP_RECEIPT_MIGRATION_SQL), foreignKeysOff: true },
   { version: 60, sql: VERIFICATION_PROCESS_RETENTION_MESSAGE_MIGRATION_SQL, checksum: sha256Hex(VERIFICATION_PROCESS_RETENTION_MESSAGE_MIGRATION_SQL) },
+  { version: 61, sql: MIGRATION_061_SQL, checksum: sha256Hex(MIGRATION_061_SQL) },
 ];

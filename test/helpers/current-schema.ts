@@ -14,5 +14,6 @@
 // P07-3 / F-013：受控保留清理与轮换进度（v58）。
 // P07-3 / F-014：备份接受回执的 backup_id 与 v8 关联（v59）。
 // P07-3 / repair：恢复验证进程不可变删除错误语义（v60）。
-export const currentSchemaVersion = 60;
+// P07-4 / F-004：独立通知 delivery、扫描水位与本地结果记录（v61）。
+export const currentSchemaVersion = 61;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

@@ -80,6 +80,10 @@ const KNOWN_PROJECT_TABLES: Readonly<Record<string, { readonly cursorColumn: str
   integration_predecessor_snapshots: { cursorColumn: 'id', disposition: 'delete' },
   managed_workspaces: { cursorColumn: 'id', disposition: 'delete' },
   memory_records: { cursorColumn: 'id', disposition: 'delete' },
+  // P07-4 / F-004（迁移 v61）：独立通知 delivery 与本地结果记录随项目删除；
+  // notification_scan_state 为全局水位表（无 project_id），不参与逐项目清点。
+  notification_deliveries: { cursorColumn: 'id', disposition: 'delete' },
+  notification_delivery_results: { cursorColumn: 'id', disposition: 'delete' },
   phase_delivery_approvals: { cursorColumn: 'id', disposition: 'delete' },
   phase_delivery_candidates: { cursorColumn: 'id', disposition: 'delete' },
   phases: { cursorColumn: 'id', disposition: 'delete' },

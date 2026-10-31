@@ -87,7 +87,13 @@ export type StorageEntityType =
   | 'integration_plan'
   | 'integration_predecessor_snapshot'
   /** P05-5 / F-002：Feature 共享资源租约。 */
-  | 'feature_resource_lease';
+  | 'feature_resource_lease'
+  /** P07-4 / F-004：独立通知投递记录（notification_deliveries，迁移 v61）。 */
+  | 'notification_delivery'
+  /** P07-4 / F-004：渠道扫描水位（notification_scan_state，迁移 v61；全局表）。 */
+  | 'notification_scan_state'
+  /** 状态事件行（state_events；通知/事件读取的归属定位）。 */
+  | 'state_event';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

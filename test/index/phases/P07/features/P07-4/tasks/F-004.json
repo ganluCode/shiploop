@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/storage/sqlite/p07-4-f004-notification-delivery-store.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-ownership-constraint-matrix.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-storage-integration.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-state-store.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f003-sqlite-backup.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f005-backup-verification.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f010-project-delete-schema.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f011-project-delete-checkpoint-schema.test.ts", "all": true },
+        { "file": "test/modules/commands/p07-3-f009-project-delete-preview.test.ts", "all": true },
+        { "file": "test/modules/commands/p07-3-f010-project-delete.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f012-retention-evaluation.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f013-evidence-retention.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f015-retention-cleanup-command.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f007-host-upgrade.test.ts", "all": true },
+        { "file": "test/modules/verification/p03-7-f002-verification-store.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-task-dag.test.ts", "all": true }
+      ]
+    }
+  ]
+}

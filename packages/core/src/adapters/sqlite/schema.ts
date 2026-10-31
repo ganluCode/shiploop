@@ -304,6 +304,9 @@ export const stateEvents = sqliteTable('state_events', {
     sql`(${table.projectId} IS NOT NULL) OR (${table.aggregateType} = 'global_settings')`,
   ),
   uniqueIndex('state_events_sequence_unique').on(table.sequence),
+  // P07-4 / F-004（迁移 v61）：同项目复合外键 notification_deliveries(project_id,event_id)
+  // → state_events(project_id,id) 的父键唯一索引；全局事件 project_id 为 NULL 不受影响。
+  uniqueIndex('state_events_project_id_id_unique').on(table.projectId, table.id),
 ]);
 
 /**
@@ -2999,4 +3002,101 @@ export const projectDeleteReceipts = sqliteTable('project_delete_receipts', {
 }, table => [
   primaryKey({ columns: [table.principalId, table.commandId] }),
   check('project_delete_receipts_json_check', sql`json_valid(${table.receiptJson})`),
+]);
+
+/**
+ * P07-4 / F-004 独立通知持久模型（迁移 v61；PRD FR-2、设计 03 §2/§5、07 §5）。
+ *
+ * 边界决策：
+ * - delivery 只消费项目范围 state_events：项目归属由源事件在同一写事务内权威派生，
+ *   (project_id,event_id) 同项目复合外键在数据库级拒绝跨项目/全局事件引用；
+ * - 与 attempt_notifications（Runtime→Core 生命周期回执）和 phase_delivery_*
+ *   （Git 发布交付）是不同模型；渠道为冻结的内置本地渠道，不建可编辑渠道表；
+ * - 状态形状由 CHECK 兑现：pending 零次尝试无回执、delivered 必有回执、
+ *   retry_scheduled/exhausted 至少一次尝试；次数/代次/时间字段非法即拒绝；
+ * - 策略有限并盖章在行上（版本+64hex 摘要），可从记录核验。
+ */
+export const notificationDeliveries = sqliteTable('notification_deliveries', {
+  id: text('id').primaryKey(),
+  revision: integer('revision').notNull().default(1),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  projectId: text('project_id').notNull(),
+  eventId: text('event_id').notNull(),
+  channelId: text('channel_id').notNull(),
+  eventSequence: integer('event_sequence').notNull(),
+  eventType: text('event_type').notNull(),
+  summaryJson: text('summary_json').notNull(),
+  status: text('status').notNull().default('pending'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  nextAttemptAt: integer('next_attempt_at').notNull(),
+  policyVersion: integer('policy_version').notNull(),
+  policyDigest: text('policy_digest').notNull(),
+  claimGeneration: integer('claim_generation').notNull().default(0),
+  lastReceipt: text('last_receipt'),
+}, table => [
+  foreignKey({ name: 'notification_deliveries_project_fk', columns: [table.projectId], foreignColumns: [projects.id] }).onDelete('restrict'),
+  foreignKey({ name: 'notification_deliveries_event_fk', columns: [table.eventId], foreignColumns: [stateEvents.id] }).onDelete('restrict'),
+  foreignKey({ name: 'notification_deliveries_project_event_fk', columns: [table.projectId, table.eventId],
+    foreignColumns: [stateEvents.projectId, stateEvents.id] }).onDelete('restrict'),
+  uniqueIndex('notification_deliveries_event_channel_unique').on(table.eventId, table.channelId),
+  uniqueIndex('notification_deliveries_project_id_id_unique').on(table.projectId, table.id),
+  index('notification_deliveries_due_index').on(table.status, table.nextAttemptAt),
+  index('notification_deliveries_project_status_index').on(table.projectId, table.status),
+  check('notification_deliveries_revision_check', sql`${table.revision} >= 1`),
+  check('notification_deliveries_updated_check', sql`${table.updatedAt} >= ${table.createdAt}`),
+  check('notification_deliveries_channel_check', sql`${table.channelId} IN ('local-results')`),
+  check('notification_deliveries_status_check', sql`${table.status} IN ('pending','in_flight','delivered','retry_scheduled','exhausted')`),
+  check('notification_deliveries_attempt_count_check', sql`${table.attemptCount} BETWEEN 0 AND 16`),
+  check('notification_deliveries_claim_generation_check', sql`${table.claimGeneration} >= 0`),
+  check('notification_deliveries_event_sequence_check', sql`${table.eventSequence} >= 1`),
+  check('notification_deliveries_policy_version_check', sql`${table.policyVersion} >= 1`),
+  check('notification_deliveries_policy_digest_check', sql`length(${table.policyDigest}) = 64 AND ${table.policyDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('notification_deliveries_summary_check', sql`json_valid(${table.summaryJson}) AND json_type(${table.summaryJson}) = 'object' AND length(${table.summaryJson}) <= 4096`),
+  check('notification_deliveries_receipt_check', sql`${table.lastReceipt} IS NULL OR (json_valid(${table.lastReceipt}) AND json_type(${table.lastReceipt}) = 'object' AND length(${table.lastReceipt}) <= 8192)`),
+  check('notification_deliveries_next_attempt_check', sql`${table.nextAttemptAt} >= ${table.createdAt}`),
+  check('notification_deliveries_pending_shape_check', sql`${table.status} <> 'pending' OR (${table.attemptCount} = 0 AND ${table.lastReceipt} IS NULL)`),
+  check('notification_deliveries_in_flight_shape_check', sql`${table.status} <> 'in_flight' OR ${table.lastReceipt} IS NULL`),
+  check('notification_deliveries_delivered_shape_check', sql`${table.status} <> 'delivered' OR ${table.lastReceipt} IS NOT NULL`),
+  check('notification_deliveries_retry_shape_check', sql`${table.status} NOT IN ('retry_scheduled','exhausted') OR ${table.attemptCount} >= 1`),
+]);
+
+/** 扫描水位（每内置渠道一行；全局表，无 project_id；last_scanned_sequence 单调不回退）。 */
+export const notificationScanState = sqliteTable('notification_scan_state', {
+  channelId: text('channel_id').primaryKey(),
+  revision: integer('revision').notNull().default(1),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  lastScannedSequence: integer('last_scanned_sequence').notNull().default(0),
+}, table => [
+  check('notification_scan_state_revision_check', sql`${table.revision} >= 1`),
+  check('notification_scan_state_updated_check', sql`${table.updatedAt} >= ${table.createdAt}`),
+  check('notification_scan_state_channel_check', sql`${table.channelId} IN ('local-results')`),
+  check('notification_scan_state_sequence_check', sql`${table.lastScannedSequence} >= 0`),
+]);
+
+/** 本地结果记录（每次尝试一条；(delivery_id,attempt) 唯一；跨项目复合外键保护归属）。 */
+export const notificationDeliveryResults = sqliteTable('notification_delivery_results', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull(),
+  deliveryId: text('delivery_id').notNull(),
+  attempt: integer('attempt').notNull(),
+  outcome: text('outcome').notNull(),
+  receipt: text('receipt'),
+  failureReason: text('failure_reason'),
+  occurredAt: integer('occurred_at').notNull(),
+}, table => [
+  foreignKey({ name: 'notification_delivery_results_project_fk', columns: [table.projectId], foreignColumns: [projects.id] }).onDelete('restrict'),
+  foreignKey({ name: 'notification_delivery_results_delivery_fk', columns: [table.deliveryId], foreignColumns: [notificationDeliveries.id] }).onDelete('restrict'),
+  foreignKey({ name: 'notification_delivery_results_project_delivery_fk', columns: [table.projectId, table.deliveryId],
+    foreignColumns: [notificationDeliveries.projectId, notificationDeliveries.id] }).onDelete('restrict'),
+  uniqueIndex('notification_delivery_results_delivery_attempt_unique').on(table.deliveryId, table.attempt),
+  check('notification_delivery_results_attempt_check', sql`${table.attempt} BETWEEN 1 AND 16`),
+  check('notification_delivery_results_outcome_check', sql`${table.outcome} IN ('succeeded','failed')`),
+  check('notification_delivery_results_receipt_check', sql`${table.receipt} IS NULL OR (json_valid(${table.receipt}) AND json_type(${table.receipt}) = 'object' AND length(${table.receipt}) <= 8192)`),
+  check('notification_delivery_results_failure_reason_check', sql`${table.failureReason} IS NULL OR length(${table.failureReason}) BETWEEN 1 AND 256`),
+  check('notification_delivery_results_occurred_check', sql`${table.occurredAt} >= 1`),
+  check('notification_delivery_results_succeeded_shape_check', sql`${table.outcome} <> 'succeeded' OR (${table.receipt} IS NOT NULL AND ${table.failureReason} IS NULL)`),
+  check('notification_delivery_results_failed_shape_check', sql`${table.outcome} <> 'failed' OR (${table.receipt} IS NULL AND ${table.failureReason} IS NOT NULL)`),
 ]);
