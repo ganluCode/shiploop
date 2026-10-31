@@ -53,6 +53,7 @@ export const APP_CLI_COMMANDS = [
   'backup',
   'restore',
   'retention',
+  'notifications',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -192,7 +193,10 @@ export type AppCliCommandId =
   | 'project.delete-confirm'
   | 'project.delete-operation'
   | 'retention.evaluation'
-  | 'retention.cleanup';
+  | 'retention.cleanup'
+  // P07-4 / F-009：本地通知与 delivery 发送状态只读查询。
+  | 'notifications.list'
+  | 'notifications.get';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.resource-source-register',
@@ -323,6 +327,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.delete-operation',
   'retention.evaluation',
   'retention.cleanup',
+  'notifications.list',
+  'notifications.get',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -1175,6 +1181,30 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.delete-operation': { command: 'project', commandId: 'project.delete-operation', valueFlags: [], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['operationId'] },
   'retention.evaluation': { command: 'retention', commandId: 'retention.evaluation', valueFlags: [], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'retention.cleanup': { command: 'retention', commandId: 'retention.cleanup', valueFlags: ['--command-id'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+
+  /* P07-4 / F-009 本地通知与 delivery 发送状态查询（实际 Host 公共契约
+   * notifications.list / notifications.get 的参数映射；实体 Task/Run/Feature
+   * 至多一，状态为冻结词汇，有界分页同计划列表）。 */
+  'notifications.list': {
+    command: 'notifications',
+    commandId: 'notifications.list',
+    valueFlags: ['--project', '--task', '--run', '--feature', '--status', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'notifications.get': {
+    command: 'notifications',
+    commandId: 'notifications.get',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['deliveryId'],
+  },
   'feature.final-approve': {
     command: 'feature',
     commandId: 'feature.final-approve',
@@ -1738,6 +1768,10 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     retention: {
       evaluation: 'retention.evaluation',
       cleanup: 'retention.cleanup',
+    },
+    notifications: {
+      list: 'notifications.list',
+      get: 'notifications.get',
     },
     config: {
       create: 'config.create',
@@ -3509,6 +3543,39 @@ export interface ParsedExecutionResultDiagnostics {
 }
 
 /**
+ * P07-4 / F-009 通知列表（notifications.list）：实体 Task/Run/Feature 至多一
+ * （--task/--run/--feature，同现本地拒绝）；状态为冻结词汇（深校验由 Core
+ * 单一权威复核）；有界分页同计划列表。
+ */
+export interface ParsedNotificationsList {
+  readonly kind: 'command';
+  readonly command: 'notifications';
+  readonly commandId: 'notifications.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId?: string;
+  readonly runId?: string;
+  readonly featureId?: string;
+  readonly status?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P07-4 / F-009 通知详情（notifications.get）：位置 deliveryId + 项目必填。 */
+export interface ParsedNotificationsGet {
+  readonly kind: 'command';
+  readonly command: 'notifications';
+  readonly commandId: 'notifications.get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly deliveryId: string;
+}
+
+/**
  * P03-6 / F-013 Attempt 显式取消（execution.attempt.cancel）：缺 --confirm 在
  * 任何 I/O 之前本地拒绝；`--command-id` 复用原信封幂等重放（响应丢失先查回执，
  * 不更换命令身份、不额外启动工作）。
@@ -4266,6 +4333,8 @@ export type ParsedAppCliCommand =
   | ParsedExecutionRecordings
   | ParsedExecutionRecordingBody
   | ParsedExecutionResultDiagnostics
+  | ParsedNotificationsList
+  | ParsedNotificationsGet
   | ParsedExecutionCancel
   | ParsedExecutionTargetCancel
   | ParsedExecutionPause
@@ -4395,6 +4464,42 @@ function buildProjectProfile(scan: ScanResult, state: ParseState, spec: AppComma
     default:
       return fail(state, 'unknown_subcommand');
   }
+}
+
+/** P07-4 / F-009：通知列表/详情（纯解析；任何 Host I/O 在执行层）。 */
+function buildNotifications(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+  if (spec.commandId === 'notifications.get') {
+    return {
+      ...base,
+      command: 'notifications',
+      commandId: 'notifications.get',
+      projectId,
+      deliveryId: requirePlanId(scan.positionals[0] as string, state, 'deliveryId'),
+    };
+  }
+  // 实体 Task/Run/Feature 至多一（同现在任何 I/O 之前本地拒绝）。
+  const taskRaw = takeOption(scan, '--task');
+  const runRaw = takeOption(scan, '--run');
+  const featureRaw = takeOption(scan, '--feature');
+  const entityRaws = [taskRaw, runRaw, featureRaw].filter(value => value !== undefined);
+  if (entityRaws.length > 1) {
+    fail(state, 'conflicting_options');
+  }
+  const status = takeOption(scan, '--status');
+  return {
+    ...base,
+    command: 'notifications',
+    commandId: 'notifications.list',
+    projectId,
+    ...(taskRaw !== undefined ? { taskId: requirePlanId(taskRaw, state, 'taskId') } : {}),
+    ...(runRaw !== undefined ? { runId: requireRunId(runRaw, state) } : {}),
+    ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'featureId') } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...optionalPlanListPage(scan, state),
+  };
 }
 
 function buildRetention(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
@@ -6445,6 +6550,8 @@ export function parseAppCliArgs(
       return buildRestore(scan, state, spec);
     case 'retention':
       return buildRetention(scan, state, spec);
+    case 'notifications':
+      return buildNotifications(scan, state, spec);
     case 'integration':
       return buildPlanEntity(scan, state, spec);
     default:

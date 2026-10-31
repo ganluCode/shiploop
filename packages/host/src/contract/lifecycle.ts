@@ -167,6 +167,10 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // P07-4 / F-003：结果诊断分页只读查询真实接线（只读；能力位复用
   // project.read；与 Core EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 同步）。
   'execution.result.diagnostics.list',
+  // P07-4 / F-009：本地通知列表/详情只读查询真实接线（只读；能力位复用
+  // project.read；与 Core NOTIFICATIONS_*_OPERATION 同步，不漂移）。
+  'notifications.list',
+  'notifications.get',
   'projects.list',
   'projects.get',
   'projects.binding.get',

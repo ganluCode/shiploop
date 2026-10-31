@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/notifications/p07-4-f009-notification-query.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f009-notification-host.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-4-f009-notification-cli.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-4-f009-notification-built.test.ts", "all": true },
+        { "file": "test/modules/cli/app-cli-args.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-4-f004-notification-delivery-store.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f007-notification-worker.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f008-notification-runtime.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f008-notification-host.test.ts", "all": true },
+        { "file": "test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts", "all": true },
+        { "file": "test/modules/authorization/authorized-queries.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f003-result-diagnostics-host.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-4-f003-result-diagnostics-built.test.ts", "all": true }
+      ]
+    }
+  ]
+}

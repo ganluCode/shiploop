@@ -379,6 +379,19 @@ export type {
   ResultDiagnosticsParentView,
   ResultDiagnosticsRecord,
 } from './result-diagnostics.js';
+export {
+  NOTIFICATIONS_VIEW_NOTE,
+  buildNotificationsDetailView,
+  buildNotificationsListView,
+  formatNotificationsDetailView,
+  formatNotificationsListView,
+} from './notifications.js';
+export type {
+  NotificationDetailDisplay,
+  NotificationDetailAttempt,
+  NotificationListDisplay,
+  NotificationListRecord,
+} from './notifications.js';
 export type {
   AttemptCancelAcceptanceFacts,
   AttemptCancelDisplay,

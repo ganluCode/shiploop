@@ -182,6 +182,17 @@ export const DISPATCH_QUEUE_ROUTE = '/v1/dispatch-queue';
  * 只读：不创建 Attempt、不扣预算、不触发取消/Git/执行；无子资源/写入口。
  */
 export const RESULT_DIAGNOSTICS_ROUTE = '/v1/result-diagnostics';
+/**
+ * P07-4 / F-009：本地通知与 delivery 发送状态只读查询路由（GET + Bearer；
+ * 与 Core NOTIFICATIONS_LIST_OPERATION / NOTIFICATIONS_GET_OPERATION 一一对应）。
+ * - GET /v1/notifications?projectId=&taskId?|runId?|featureId?&status?&limit?=&cursor?=
+ *   （集合根 + 项目必填 + 实体/状态筛选 + 分页；实体至多一/状态词汇/分页
+ *   由 Core 单一权威复核）；
+ * - GET /v1/notifications/:deliveryId?projectId=（单段路径参数详情 + 执行审计）；
+ * 只读：不认领、不重试、不写回执；无写入口，不授予受限 Agent 管理权限。
+ */
+export const NOTIFICATIONS_ROUTE = '/v1/notifications';
+export const NOTIFICATIONS_ROUTE_PREFIX = '/v1/notifications/';
 /** P05-5 / F-007：Feature 共享资源租约只读查询集合根。 */
 export const EXECUTION_RESOURCES_ROUTE = '/v1/execution-resources';
 /**

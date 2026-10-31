@@ -69,6 +69,13 @@ import { createSqliteBatchDeliveryQueryStore } from './batch-delivery-query-stor
 import type { BatchDeliveryQueryReadStore, BatchDeliveryView } from '../../ports/batch-delivery-query.js';
 import { createSqliteResultDiagnosticsQueryStore } from './result-diagnostics-query-store.js';
 import type { ResultDiagnosticsPage, ResultDiagnosticsParent, ResultDiagnosticsQueryReadStore } from '../../ports/result-diagnostics-query.js';
+import { createSqliteNotificationQueryStore } from './notification-query-store.js';
+import type {
+  NotificationDeliveryDetail,
+  NotificationDeliveryPage,
+  NotificationListRequest,
+  NotificationQueryReadStore,
+} from '../../ports/notification-query.js';
 import { createSqliteIntegrationPlanAccess } from './integration-plan-store.js';
 import { createSqliteIntegrationPlanQueryStore } from './integration-plan-query-store.js';
 import type { IntegrationPlanQueryReadStore } from '../../ports/integration-plan-query.js';
@@ -153,6 +160,7 @@ export interface SqliteQueryStore
     ExecutionControlQueryReadStore,
     PlanningQueryReadStore,
     ResultDiagnosticsQueryReadStore,
+    NotificationQueryReadStore,
     KnowledgeQueryReadStore,
     MemoryQueryReadStore {}
 
@@ -180,6 +188,7 @@ export function createSqliteQueryStore(
   const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
   const batchDelivery = createSqliteBatchDeliveryQueryStore(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs });
   const resultDiagnostics = createSqliteResultDiagnosticsQueryStore(session);
+  const notificationQueries = createSqliteNotificationQueryStore(session);
   const featureReport = createSqliteFeatureExecutionReportStore(session, featureDelivery, workSessions);
   const integrationPlan = createSqliteIntegrationPlanQueryStore(
     createSqliteIntegrationPlanAccess(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs }),
@@ -361,6 +370,10 @@ export function createSqliteQueryStore(
       batchDelivery.readBatchDeliveryView(projectId, batchId, request),
     readResultDiagnosticsPage: (projectId: unknown, parent: ResultDiagnosticsParent, request): ResultDiagnosticsPage | undefined =>
       resultDiagnostics.readResultDiagnosticsPage(projectId, parent, request),
+    listNotificationDeliveries: (projectId: unknown, request: NotificationListRequest): NotificationDeliveryPage =>
+      notificationQueries.listNotificationDeliveries(projectId, request),
+    readNotificationDelivery: (projectId: unknown, deliveryId: string): NotificationDeliveryDetail | undefined =>
+      notificationQueries.readNotificationDelivery(projectId, deliveryId),
     readIntegrationPlanView: (projectId: unknown, integrationId: unknown) =>
       integrationPlan.readIntegrationPlanView(projectId, integrationId),
     readRunControlView: (projectId: unknown, runId: unknown): ExecutionRunControlView | undefined =>

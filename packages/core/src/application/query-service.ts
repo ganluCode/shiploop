@@ -240,6 +240,16 @@ import {
 import { buildResultDiagnosticRecord, buildResultPageUsage } from './result-diagnostics.js';
 import type { BuiltResultDiagnostic, ResultEvidenceResolution } from './result-diagnostics.js';
 import type { PublicResultDiagnosticRecord } from '../ports/result-diagnostics-query.js';
+import {
+  NOTIFICATIONS_GET_OPERATION,
+  NOTIFICATIONS_LIST_OPERATION,
+  NOTIFICATION_LIST_INPUT_KEYS,
+  toPublicNotificationDeliveryRecord,
+  validateNotificationListSelector,
+  type NotificationDeliveryDetailResult,
+  type NotificationDeliveryListResult,
+  type NotificationQueryReadStore,
+} from '../ports/notification-query.js';
 
 import {
   INTEGRATION_PLAN_GET_OPERATION,
@@ -558,6 +568,19 @@ export interface QueryService {
   getBatchDelivery(principal: unknown, input: unknown): Promise<PublicBatchDeliveryResult>;
   /** P07-4 / F-001：按 Batch/Run/Attempt/Work Session 定位的结果诊断分页查询。 */
   listResultDiagnostics(principal: unknown, input: unknown): Promise<ResultDiagnosticsListResult>;
+  /**
+   * P07-4 / F-009 notifications.list：项目范围本地通知分页查询——实体
+   * （Task/Run/Feature 至多一）/状态筛选、键集分页（游标绑定项目与筛选
+   * 范围）；发送状态区分等待/发送中/待重试/已送达/停止重试。能力位
+   * project.read；查询零写入、零认领、零重试，重复读取不增加计数。
+   */
+  listNotifications(principal: unknown, input: unknown): Promise<NotificationDeliveryListResult>;
+  /**
+   * P07-4 / F-009 notifications.get：按稳定 deliveryId 查询通知详情与
+   * 本地执行审计（结果链 attempt 升序）。跨项目/不存在统一 not_found；
+   * 摘要/回执/原因不泄漏凭据或数据根；查询零写入。
+   */
+  getNotificationDelivery(principal: unknown, input: unknown): Promise<NotificationDeliveryDetailResult>;
   /** P05-8 / F-006 GitAgent 修复授权/Attempt 只读投影。 */
   listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult>;
   getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult>;
@@ -627,6 +650,8 @@ export interface QueryServiceOptions {
   readonly batchDeliveryReads?: BatchDeliveryQueryReadStore;
   /** P07-4 / F-001 结果诊断分页一致读取窄端口（只读）。 */
   readonly resultDiagnosticsReads?: ResultDiagnosticsQueryReadStore;
+  /** P07-4 / F-009 通知与 delivery 发送状态一致读取窄端口（只读）。 */
+  readonly notificationReads?: NotificationQueryReadStore;
   /** P05-8 / F-006 GitAgent 修复一致读投影（只读）。 */
   readonly gitAgentRepairReads?: GitAgentRepairQueryReadStore;
   /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
@@ -803,6 +828,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     featureDeliveryReads,
     batchDeliveryReads,
     resultDiagnosticsReads,
+    notificationReads,
     gitAgentRepairReads,
     integrationPlanReads,
     executionControlReads,
@@ -3056,6 +3082,100 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           limit: filter.limit,
           eventWatermark: page.eventWatermark,
           usage: buildResultPageUsage(observations),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P07-4 / F-009：项目范围本地通知分页查询（能力核验 → 实体/状态筛选
+    // 校验 → 项目可见 → 受控游标解码先于读取 → 一致读分页 → 冻结投影；
+    // 查询零写入、零认领、零重试，不授予受限 Agent 管理权限）。
+    async listNotifications(principal: unknown, input: unknown): Promise<NotificationDeliveryListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = NOTIFICATIONS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, [...NOTIFICATION_LIST_INPUT_KEYS], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const selector = validateNotificationListSelector(object, operation);
+        requireProjectVisible(principal, projectId, operation);
+        if (notificationReads === undefined) throw new PublicError('unsupported', operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({
+          kind: 'notifications',
+          projectId,
+          ...(selector.entity === undefined ? {} : { entityKind: selector.entity.kind, entityId: selector.entity.id }),
+          ...(selector.status === undefined ? {} : { status: selector.status }),
+        }, operation);
+        // 游标解析先于任何读取：跨项目/跨筛选/跨根重放或篡改载荷一律
+        // invalid_cursor，绝不当作从零读取。
+        const after = planListRequest(filter, binding, operation);
+        const decoded = after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation);
+        const request = {
+          after: decoded === null ? null : { eventSequence: decoded.sort, deliveryId: decoded.id },
+          limit: filter.limit,
+          ...(selector.entity === undefined ? {} : { entity: selector.entity }),
+          ...(selector.status === undefined ? {} : { status: selector.status }),
+        };
+        const page = notificationReads.listNotificationDeliveries(projectId, request);
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'notifications',
+          filter: {
+            ...(selector.entity === undefined ? {} : { entity: selector.entity }),
+            ...(selector.status === undefined ? {} : { status: selector.status }),
+          },
+          records: page.rows.map(row => toPublicNotificationDeliveryRecord(row, operation)),
+          nextCursor: page.nextKey === null
+            ? null
+            : encodePlanListCursor(
+              encodeExecutionListKey({ sort: page.nextKey.eventSequence, id: page.nextKey.deliveryId }),
+              binding,
+            ),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P07-4 / F-009：按稳定 deliveryId 查询通知详情与本地执行审计（能力
+    // 核验 → 身份校验 → 项目可见 → 一致读点读；跨项目/不存在统一 not_found；
+    // 损坏持久行 fail-closed corrupt_state；查询零写入）。
+    async getNotificationDelivery(principal: unknown, input: unknown): Promise<NotificationDeliveryDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = NOTIFICATIONS_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'deliveryId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const deliveryId = validateStableId(
+          object.deliveryId,
+          { operation, entity: { type: 'notification_delivery' } },
+          'deliveryId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        if (notificationReads === undefined) throw new PublicError('unsupported', operation);
+        const detail = notificationReads.readNotificationDelivery(projectId, deliveryId);
+        if (detail === undefined) {
+          throw new PublicError('not_found', operation, '通知投递不存在或不可见', {
+            details: { reason: 'notification_delivery_not_found' },
+          });
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'notification',
+          delivery: toPublicNotificationDeliveryRecord(detail, operation),
+          attempts: detail.results.map(result => ({
+            attempt: result.attempt,
+            outcome: result.outcome,
+            receipt: result.receipt,
+            failureReason: result.failureReason,
+            occurredAt: new Date(result.occurredAt).toISOString(),
+          })),
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });

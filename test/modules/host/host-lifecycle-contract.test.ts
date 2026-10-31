@@ -248,6 +248,8 @@ describe('F-002 冻结常量与能力声明', () => {
       "execution.recording.list",
       "execution.recording.body.get",
       "execution.result.diagnostics.list",
+      "notifications.list",
+      "notifications.get",
       "projects.list",
       "projects.get",
       "projects.binding.get",
@@ -357,6 +359,8 @@ describe('F-002 冻结常量与能力声明', () => {
       'execution.recording.body.get',
       // P07-4 / F-003：结果诊断分页只读查询真实接线。
       'execution.result.diagnostics.list',
+      'notifications.list',
+      'notifications.get',
       ...QUERY_OPERATIONS.slice(0, 4),
       'projects.inspect',
       'projects.overview',

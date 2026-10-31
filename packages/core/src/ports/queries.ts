@@ -25,6 +25,8 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import type { PrincipalScope } from './authorization.js';
 import { PublicError, WIRE_MESSAGE_SCHEMA_VERSION, isUuidV4 } from './commands.js';
+import { NOTIFICATION_DELIVERY_STATUSES } from './notification-delivery.js';
+import type { NotificationDeliveryStatus } from './notification-delivery.js';
 import type {
   BaselineAuthorizationRecord,
   BaselineCheckResultRecord,
@@ -719,7 +721,9 @@ export type PlanListScope =
   | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string }
   | { readonly kind: 'batch-delivery'; readonly projectId: string; readonly batchId: string }
   /** P07-4 / F-001 结果诊断分页；父级固定为 Batch/Run/Attempt/Work Session 之一。 */
-  | { readonly kind: 'result-diagnostics'; readonly projectId: string; readonly parentKind: 'batch' | 'run' | 'attempt' | 'session'; readonly parentId: string };
+  | { readonly kind: 'result-diagnostics'; readonly projectId: string; readonly parentKind: 'batch' | 'run' | 'attempt' | 'session'; readonly parentId: string }
+  /** P07-4 / F-009 本地通知分页；游标绑定项目 + 实体/状态筛选范围。 */
+  | { readonly kind: 'notifications'; readonly projectId: string; readonly entityKind?: 'task' | 'run' | 'feature'; readonly entityId?: string; readonly status?: NotificationDeliveryStatus };
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
   readonly rootIdentity: string;
@@ -975,6 +979,27 @@ export function createPlanListCursorBinding(
       parentId: validateStableId(scope.parentId, { operation }, 'scope.parentId'),
     } };
   }
+  if (scope.kind === 'notifications') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'entityKind', 'entityId', 'status'], { operation }, 'scope');
+    if ((scope.entityKind === undefined) !== (scope.entityId === undefined)) {
+      planInvalidInput(operation, 'scope.entity', 'entityKind 与 entityId 必须同时提供', scope.entityKind);
+    }
+    if (scope.entityKind !== undefined && !['task', 'run', 'feature'].includes(String(scope.entityKind))) {
+      planInvalidInput(operation, 'scope.entityKind', '必须是 task / run / feature', scope.entityKind);
+    }
+    if (scope.status !== undefined && !(NOTIFICATION_DELIVERY_STATUSES as readonly string[]).includes(String(scope.status))) {
+      planInvalidInput(operation, 'scope.status', 'unsupported_status', scope.status);
+    }
+    return { rootIdentity: input.rootIdentity, scope: {
+      kind: 'notifications',
+      projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      ...(scope.entityKind === undefined ? {} : {
+        entityKind: scope.entityKind as 'task' | 'run' | 'feature',
+        entityId: validateStableId(scope.entityId, { operation, entity: { type: scope.entityKind === 'task' ? 'task' : scope.entityKind === 'run' ? 'run' : 'feature' } }, 'scope.entityId'),
+      }),
+      ...(scope.status === undefined ? {} : { status: scope.status as NotificationDeliveryStatus }),
+    } };
+  }
   if (scope.kind === 'git-repairs') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
     return {
@@ -1021,7 +1046,7 @@ export function createPlanListCursorBinding(
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'git-repairs' / 'planning-contexts' / 'feature-planning-contexts' / 'result-diagnostics'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'git-repairs' / 'planning-contexts' / 'feature-planning-contexts' / 'result-diagnostics' / 'notifications'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -1055,7 +1080,8 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'execution-resources' &&
       binding.scope.kind !== 'planning-contexts' &&
       binding.scope.kind !== 'feature-planning-contexts' &&
-      binding.scope.kind !== 'result-diagnostics')
+      binding.scope.kind !== 'result-diagnostics' &&
+      binding.scope.kind !== 'notifications')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }
@@ -1113,6 +1139,9 @@ function planScopeFingerprint(scope: PlanListScope): string {
       break;
     case 'result-diagnostics':
       parent = `${scope.parentKind}:${scope.parentId}`;
+      break;
+    case 'notifications':
+      parent = JSON.stringify([scope.entityKind ?? null, scope.entityId ?? null, scope.status ?? null]);
       break;
     case 'attempt-diagnostics':
       parent = scope.attemptId;

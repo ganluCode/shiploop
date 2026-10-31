@@ -31,7 +31,8 @@ import type { ProjectResourceSourceInput, ProjectResourceSourceResult } from 'sh
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
 import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview, BrownfieldMovePreview } from 'shiploop-core/protocol';
 
-import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
+import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES, NOTIFICATION_DELIVERY_STATUSES } from 'shiploop-core/protocol';
+import type { NotificationDeliveryStatus } from 'shiploop-core/protocol';
 
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
@@ -110,6 +111,8 @@ import type {
   WorkRecordingPage,
   WorkRecordingBody,
   ResultDiagnosticsListResult,
+  NotificationDeliveryListResult,
+  NotificationDeliveryDetailResult,
   WorkspaceDetailResult,
   WorkspaceDiscardPreviewBinding,
   WorkspaceListResult,
@@ -883,6 +886,17 @@ export interface HostClientApplication {
     readonly limit?: number;
     readonly cursor?: string;
   }): Promise<ResultDiagnosticsListResult>;
+  /** P07-4 / F-009 notifications.list：项目范围本地通知分页（实体 Task/Run/Feature 至多一 + 状态筛选）。 */
+  listNotifications(projectId: string, input: {
+    readonly taskId?: string;
+    readonly runId?: string;
+    readonly featureId?: string;
+    readonly status?: NotificationDeliveryStatus;
+    readonly limit?: number;
+    readonly cursor?: string;
+  }): Promise<NotificationDeliveryListResult>;
+  /** P07-4 / F-009 notifications.get：按稳定 deliveryId 查询详情与本地执行审计。 */
+  getNotification(projectId: string, deliveryId: string): Promise<NotificationDeliveryDetailResult>;
   cancelAttempt(input: { readonly projectId: string; readonly attemptId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /* ------------------------------------------------------------ *
    * P03-9 / F-014 Run/Batch 授权控制与诊断查询（经既有命令/查询通道）
@@ -4500,6 +4514,40 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         && parentObj[responseKey[key]] === parent && facts[responseKey[key]] === parent;
       if (!parentMatches) {
         throw new HostProtocolError('response_malformed', op, '结果诊断响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+    async listNotifications(projectId, input) {
+      const op = 'notifications.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const object = rejectUnknownInputKeys(op, input, ['taskId', 'runId', 'featureId', 'status', 'limit', 'cursor']);
+      // 实体筛选至多一个（同现是输入错误；取值形态由 Core 单一权威复核）。
+      const entityKeys = (['taskId', 'runId', 'featureId'] as const).filter(key => object[key] !== undefined);
+      if (entityKeys.length > 1) throw invalidInput(op, 'conflicting_scope');
+      if (object.status !== undefined && !(NOTIFICATION_DELIVERY_STATUSES as readonly string[]).includes(String(object.status))) {
+        throw invalidInput(op, 'unsupported_status', 'status');
+      }
+      const paging = buildPlanListQuery({ limit: input.limit, cursor: input.cursor }, op);
+      const parts = [`projectId=${encodeURIComponent(project)}`];
+      for (const key of entityKeys) {
+        parts.push(`${key}=${encodeURIComponent(requireStableIdInput(op, object[key], key))}`);
+      }
+      if (object.status !== undefined) parts.push(`status=${encodeURIComponent(String(object.status))}`);
+      if (paging.length > 0) parts.push(paging);
+      // wire 已复核行形状/词汇/游标前缀与 limit 上界；筛选回显由 Core 归一化。
+      return validateAppQueryResponse(op, await getJson(op, `/v1/notifications?${parts.join('&')}`));
+    },
+    async getNotification(projectId, deliveryId) {
+      const op = 'notifications.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const delivery = requireStableIdInput(op, deliveryId, 'deliveryId');
+      const result = validateAppQueryResponse(op, await getJson(op,
+        `/v1/notifications/${encodeURIComponent(delivery)}?projectId=${encodeURIComponent(project)}`));
+      // wire 已复核行形状与审计链一致性；本层只核对详情归属与请求一致。
+      if (result.delivery.deliveryId !== delivery) {
+        throw new HostProtocolError('response_malformed', op, '通知详情归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

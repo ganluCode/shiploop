@@ -1633,6 +1633,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       featureDeliveryReads: queryStore,
       batchDeliveryReads: createSqliteBatchDeliveryQueryStore(session, { nowUtcMs }),
       resultDiagnosticsReads: queryStore,
+      notificationReads: queryStore,
       integrationPlanReads: queryStore,
       executionControlReads: queryStore,
       artifacts: artifactStore,

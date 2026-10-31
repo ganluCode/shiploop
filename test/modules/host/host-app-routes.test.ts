@@ -1089,6 +1089,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.recording.body.get',
         // P07-4 / F-003：结果诊断分页只读查询真实接线。
         'execution.result.diagnostics.list',
+        'notifications.list',
+        'notifications.get',
         'projects.list',
         'projects.get',
         'projects.binding.get',

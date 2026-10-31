@@ -381,6 +381,20 @@ export type {
   ResultDiagnosticsScope,
   ResultPendingAction,
 } from './ports/result-diagnostics-query.js';
+// P07-4 / F-009 通知与 delivery 发送状态只读查询公共面：公开形状、操作
+// 身份与冻结筛选/实体派生词汇（Host wire 校验器与 CLI 投影同源）。
+export {
+  NOTIFICATIONS_LIST_OPERATION,
+  NOTIFICATIONS_GET_OPERATION,
+  NOTIFICATION_LIST_INPUT_KEYS,
+} from './ports/notification-query.js';
+export type {
+  NotificationDeliveryDetailResult,
+  NotificationDeliveryListResult,
+  NotificationEntityFilter,
+  PublicNotificationDeliveryAttempt,
+  PublicNotificationDeliveryRecord,
+} from './ports/notification-query.js';
 // P04-5 / F-007 公开记录行的冻结词汇（wire 校验与 Core 同源，不漂移）。
 export {
   WORK_RECORDING_SOURCES,

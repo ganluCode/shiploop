@@ -183,6 +183,12 @@ export type {
   PublicDispatchQueueRecord,
   PublicDispatchSlotSummary,
   PublicDispatchSlotView,
+  NotificationDeliveryListResult,
+  NotificationDeliveryDetailResult,
+  PublicNotificationDeliveryRecord,
+  PublicNotificationDeliveryAttempt,
+  NotificationEntityFilter,
 } from './app-wire.js';
+export type { NotificationDeliveryStatus } from 'shiploop-core/protocol';
 
 export { createWorkToolClient } from './work-tool-client.js';

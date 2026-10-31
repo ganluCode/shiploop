@@ -40,6 +40,7 @@ import {
   type TaskApprovalDecisionResult,
   type TaskStrategyUpdateResult,
   type TaskVerificationContinueResult,
+  type NotificationDeliveryStatus,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
 import {
@@ -85,6 +86,12 @@ import {
   buildResultDiagnosticsView,
   formatResultDiagnosticsView,
 } from './app/result-diagnostics.js';
+import {
+  buildNotificationsDetailView,
+  buildNotificationsListView,
+  formatNotificationsDetailView,
+  formatNotificationsListView,
+} from './app/notifications.js';
 import {
   buildExecutionControlCommandView,
   buildExecutionControlQueryView,
@@ -2782,6 +2789,28 @@ type ParsedGitCommand = Extract<ParsedAppCliCommand, { command: 'git' }>;
 type ParsedBackupCommand = Extract<ParsedAppCliCommand, { command: 'backup' }>;
 type ParsedRetentionCommand = Extract<ParsedAppCliCommand, { command: 'retention' }>;
 type ParsedRestoreCommand = Extract<ParsedAppCliCommand, { command: 'restore' }>;
+type ParsedNotificationsCommand = Extract<ParsedAppCliCommand, { command: 'notifications' }>;
+
+/** P07-4 / F-009：通知与 delivery 发送状态只读查询（零副作用；不认领/不重试）。 */
+async function executeNotificationsCommand(
+  io: AppCliIo,
+  command: ParsedNotificationsCommand,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  if (command.commandId === 'notifications.get') {
+    const result = await client.getNotification(command.projectId, command.deliveryId);
+    return emitSuccess(io, command, result, formatNotificationsDetailView(buildNotificationsDetailView(result)));
+  }
+  const result = await client.listNotifications(command.projectId, {
+    ...(command.taskId !== undefined ? { taskId: command.taskId } : {}),
+    ...(command.runId !== undefined ? { runId: command.runId } : {}),
+    ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+    ...(command.status !== undefined ? { status: command.status as NotificationDeliveryStatus } : {}),
+    ...(command.limit !== undefined ? { limit: command.limit } : {}),
+    ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+  });
+  return emitSuccess(io, command, result, formatNotificationsListView(buildNotificationsListView(result)));
+}
 
 async function executeGitCommand(
   io: AppCliIo,
@@ -4704,6 +4733,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
     if (command.command === 'retention') {
       return await executeRetentionCommand(io, command, client);
+    }
+    if (command.command === 'notifications') {
+      return await executeNotificationsCommand(io, command, client);
     }
     return await executeProjectCommand(io, command, client, profilePayload, repositoryMovePreview);
   } catch (error) {

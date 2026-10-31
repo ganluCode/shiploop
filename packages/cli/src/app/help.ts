@@ -1962,6 +1962,72 @@ const EXECUTION_RESULT_DIAGNOSTICS_HELP = [
   '',
 ].join('\n');
 
+/** P07-4 / F-009：本地通知列表/详情帮助（与 Core/Host 冻结词汇同源）。 */
+const NOTIFICATIONS_HELP = [
+  'usage: shiploop notifications <list|get> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '本地通知与 delivery 发送状态只读查询（notifications.list / notifications.get）：',
+  '- list：项目范围分页，可按适用实体（--task/--run/--feature 至多一）或状态筛选；',
+  '- get：按稳定 deliveryId 查询详情与本地执行审计（每次尝试的结果/原因/回执）；',
+  '- 查询零副作用：不认领、不重试、不改投递状态、不触发业务重跑。',
+  '',
+  '子命令：',
+  '  list    项目范围通知分页（notifications.list）',
+  '  get     单条通知详情与执行审计（notifications.get）',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const NOTIFICATIONS_LIST_HELP = [
+  'usage: shiploop notifications list --project <id>',
+  '                                    [--task <taskId> | --run <runId> | --feature <featureId>]',
+  '                                    [--status <pending|in_flight|retry_scheduled|delivered|exhausted>]',
+  '                                    [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]',
+  '',
+  '通知分页查询（notifications.list；只读）：项目范围本地通知与发送状态。',
+  '- 发送状态区分：pending=等待发送、in_flight=正在发送、retry_scheduled=待重试、',
+  '  delivered=已发送、exhausted=停止重试；',
+  '- 每行含 deliveryId/eventId/channelId/适用实体/脱敏摘要/本地回执/累计次数/',
+  '  最近结果与原因/下次尝试时间（ISO UTC；等待/待重试以外为 unknown）；',
+  '- 实体筛选至多一个（同现本地拒绝）；游标绑定项目与筛选范围，跨范围重放',
+  '  invalid_cursor；继续读取下一页用 nextCursor；',
+  '- JSON 信封直接携带查询结果；摘要/回执是脱敏冻结摘要，不含凭据或数据根；',
+  '- 查询只读：不认领、不重试、不改投递状态；不授予受限 Agent 管理权限。',
+  '',
+  '选项：',
+  '  --project <id>     项目 ID（必填，UUID v4）',
+  '  --task <taskId>    按适用 Task 筛选（三选一）',
+  '  --run <runId>      按适用 Run 筛选（三选一）',
+  '  --feature <id>     按适用 Feature 筛选（三选一）',
+  '  --status <status>  按发送状态筛选（冻结词汇）',
+  '  --limit <int>      每页条数 1..200（默认 50）',
+  '  --cursor <c>       上一页返回的 nextCursor（不透明）',
+  '  --json             stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const NOTIFICATIONS_GET_HELP = [
+  'usage: shiploop notifications get <deliveryId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '通知详情与执行审计（notifications.get；只读）：按稳定 deliveryId 查询单条通知。',
+  '- 详情含适用实体/脱敏摘要/本地回执/发送状态/累计次数/最近结果与原因/下次尝试时间；',
+  '- attempts 逐次列出本地执行审计（结果/原因/回执/发生时间，ISO UTC）；',
+  '- 不存在或跨项目统一 not_found；损坏持久行 corrupt_state；查询零写入。',
+  '',
+  '位置参数：',
+  '  <deliveryId>       通知投递稳定 ID（必填）',
+  '',
+  '选项：',
+  '  --project <id>     项目 ID（必填，UUID v4）',
+  '  --json             stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const EXECUTION_CANCEL_HELP = [
   'usage: shiploop execution cancel <attemptId> --project <id> --confirm',
   '                                 [--command-id <uuid>] [--data-root <abs>] [--json]',
@@ -2557,6 +2623,10 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   retention: RETENTION_HELP,
   'retention.evaluation': RETENTION_HELP,
   'retention.cleanup': RETENTION_HELP,
+  // P07-4 / F-009：本地通知与 delivery 发送状态只读查询帮助。
+  notifications: NOTIFICATIONS_HELP,
+  'notifications.list': NOTIFICATIONS_LIST_HELP,
+  'notifications.get': NOTIFICATIONS_GET_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

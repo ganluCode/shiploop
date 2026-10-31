@@ -83,6 +83,10 @@ export const APP_OPERATIONS = [
   // P07-4 / F-003：结果诊断分页只读查询（能力位复用 project.read；与 Core
   // EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 同步，不漂移）。
   'execution.result.diagnostics.list',
+  // P07-4 / F-009：本地通知列表/详情只读查询（能力位复用 project.read；与
+  // Core NOTIFICATIONS_*_OPERATION 同步，不漂移）。
+  'notifications.list',
+  'notifications.get',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
   // P03-7 / F-013：Task 机器证据/人审事项/有限返工链授权只读查询（能力位复用

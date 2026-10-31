@@ -79,6 +79,12 @@ type ResultRow = {
   outcome: string; receipt: string | null; failure_reason: string | null; occurred_at: number;
 };
 
+/** F-009 查询面复用的行类型/映射导出（只读；不重复第二套规则）。 */
+export type NotificationDeliveryRow = DeliveryRow;
+export type NotificationResultRow = ResultRow;
+export const mapNotificationDeliveryRow = mapDeliveryRow;
+export const mapNotificationResultRow = mapResultRow;
+
 function mapResultRow(row: ResultRow): NotificationDeliveryResultRecord {
   if (row.outcome !== 'succeeded' && row.outcome !== 'failed') throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'unknown_result_outcome');
   if (!Number.isSafeInteger(row.attempt) || row.attempt < 1 || row.attempt > 16 || !Number.isSafeInteger(row.occurred_at) || row.occurred_at < 1) throw notificationDeliveryCorrupt(NOTIFICATION_DELIVERY_RESULT_READ_OPERATION, 'invalid_result_row');

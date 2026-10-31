@@ -71,6 +71,8 @@ import {
   PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX,
   DISPATCH_QUEUE_ROUTE,
   RESULT_DIAGNOSTICS_ROUTE,
+  NOTIFICATIONS_ROUTE,
+  NOTIFICATIONS_ROUTE_PREFIX,
   EXECUTION_RESOURCES_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
@@ -152,6 +154,10 @@ export type ApplicationOperation =
   // P07-4 / F-003：结果诊断分页只读查询（与 Core
   // EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 同源）。
   | 'execution.result.diagnostics.list'
+  // P07-4 / F-009：本地通知列表/详情只读查询（与 Core
+  // NOTIFICATIONS_LIST_OPERATION / NOTIFICATIONS_GET_OPERATION 同源）。
+  | 'notifications.list'
+  | 'notifications.get'
   | 'commands.submit'
   | 'receipts.get'
   | 'results.resolve'
@@ -252,7 +258,7 @@ export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'integrationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId' | 'backupId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'integrationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId' | 'backupId' | 'deliveryId';
     readonly value: string;
   };
 }
@@ -533,6 +539,21 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   // P07-4 / F-003：GET /v1/result-diagnostics（集合根 + 恰一父级查询参数；
   // 无子资源/写入口，其他形态一律未匹配 → 404 unknown_operation）。
   if (path === RESULT_DIAGNOSTICS_ROUTE) return { operation: 'execution.result.diagnostics.list', method: 'GET' };
+  // P07-4 / F-009：GET /v1/notifications（集合根 + 项目必填 + 实体/状态筛选
+  // + 分页）与唯一冻结详情子资源 GET /v1/notifications/:deliveryId；其他
+  // 嵌套/多段形态一律未匹配 → 404 unknown_operation（无写入口）。
+  if (path === NOTIFICATIONS_ROUTE) return { operation: 'notifications.list', method: 'GET' };
+  if (path.startsWith(NOTIFICATIONS_ROUTE_PREFIX)) {
+    const segment = path.slice(NOTIFICATIONS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'notifications.get',
+        method: 'GET',
+        pathParam: { name: 'deliveryId', value: segment },
+      };
+    }
+    return undefined;
+  }
   // P04-9 / F-009：GET /v1/dispatch-queue（集合根 + 必填 projectId + 分页）；
   // 其他嵌套/多段形态一律未匹配 → 404 unknown_operation（无子资源/写入口）。
   if (path === DISPATCH_QUEUE_ROUTE) return { operation: 'execution.dispatch.list', method: 'GET' };
@@ -935,6 +956,14 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     allowed: ['projectId', 'batchId', 'runId', 'attemptId', 'workSessionId', 'limit', 'cursor'],
     repeatable: [],
   }),
+  // P07-4 / F-009：通知查询参数白名单（projectId 必填 + 实体至多一/状态冻结
+  // 词汇 + 分页；取值规则由 Core 单一权威复核；deliveryId 只来自冻结路径
+  // 参数，不接受查询参数重复指定）。
+  'notifications.list': Object.freeze({
+    allowed: ['projectId', 'taskId', 'runId', 'featureId', 'status', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'notifications.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.attempts.list': Object.freeze({
     allowed: ['projectId', 'taskId', 'limit', 'cursor'],
     repeatable: [],
@@ -1765,6 +1794,23 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.queryService.listResultDiagnostics(app.principal, query);
       break;
     }
+    // P07-4 / F-009：通知列表/详情分发（本层只做形态转换；授权/可见性折叠/
+    // 实体至多一/状态词汇/分页范围/游标绑定由 Core 单一权威复核；跨项目与
+    // 不存在统一 not_found，不区分存在性；查询零写入、不认领、不重试）。
+    case 'notifications.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['taskId', 'runId', 'featureId', 'status']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listNotifications(app.principal, query);
+      break;
+    }
+    case 'notifications.get':
+      result = await app.queryService.getNotificationDelivery(app.principal, {
+        projectId: params.get('projectId'),
+        deliveryId: pathParam?.value,
+      });
+      break;
     case 'execution.attempts.list':
       result = await app.queryService.listExecutionAttempts(
         app.principal,
