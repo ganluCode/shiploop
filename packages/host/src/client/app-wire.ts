@@ -32,8 +32,9 @@ export type { PhaseGraphResult, PhaseGraphFeatureReadiness, PublicFeatureDepende
 import { validateFeatureReportWire } from './feature-report-wire.js';
 import { validateWorkSessionListWire, validateWorkSessionDetailWire, validateWorkSessionEvidenceWire } from './work-session-wire.js';
 import { validateWorkRecordingListWire, validateWorkRecordingBodyWire } from './work-recording-wire.js';
-import type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent, WorkRecordingPage, WorkRecordingBody } from 'shiploop-core/protocol';
-export type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent, WorkRecordingPage, WorkRecordingBody } from 'shiploop-core/protocol';
+import { validateResultDiagnosticsListWire } from './result-diagnostics-wire.js';
+import type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent, WorkRecordingPage, WorkRecordingBody, ResultDiagnosticsListResult } from 'shiploop-core/protocol';
+export type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent, WorkRecordingPage, WorkRecordingBody, ResultDiagnosticsListResult } from 'shiploop-core/protocol';
 import {
   ATTEMPT_EXECUTION_STAGES,
   ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
@@ -316,6 +317,9 @@ export type AppQueryOperation =
   | 'execution.session.evidence.get'
   | 'execution.recording.list'
   | 'execution.recording.body.get'
+  // P07-4 / F-003：结果诊断分页只读查询（与 Core
+  // EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 同源）。
+  | 'execution.result.diagnostics.list'
   | 'projects.list'
   | 'projects.get'
   | 'projects.binding.get'
@@ -7591,6 +7595,7 @@ export function validateAppQueryResponse(operation: 'execution.sessions.list', b
 export function validateAppQueryResponse(operation: 'execution.session.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionDetailResult;
 export function validateAppQueryResponse(operation: 'execution.session.evidence.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionEvidenceContent;
 export function validateAppQueryResponse(operation: 'execution.recording.list', body: unknown, expectation?: SnapshotExpectation): WorkRecordingPage;
+export function validateAppQueryResponse(operation: 'execution.result.diagnostics.list', body: unknown, expectation?: SnapshotExpectation): ResultDiagnosticsListResult;
 export function validateAppQueryResponse(operation: 'execution.batch.delivery.get', body: unknown, expectation?: SnapshotExpectation): PublicBatchDeliveryResult;
 export function validateAppQueryResponse(operation: 'execution.recording.body.get', body: unknown, expectation?: SnapshotExpectation): WorkRecordingBody;
 export function validateAppQueryResponse(
@@ -7668,6 +7673,7 @@ export function validateAppQueryResponse(
     case 'execution.session.get': return validateWorkSessionDetailWire(body);
     case 'execution.session.evidence.get': return validateWorkSessionEvidenceWire(body);
     case 'execution.recording.list': return validateWorkRecordingListWire(body);
+    case 'execution.result.diagnostics.list': return validateResultDiagnosticsListWire(body);
     case 'execution.recording.body.get': return validateWorkRecordingBodyWire(body);
     case 'projects.list':
       return validateProjectListPage(operation, body);

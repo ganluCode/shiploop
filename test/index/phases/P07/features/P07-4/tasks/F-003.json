@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/host/p07-4-f003-result-diagnostics-host.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-4-f003-result-diagnostics-cli.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-4-f003-result-diagnostics-built.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/cli/app-cli-args.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-cli-session-output.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-cli-session-vertical.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-cli-session-built.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-vertical-integration.test.ts", "all": true },
+        { "file": "test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts", "all": true },
+        { "file": "test/modules/delivery/p07-4-f002-result-evidence-integrity.test.ts", "all": true },
+        { "file": "test/modules/host/p03-10-feature-report-contract.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-session-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-recording-host-query.test.ts", "all": true },
+        { "file": "test/modules/cli/p04-5-recording-cli.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-built.test.ts", "all": true },
+        { "file": "test/modules/runtime/p07-2-f007-recording-default-query.test.ts", "all": true },
+        { "file": "test/modules/verification/p03-7-f013-host-query-wiring.test.ts", "all": true }
+      ]
+    }
+  ]
+}

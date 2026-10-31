@@ -109,6 +109,7 @@ import type {
   WorkSessionEvidenceContent,
   WorkRecordingPage,
   WorkRecordingBody,
+  ResultDiagnosticsListResult,
   WorkspaceDetailResult,
   WorkspaceDiscardPreviewBinding,
   WorkspaceListResult,
@@ -873,6 +874,15 @@ export interface HostClientApplication {
     readonly sessionId?: string;
     readonly artifactId: string;
   }): Promise<WorkRecordingBody>;
+  /** P07-4 / F-003 execution.result.diagnostics.list：按 Batch/Run/Attempt/Session 的结果诊断分页（父级四选一；键名与 Core 同源）。 */
+  listResultDiagnostics(projectId: string, input: {
+    readonly batchId?: string;
+    readonly runId?: string;
+    readonly attemptId?: string;
+    readonly workSessionId?: string;
+    readonly limit?: number;
+    readonly cursor?: string;
+  }): Promise<ResultDiagnosticsListResult>;
   cancelAttempt(input: { readonly projectId: string; readonly attemptId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /* ------------------------------------------------------------ *
    * P03-9 / F-014 Run/Batch 授权控制与诊断查询（经既有命令/查询通道）
@@ -4464,6 +4474,32 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         `/v1/work-recordings/body?projectId=${encodeURIComponent(project)}&${key}=${encodeURIComponent(parent)}&artifactId=${encodeURIComponent(artifact)}`));
       if (result.artifact.artifactId !== artifact) {
         throw new HostProtocolError('response_malformed', op, '记录正文归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+    async listResultDiagnostics(projectId, input) {
+      const op = 'execution.result.diagnostics.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const object = rejectUnknownInputKeys(op, input, ['batchId', 'runId', 'attemptId', 'workSessionId', 'limit', 'cursor']);
+      const parentKeys = (['batchId', 'runId', 'attemptId', 'workSessionId'] as const).filter(key => object[key] !== undefined);
+      if (parentKeys.length !== 1) throw invalidInput(op, 'parent_required');
+      const key = parentKeys[0]!;
+      const parent = requireStableIdInput(op, object[key], key);
+      const paging = buildPlanListQuery({ limit: input.limit, cursor: input.cursor }, op);
+      const query = `projectId=${encodeURIComponent(project)}&${key}=${encodeURIComponent(parent)}`
+        + (paging.length === 0 ? '' : `&${paging}`);
+      const result = validateAppQueryResponse(op, await getJson(op, `/v1/result-diagnostics?${query}`));
+      // wire 已复核 parent/parentFacts/行归属一致；本层只核对响应父级与请求一致。
+      // 请求键 workSessionId 对应响应键 sessionId（与 Core 选择器/范围形状同源）。
+      const responseKey = { batchId: 'batchId', runId: 'runId', attemptId: 'attemptId', workSessionId: 'sessionId' } as const;
+      const parentKind = { batchId: 'batch', runId: 'run', attemptId: 'attempt', workSessionId: 'session' } as const;
+      const parentObj = result.parent as { readonly kind: string } & Record<string, unknown>;
+      const facts = result.parentFacts as { readonly kind: string } & Record<string, unknown>;
+      const parentMatches = parentObj.kind === parentKind[key] && facts.kind === parentKind[key]
+        && parentObj[responseKey[key]] === parent && facts[responseKey[key]] === parent;
+      if (!parentMatches) {
+        throw new HostProtocolError('response_malformed', op, '结果诊断响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

@@ -70,6 +70,7 @@ import {
   BACKUP_OPERATIONS_ROUTE_PREFIX,
   PROJECT_DELETE_OPERATIONS_ROUTE_PREFIX,
   DISPATCH_QUEUE_ROUTE,
+  RESULT_DIAGNOSTICS_ROUTE,
   EXECUTION_RESOURCES_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
@@ -148,6 +149,9 @@ export type ApplicationOperation =
   // WORK_RECORDING_LIST_OPERATION / WORK_RECORDING_BODY_OPERATION 同源）。
   | 'execution.recording.list'
   | 'execution.recording.body.get'
+  // P07-4 / F-003：结果诊断分页只读查询（与 Core
+  // EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 同源）。
+  | 'execution.result.diagnostics.list'
   | 'commands.submit'
   | 'receipts.get'
   | 'results.resolve'
@@ -526,6 +530,9 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   // 成员身份由 Core 校验，绝不接受任意文件路径）。
   if (path === '/v1/work-recordings') return { operation: 'execution.recording.list', method: 'GET' };
   if (path === '/v1/work-recordings/body') return { operation: 'execution.recording.body.get', method: 'GET' };
+  // P07-4 / F-003：GET /v1/result-diagnostics（集合根 + 恰一父级查询参数；
+  // 无子资源/写入口，其他形态一律未匹配 → 404 unknown_operation）。
+  if (path === RESULT_DIAGNOSTICS_ROUTE) return { operation: 'execution.result.diagnostics.list', method: 'GET' };
   // P04-9 / F-009：GET /v1/dispatch-queue（集合根 + 必填 projectId + 分页）；
   // 其他嵌套/多段形态一律未匹配 → 404 unknown_operation（无子资源/写入口）。
   if (path === DISPATCH_QUEUE_ROUTE) return { operation: 'execution.dispatch.list', method: 'GET' };
@@ -921,6 +928,13 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // artifactId 的取值规则由 Core 单一权威复核）。
   'execution.recording.list': Object.freeze({ allowed: ['projectId', 'runId', 'attemptId', 'sessionId', 'recordType', 'limit', 'cursor'], repeatable: [] }),
   'execution.recording.body.get': Object.freeze({ allowed: ['projectId', 'runId', 'attemptId', 'sessionId', 'artifactId'], repeatable: [] }),
+  // P07-4 / F-003：结果诊断查询参数白名单（projectId + 恰一父级键 + 分页；
+  // 父级键与 Core RESULT_DIAGNOSTICS_INPUT_KEYS 同源（workSessionId），恰一/
+  // 取值规则由 Core 单一权威复核）。
+  'execution.result.diagnostics.list': Object.freeze({
+    allowed: ['projectId', 'batchId', 'runId', 'attemptId', 'workSessionId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
   'execution.attempts.list': Object.freeze({
     allowed: ['projectId', 'taskId', 'limit', 'cursor'],
     repeatable: [],
@@ -1738,6 +1752,17 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       }
       const body = await app.queryService.readWorkRecordingBody(app.principal, query);
       result = { ...body, content: Buffer.from(body.content).toString('base64') };
+      break;
+    }
+    // P07-4 / F-003：结果诊断分页分发（本层只做形态转换；授权/可见性折叠/
+    // 恰一父级/分页范围/游标绑定/证据完整性全部由 Core 单一权威复核；跨项目
+    // 与不存在目标统一 not_found，不区分存在性）。
+    case 'execution.result.diagnostics.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['batchId', 'runId', 'attemptId', 'workSessionId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listResultDiagnostics(app.principal, query);
       break;
     }
     case 'execution.attempts.list':

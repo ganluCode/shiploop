@@ -80,6 +80,9 @@ export const APP_OPERATIONS = [
   // project.read；与 Core WORK_RECORDING_*_OPERATION 同步，不漂移）。
   'execution.recording.list',
   'execution.recording.body.get',
+  // P07-4 / F-003：结果诊断分页只读查询（能力位复用 project.read；与 Core
+  // EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 同步，不漂移）。
+  'execution.result.diagnostics.list',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
   // P03-7 / F-013：Task 机器证据/人审事项/有限返工链授权只读查询（能力位复用

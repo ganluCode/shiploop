@@ -8,8 +8,8 @@
  *   session-evidence/execution cancel --confirm）；
  * - 关键错误：非法 ID → 退出码 2、缺明确取消确认 → 退出码 2、不存在实体 →
  *   not_found 退出码 1；
- * - 帮助说明 Fake 测试专用、可信项目非强隔离、执行结束不代表验收以及本项
- *   尚无完整 Run 恢复。
+ * - 帮助说明 Fake 测试专用、可信项目非强隔离、执行结束不代表验收以及 Run
+ *   恢复能力已装配（恢复诊断见 execution recovery）。
  *
  * 不读真实凭据、不调用模型、不修改开发仓库或用户 HOME（沙箱 HOME/数据根）。
  */
@@ -223,7 +223,7 @@ describe('F-013 状态/证据/取消接受 CLI 正式构建入口（dist/bin.js 
     expect(detail.acceptance).toMatchObject({
       runtimeCompleted: true,
       stoppedConfirmed: true,
-      verifierAssembled: false,
+      verifierAssembled: true,
       taskAccepted: false,
       featureVerified: false,
     });
@@ -335,9 +335,10 @@ describe('F-013 状态/证据/取消接受 CLI 正式构建入口（dist/bin.js 
       'Fake 测试专用',
       '可信项目模式不提供强 OS 隔离',
       '执行结束不代表验收',
-      '本项尚无完整 Run 恢复',
+      'Run 恢复能力已装配',
     ]) {
       expect(help.stdout, statement).toContain(statement);
     }
+    expect(help.stdout).not.toContain('尚无完整 Run 恢复');
   });
 });

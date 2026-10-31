@@ -173,6 +173,15 @@ export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';
  * 只读：不认领、不扣预算、不唤醒执行、不释放/改写槽位，没有任何写入口。
  */
 export const DISPATCH_QUEUE_ROUTE = '/v1/dispatch-queue';
+/**
+ * P07-4 / F-003：结果诊断分页只读查询集合根（GET + Bearer；与 Core
+ * EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION 一一对应）。
+ * - GET /v1/result-diagnostics?projectId=&batchId=|runId=|attemptId=|sessionId=
+ *   &limit?=&cursor?=（集合根 + 恰一父级查询参数 + 分页 limit/cursor，与
+ *   /v1/attempts 同一冻结形态；父级恰一与取值规则由 Core 单一权威复核）；
+ * 只读：不创建 Attempt、不扣预算、不触发取消/Git/执行；无子资源/写入口。
+ */
+export const RESULT_DIAGNOSTICS_ROUTE = '/v1/result-diagnostics';
 /** P05-5 / F-007：Feature 共享资源租约只读查询集合根。 */
 export const EXECUTION_RESOURCES_ROUTE = '/v1/execution-resources';
 /**

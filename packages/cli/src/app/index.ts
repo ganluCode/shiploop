@@ -369,6 +369,16 @@ export type {
   WorkRecordingMessageRow,
   WorkRecordingParent,
 } from './work-recording.js';
+export {
+  RESULT_DIAGNOSTICS_VIEW_NOTE,
+  buildResultDiagnosticsView,
+  formatResultDiagnosticsView,
+} from './result-diagnostics.js';
+export type {
+  ResultDiagnosticsDisplay,
+  ResultDiagnosticsParentView,
+  ResultDiagnosticsRecord,
+} from './result-diagnostics.js';
 export type {
   AttemptCancelAcceptanceFacts,
   AttemptCancelDisplay,

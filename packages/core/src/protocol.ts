@@ -339,10 +339,12 @@ export {
   EXECUTION_WORK_SESSION_EVIDENCE_OPERATION,
   EXECUTION_WORK_SESSION_GET_OPERATION,
   EXECUTION_WORK_SESSIONS_LIST_OPERATION,
+  RESULT_EVIDENCE_ISSUES,
   WORK_SESSION_QUERY_OPERATIONS,
   WORK_SESSION_QUERY_STATES,
   validatePublicWorkSessionResultEvidence,
 } from './ports/work-session-query.js';
+export type { ResultEvidenceIssue } from './ports/work-session-query.js';
 export type {
   PublicWorkSessionAttempt,
   PublicWorkSessionEvidenceRef,
@@ -357,7 +359,27 @@ export type {
 } from './ports/work-session-query.js';
 export { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION, isPublicWorkRecordingDetailCode } from './ports/work-recording-query.js';
 export type { WorkRecordingPage, WorkRecordingBody, WorkRecordingTarget, WorkRecordingRecordType,
-  PublicWorkRecordingArtifactRef } from './ports/work-recording-query.js';
+  PublicWorkRecordingArtifactRef, PublicWorkRecordingManifestSummary } from './ports/work-recording-query.js';
+// P07-4 / F-003 结果诊断分页查询公共面：公开形状、操作身份与冻结派生词汇
+// （Host wire 校验器与 CLI 投影同源，不另立第二份清单）。
+export {
+  EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION,
+  RESULT_DIAGNOSTICS_INPUT_KEYS,
+  RESULT_DIAGNOSTICS_PARENT_KEYS,
+  RESULT_PENDING_ACTIONS,
+} from './ports/result-diagnostics-query.js';
+export type {
+  PublicResultDiagnosticRecord,
+  PublicResultFeatureAxis,
+  PublicResultPageUsage,
+  PublicResultRuntimeAxis,
+  PublicResultTaskAxis,
+  PublicResultUsageSummary,
+  ResultDiagnosticsListResult,
+  ResultDiagnosticsParent,
+  ResultDiagnosticsScope,
+  ResultPendingAction,
+} from './ports/result-diagnostics-query.js';
 // P04-5 / F-007 公开记录行的冻结词汇（wire 校验与 Core 同源，不漂移）。
 export {
   WORK_RECORDING_SOURCES,

@@ -82,6 +82,10 @@ import {
 } from './app/work-recording.js';
 import type { WorkRecordingParent } from './app/work-recording.js';
 import {
+  buildResultDiagnosticsView,
+  formatResultDiagnosticsView,
+} from './app/result-diagnostics.js';
+import {
   buildExecutionControlCommandView,
   buildExecutionControlQueryView,
   buildExecutionResourceQueryView,
@@ -2565,6 +2569,21 @@ async function executeExecutionCommand(
       });
       const view = buildWorkRecordingBodyView(result);
       return emitSuccess(io, command, view, formatWorkRecordingBodyView(view));
+    }
+    /* ------------------------------------------------------------ *
+     * P07-4 / F-003 结果诊断分页查询（只读；JSON 信封直接携带查询结果，
+     * 保留 null/缺口/三轴；文本展示停止原因与待处理动作）
+     * ------------------------------------------------------------ */
+    case 'execution.result-diagnostics': {
+      const result = await client.listResultDiagnostics(command.projectId, {
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.runId !== undefined ? { runId: command.runId } : {}),
+        ...(command.attemptId !== undefined ? { attemptId: command.attemptId } : {}),
+        ...(command.workSessionId !== undefined ? { workSessionId: command.workSessionId } : {}),
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      return emitSuccess(io, command, result, formatResultDiagnosticsView(buildResultDiagnosticsView(result)));
     }
     case 'execution.cancel': {
       /* P03-9 / F-015：无 positional + --run/--batch 形态映射 Run/Batch 级

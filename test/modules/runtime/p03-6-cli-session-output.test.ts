@@ -11,10 +11,11 @@
  *   拒绝（退出码 2）；取消缺明确确认绝不发出请求；
  * - 结构化输出显示 Run/Task/Attempt/Session、实际 Runtime、执行阶段、错误
  *   原因、停止状态、覆盖缺口与制品引用；accepted/cancel accepted/Runtime
- *   completed/stopped confirmed 与 Task/Feature 验收分别表达；未装配 Verifier
- *   时明确等待能力；Synthetic 用量不展示为真实消费；缺失退出/耗时不填零；
- * - 帮助说明 Fake 测试专用、可信项目非强隔离、执行结束不代表验收以及本项
- *   尚无完整 Run 恢复。
+ *   completed/stopped confirmed 与 Task/Feature 验收分别表达；独立 Verifier 已
+ *   装配（装配 ≠ 验收），验收结果按验证批次/最终验收持久事实表达；Synthetic
+ *   用量不展示为真实消费；缺失退出/耗时不填零；
+ * - 帮助说明 Fake 测试专用、可信项目非强隔离、执行结束不代表验收以及 Run
+ *   恢复能力已装配（恢复诊断见 execution recovery）。
  *
  * 纵向（Fake 测试 Host + CLI 执行路径）见 `p03-6-cli-session-vertical.test.ts`；
  * 正式构建入口验收见 `p03-6-cli-session-built.test.ts`。
@@ -350,7 +351,7 @@ describe('F-013 Runtime 结果/等待验证结构化输出', () => {
       runtimeCompleted: true,
       stoppedConfirmed: true,
       awaitingVerification: true,
-      verifierAssembled: false,
+      verifierAssembled: true,
       taskAccepted: false,
       featureVerified: false,
     });
@@ -389,7 +390,7 @@ describe('F-013 Runtime 结果/等待验证结构化输出', () => {
       runtimeCompleted: null,
       taskAccepted: false,
       featureVerified: false,
-      verifierAssembled: false,
+      verifierAssembled: true,
     });
     const cancelHuman = formatAttemptCancelView(cancel);
     expect(cancelHuman).toContain('command=accepted');
@@ -510,17 +511,19 @@ describe('F-013 Runtime 结果/等待验证结构化输出', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * C. 帮助边界（Fake 测试专用 / 非强隔离 / 执行结束≠验收 / 无完整 Run 恢复）
+ * C. 帮助边界（Fake 测试专用 / 非强隔离 / 执行结束≠验收 / Run 恢复已装配）
  * ------------------------------------------------------------------ */
 
 describe('F-013 帮助边界声明', () => {
-  it('execution/session/cancel 帮助说明 Fake 测试专用、可信项目非强隔离、执行结束不代表验收、本项尚无完整 Run 恢复', () => {
+  it('execution/session/cancel 帮助说明 Fake 测试专用、可信项目非强隔离、执行结束不代表验收、Run 恢复能力已装配', () => {
     for (const scope of ['execution', 'execution.sessions', 'execution.session', 'execution.session-evidence', 'execution.cancel'] as const) {
       const help = getAppCliHelp(scope);
       expect(help, scope).toContain('Fake 测试专用');
       expect(help, scope).toContain('可信项目模式不提供强 OS 隔离');
       expect(help, scope).toContain('执行结束不代表验收');
-      expect(help, scope).toContain('本项尚无完整 Run 恢复');
+      expect(help, scope).toContain('Run 恢复能力已装配');
+      expect(help, scope).not.toContain('未装配 Verifier');
+      expect(help, scope).not.toContain('尚无完整 Run 恢复');
       expect(help, scope).toContain('cancel accepted');
     }
   });

@@ -9,7 +9,8 @@
  *   停止状态、覆盖缺口（recording gaps/watermark）与制品引用；
  * - accepted、cancel accepted、Runtime completed、stopped confirmed 与
  *   Task/Feature 验收分别表达，互不折算：取消接受不是停止确认，执行完成不是
- *   验收通过；未装配 Verifier 时明确等待验证能力（verifierAssembled=false）；
+ *   验收通过；独立 Verifier 已装配（verifierAssembled=true），验收结果按验证
+ *   批次/最终验收持久事实表达，不由本视图宣告；
  * - Synthetic 用量显式标记 basis=synthetic，不展示为真实消费
  *   （realConsumption 恒 false）；缺失的退出码/耗时/用量保持 null（不填零）；
  * - 人类行只输出脱敏事实字段；不打印正文秘密、凭据或开发机路径。
@@ -34,8 +35,9 @@ export type WorkSessionResultEvidence = Exclude<WorkSessionDetailResult['resultE
  * - `cancelAccepted` 只是取消请求被接受，不是停止确认；
  * - `runtimeCompleted` 只是 Runtime 执行结束，不是 Task/Feature 验收；
  * - `stoppedConfirmed` 才是停止核验（无停止观察保持 false，不推断）；
- * - 本项未装配 Verifier（verifierAssembled 恒 false）：明确等待验证能力，
- *   Task/Feature 验收恒 false，由后续验证/最终验收另行表达。
+ * - 独立 Verifier 已装配（verifierAssembled=true；P07-4 起验证批次/检查为持久
+ *   事实）：装配 ≠ 验收，Task/Feature 验收仍由验证批次/最终验收持久事实决定，
+ *   本视图不宣告通过（taskAccepted/featureVerified 保持 false）。
  */
 export interface WorkSessionAcceptanceFacts {
   readonly cancelAccepted: boolean;
@@ -43,7 +45,8 @@ export interface WorkSessionAcceptanceFacts {
   readonly stoppedConfirmed: boolean;
   /** 执行完成等待验证（awaiting_verification）；不是验收通过。 */
   readonly awaitingVerification: boolean;
-  readonly verifierAssembled: false;
+  /** 独立 Verifier 已装配（装配 ≠ 验收；验收结果按持久事实见 execution result-diagnostics）。 */
+  readonly verifierAssembled: true;
   readonly taskAccepted: false;
   readonly featureVerified: false;
   readonly note: string;
@@ -51,8 +54,9 @@ export interface WorkSessionAcceptanceFacts {
 
 const ACCEPTANCE_NOTE =
   'accepted/cancel accepted 只是受理，Runtime completed 只是执行结束，stopped confirmed 才是停止确认；' +
-  'Task/Feature 验收分别由验证/最终验收决定（本项未装配 Verifier：等待验证能力）；' +
-  '执行结束不代表验收；本项尚无完整 Run 恢复';
+  'Task/Feature 验收分别由独立验证批次/最终验收持久事实决定（独立 Verifier 已装配，' +
+  '见 execution result-diagnostics）；' +
+  '执行结束不代表验收；Run 恢复能力已装配（恢复按恢复政策与恢复诊断执行，见 execution recovery）';
 
 function acceptanceFacts(facts: {
   readonly cancelAccepted: boolean;
@@ -65,7 +69,7 @@ function acceptanceFacts(facts: {
     runtimeCompleted: facts.runtimeCompleted,
     stoppedConfirmed: facts.stoppedConfirmed,
     awaitingVerification: facts.awaitingVerification,
-    verifierAssembled: false,
+    verifierAssembled: true,
     taskAccepted: false,
     featureVerified: false,
     note: ACCEPTANCE_NOTE,
@@ -80,7 +84,8 @@ export interface AttemptCancelAcceptanceFacts {
   readonly runtimeCompleted: null;
   readonly taskAccepted: false;
   readonly featureVerified: false;
-  readonly verifierAssembled: false;
+  /** 独立 Verifier 已装配（装配 ≠ 验收；取消受理不携带验收事实）。 */
+  readonly verifierAssembled: true;
   readonly note: string;
 }
 
@@ -479,7 +484,7 @@ export function buildAttemptCancelView(
       runtimeCompleted: null,
       taskAccepted: false,
       featureVerified: false,
-      verifierAssembled: false,
+      verifierAssembled: true,
       note: ACCEPTANCE_NOTE,
     },
   };

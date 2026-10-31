@@ -159,6 +159,7 @@ export type AppCliCommandId =
   | 'execution.session-evidence'
   | 'execution.recordings'
   | 'execution.recording-body'
+  | 'execution.result-diagnostics'
   | 'execution.cancel'
   | 'execution.pause'
   | 'execution.resume'
@@ -295,6 +296,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.session-evidence',
   'execution.recordings',
   'execution.recording-body',
+  'execution.result-diagnostics',
   'execution.cancel',
   'workspace.list',
   'workspace.get',
@@ -1510,6 +1512,19 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 0,
     positionalFields: [],
   },
+  /* P07-4 / F-003 结果诊断分页查询（实际 Host 公共契约
+   * execution.result.diagnostics.list 的参数映射；父级 Batch/Run/Attempt/
+   * Session 四选一，有界分页同计划列表）。 */
+  'execution.result-diagnostics': {
+    command: 'execution',
+    commandId: 'execution.result-diagnostics',
+    valueFlags: ['--project', '--batch', '--run', '--attempt', '--session', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
   'execution.cancel': {
     command: 'execution',
     commandId: 'execution.cancel',
@@ -1804,6 +1819,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       'session-evidence': 'execution.session-evidence',
       recordings: 'execution.recordings',
       'recording-body': 'execution.recording-body',
+      'result-diagnostics': 'execution.result-diagnostics',
       cancel: 'execution.cancel',
       pause: 'execution.pause',
       resume: 'execution.resume',
@@ -3472,6 +3488,27 @@ export interface ParsedExecutionRecordingBody {
 }
 
 /**
+ * P07-4 / F-003 结果诊断分页（execution.result.diagnostics.list）：父级
+ * Batch/Run/Attempt/Session 四选一（--batch/--run/--attempt/--session，同现或
+ * 缺失均本地拒绝）；有界分页同计划列表。请求键与 Core 同源（workSessionId）。
+ */
+export interface ParsedExecutionResultDiagnostics {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.result-diagnostics';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId?: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly workSessionId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
  * P03-6 / F-013 Attempt 显式取消（execution.attempt.cancel）：缺 --confirm 在
  * 任何 I/O 之前本地拒绝；`--command-id` 复用原信封幂等重放（响应丢失先查回执，
  * 不更换命令身份、不额外启动工作）。
@@ -4228,6 +4265,7 @@ export type ParsedAppCliCommand =
   | ParsedExecutionSessionEvidence
   | ParsedExecutionRecordings
   | ParsedExecutionRecordingBody
+  | ParsedExecutionResultDiagnostics
   | ParsedExecutionCancel
   | ParsedExecutionTargetCancel
   | ParsedExecutionPause
@@ -5266,6 +5304,34 @@ function buildExecution(
             ? { attemptId: requireAttemptId(attemptRaw, state) }
             : { sessionId: requireSessionId(sessionRaw as string, state) }),
         artifactId: requireArtifactId(requireOption(scan, '--artifact', state, 'artifactId'), state),
+      };
+    }
+    case 'execution.result-diagnostics': {
+      // 父级 Batch/Run/Attempt/Session 四选一（实际 Host 契约的 xor 选择器）。
+      const batchRaw = takeOption(scan, '--batch');
+      const runRaw = takeOption(scan, '--run');
+      const attemptRaw = takeOption(scan, '--attempt');
+      const sessionRaw = takeOption(scan, '--session');
+      const parents = [batchRaw, runRaw, attemptRaw, sessionRaw].filter(value => value !== undefined);
+      if (parents.length === 0) {
+        fail(state, 'missing_required_option', 'parent');
+      }
+      if (parents.length > 1) {
+        fail(state, 'conflicting_options');
+      }
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.result-diagnostics',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(batchRaw !== undefined
+          ? { batchId: requireBatchId(batchRaw, state) }
+          : runRaw !== undefined
+            ? { runId: requireRunId(runRaw, state) }
+            : attemptRaw !== undefined
+              ? { attemptId: requireAttemptId(attemptRaw, state) }
+              : { workSessionId: requireSessionId(sessionRaw as string, state) }),
+        ...optionalPlanListPage(scan, state),
       };
     }
     case 'execution.cancel': {

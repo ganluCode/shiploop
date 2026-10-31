@@ -6,8 +6,9 @@
  * 验收面（.dag_context.json F-014 第 1/3 条）：
  * - 真实 SQLite 断言一次启动预占（runtime_starts=1、单 Attempt）、唯一 Work
  *   Session/Attempt 关联（sessions_attempt_unique 部分唯一索引 + 行级绑定）、
- *   证据可核验（ArtifactVerifier hash/size + CLI 读取一致）、未装配 Verifier
- *   时明确暂停（attempt verifying、Task/Feature 不通过、依赖后继 t-2 不解锁）；
+ *   证据可核验（ArtifactVerifier hash/size + CLI 读取一致）、无独立验证执行
+ *   时明确暂停（attempt verifying、Task/Feature 不通过、依赖后继 t-2 不解锁；
+ *   独立 Verifier 能力已装配，验收结果按验证批次持久事实表达）；
  * - 停止未确认时重开数据库仍保留隔离（execution_uncertain/quarantined、证据字节与
  *   已知指标保留、未知为 null）并拒绝替代执行（同 Task 再认领 conflict）；
  *   确认停止后才安全结束。
@@ -175,7 +176,7 @@ function okResult(outcome: CliOutcome, command: string): Record<string, unknown>
  * ------------------------------------------------------------------ */
 
 describe('F-014 真实资源纵向集成（构建 CLI + 真实 SQLite/Git/受控进程）', () => {
-  it('导入→批准→授权→认领→准备→Fake 真实执行→构建 CLI 查询；启动预占一次、Session 唯一关联、证据可核验、未装配 Verifier 暂停且后继不解锁', async () => {
+  it('导入→批准→授权→认领→准备→Fake 真实执行→构建 CLI 查询；启动预占一次、Session 唯一关联、证据可核验、无独立验证执行暂停且后继不解锁', async () => {
     const wired = await openFakeCase(
       {
         schemaVersion: 1,
@@ -236,7 +237,7 @@ describe('F-014 真实资源纵向集成（构建 CLI + 真实 SQLite/Git/受控
       ),
     ).toEqual({ name: 'sessions_attempt_unique' });
 
-    /* ---- 未装配 Verifier：明确暂停，Task/Feature 不通过、后继不解锁 ---- */
+    /* ---- 无独立验证执行：明确暂停，Task/Feature 不通过、后继不解锁 ---- */
     expect(fixture!.query("SELECT status, first_passed_at FROM tasks WHERE id = 't-1'")).toEqual({
       status: 'running',
       first_passed_at: null,
@@ -292,7 +293,7 @@ describe('F-014 真实资源纵向集成（构建 CLI + 真实 SQLite/Git/受控
       runtimeCompleted: true,
       stoppedConfirmed: true,
       awaitingVerification: true,
-      verifierAssembled: false,
+      verifierAssembled: true,
       taskAccepted: false,
       featureVerified: false,
     });

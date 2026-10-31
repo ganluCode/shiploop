@@ -8,7 +8,8 @@
  *   Run/Task/Attempt/Session、实际 Runtime、执行阶段、错误原因、停止状态、
  *   覆盖缺口和制品引用；
  * - accepted、cancel accepted、Runtime completed、stopped confirmed 与
- *   Task/Feature 验收分别表达；未装配 Verifier 时明确等待能力，Synthetic
+ *   Task/Feature 验收分别表达；独立 Verifier 已装配（装配 ≠ 验收），验收结果
+ *   按验证批次/最终验收持久事实表达，Synthetic
  *   token 不展示为真实消费，缺退出/耗时信息不填零；
  * - 非法 ID/分页、缺明确取消确认、能力缺失、Host 不可达及畸形响应使用既有
  *   可测退出码；取消响应丢失沿用回执查询和原信封，不额外启动工作；CLI 只访问
@@ -235,12 +236,12 @@ describe('F-013 状态/证据 CLI 纵向（Fake 测试 Host）', () => {
     expect(detail.stop).toMatchObject({ state: 'confirmed', confirmed: true });
     expect(detail.recording).toMatchObject({ complete: true });
     expect((detail.evidence as readonly Record<string, unknown>[]).length).toBeGreaterThan(0);
-    // 五类表达互不折算：执行完成 ≠ 验收；未装配 Verifier 明确等待能力。
+    // 五类表达互不折算：执行完成 ≠ 验收；独立 Verifier 已装配但本视图不宣告验收。
     expect(detail.acceptance).toMatchObject({
       runtimeCompleted: true,
       stoppedConfirmed: true,
       awaitingVerification: true,
-      verifierAssembled: false,
+      verifierAssembled: true,
       taskAccepted: false,
       featureVerified: false,
     });
@@ -359,7 +360,7 @@ describe('F-013 取消接受 CLI 纵向（Fake 测试 Host）', () => {
       stoppedConfirmed: false,
       taskAccepted: false,
       featureVerified: false,
-      verifierAssembled: false,
+      verifierAssembled: true,
     });
 
     // 取消响应丢失：沿用回执查询（原信封）即可读到取消受理，不额外启动工作。
