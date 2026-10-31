@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "phase": "P07",
+  "stepOrder": [
+    "p07-prerequisites",
+    "p07-trusted-scope",
+    "p07-recovery-scenarios",
+    "p07-report",
+    "p07-manual-gate"
+  ],
+  "trustedIndexRoot": "test/index/phases/P07/features",
+  "requiredFeatures": [
+    "P07-1",
+    "P07-2",
+    "P07-3",
+    "P07-4"
+  ],
+  "prerequisites": {
+    "missingBehavior": "blocked-not-run",
+    "placeholderAllowed": false,
+    "commitAncestryRequired": true
+  },
+  "defaultExecution": {
+    "mode": "phase",
+    "network": "denied",
+    "llmCalls": false,
+    "fullRegression": false,
+    "verifyChecksOnly": true
+  },
+  "modes": {
+    "default": {
+      "name": "phase",
+      "phaseTrustedTests": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "fullRepositoryTests": false,
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed",
+        "full-history-regression-passed"
+      ]
+    },
+    "full": {
+      "name": "full",
+      "phaseTrustedTests": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "fullRepositoryTests": true,
+      "fullRegressionCommand": [
+        "npm",
+        "test"
+      ],
+      "optIn": "--full-regression",
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed",
+        "full-history-regression-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed"
+      ]
+    }
+  },
+  "verify": {
+    "noArgCommand": [
+      "npm",
+      "run",
+      "verify"
+    ],
+    "noArgSteps": [
+      "typecheck",
+      "test",
+      "build"
+    ],
+    "modifiedByPhaseEntry": false,
+    "noArgRunClaimableByPhaseReport": false,
+    "reason": "无参数 npm run verify 仍执行全仓测试+类型+构建；阶段入口不修改该语义，也不得在报告中声称其已通过"
+  },
+  "explicitOptions": {
+    "fullRegression": "--full-regression",
+    "manual": "--manual-record"
+  },
+  "evidence": {
+    "requiredFields": [
+      "scenarioId",
+      "inputDigest",
+      "testedCommit",
+      "command",
+      "exitCode",
+      "status",
+      "evidenceRefs",
+      "usageSource",
+      "cleanup"
+    ],
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "notRunCountsAsPassed": false
+  },
+  "toolchain": {
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "platform": "darwin",
+    "defaultConcurrency": 1
+  },
+  "budget": {
+    "stepMs": 900000,
+    "overallMs": 2700000,
+    "bounded": true
+  }
+}

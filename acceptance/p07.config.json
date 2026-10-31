@@ -1,0 +1,166 @@
+{
+  "configVersion": 1,
+  "checklist": "acceptance/p07.checklist.json",
+  "reportRoot": "artifacts/acceptance/p07",
+  "requiredChecks": [
+    "P07-FR1-RECOVERY-CLOSURE",
+    "P07-FR2-NEGATIVE-EVIDENCE",
+    "P07-T06-VERIFIER-CRASH-RECOVERY",
+    "P07-T08-COMMIT-RECEIPT-RECOVERY",
+    "P07-T11-RECORDER-BACKPRESSURE",
+    "P07-T11-NATIVE-ARCHIVE-SINGLE-WRITER",
+    "P07-T12-NOTIFICATION-INDEPENDENT-RETRY",
+    "P07-T15-ARCHIVE-DELETE-RETENTION",
+    "P07-T16-BACKUP-RESTORE-CONSISTENCY",
+    "P07-RERUN-EVIDENCE-INTEGRITY",
+    "P07-MANUAL-OWNER-GATE"
+  ],
+  "toolchain": {
+    "packageManager": "npm@10.9.3",
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "lockfile": "package-lock.json",
+    "platform": "darwin",
+    "platformLabel": "macOS",
+    "defaultConcurrency": 1
+  },
+  "timeouts": {
+    "stepMs": 900000,
+    "overallMs": 2700000
+  },
+  "maxCommandOutputBytes": 262144,
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "tempResources": {
+    "git": "temp",
+    "sqlite": "temp",
+    "dataRoot": "temp",
+    "home": "temp",
+    "processes": "owned-only",
+    "reusePrevious": false
+  },
+  "executionPolicy": {
+    "offline": {
+      "runtime": "fake-or-scripted",
+      "network": "denied",
+      "llmCalls": false
+    },
+    "manual": {
+      "ownerConfirmationRequired": true,
+      "machineMaySign": false
+    },
+    "notRun": {
+      "countsAsPassed": false
+    }
+  },
+  "livePolicy": {
+    "requiredGate": false,
+    "realModelCalls": "not-authorized-by-default",
+    "note": "P07 阶段验收不新增 live 必需门槛；真实模型须负责人独立授权与预算"
+  },
+  "reportScope": {
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "includeEvidenceHash": true,
+    "includeManualChecklist": true,
+    "notRunCountsAsPassed": false,
+    "deferredCountsAsPassed": false
+  },
+  "engineeringChecks": {
+    "typecheck": "npm run typecheck",
+    "boundaries": "npm run check:boundaries",
+    "build": "npm run build",
+    "checksOnlyEntry": "node scripts/verify.ts --checks-only",
+    "note": "typecheck/build 复用 verify --checks-only；模块边界检查使用 check:boundaries"
+  },
+  "verifySemantics": {
+    "noArgCommand": [
+      "npm",
+      "run",
+      "verify"
+    ],
+    "noArgSteps": [
+      "typecheck",
+      "test",
+      "build"
+    ],
+    "modifiedByPhaseEntry": false,
+    "noArgRunClaimableByPhaseReport": false,
+    "reason": "无参数 npm run verify 仍执行全仓测试+类型+构建；阶段入口不修改该语义，也不得在报告中声称其已通过"
+  },
+  "modes": {
+    "default": {
+      "name": "phase",
+      "phaseTrustedTests": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "fullRepositoryTests": false,
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed",
+        "full-history-regression-passed"
+      ]
+    },
+    "full": {
+      "name": "full",
+      "phaseTrustedTests": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "fullRepositoryTests": true,
+      "fullRegressionCommand": [
+        "npm",
+        "test"
+      ],
+      "optIn": "--full-regression",
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed",
+        "full-history-regression-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed"
+      ]
+    }
+  },
+  "fullRegression": {
+    "defaultEnabled": false,
+    "optInFlag": "--full-regression",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "reason": "全仓历史回归必须由负责人显式启用；默认阶段门禁只运行 P07 可信范围、受影响回归与工程检查"
+  },
+  "usageSources": [
+    "runtime-usage",
+    "command-output",
+    "manual-record",
+    "not_run"
+  ],
+  "plan": {
+    "phaseId": "2026-10-29-21-59-22_p07-5-p07",
+    "stepId": "p07-acceptance",
+    "title": "P07 故障矩阵与数据恢复验收契约与执行报告",
+    "scope": "FR-1/FR-2 及 T06/T08/T11/T12/T15/T16 的崩溃恢复、提交恢复、Recorder 背压、通知独立重试、归档删除、备份恢复场景、人工门禁与显式全仓回归开关",
+    "version": "0.3",
+    "contractDoc": "docs/p07-acceptance.md"
+  }
+}

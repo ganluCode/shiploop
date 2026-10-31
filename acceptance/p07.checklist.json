@@ -1,0 +1,442 @@
+{
+  "checklistVersion": 1,
+  "phase": "P07",
+  "layers": [
+    "unit",
+    "feature-integration",
+    "phase-acceptance"
+  ],
+  "executionTypes": [
+    "offline",
+    "manual",
+    "postponed"
+  ],
+  "evidenceCategories": [
+    "command-exit",
+    "sqlite",
+    "git",
+    "process",
+    "artifact",
+    "report",
+    "manifest",
+    "budget",
+    "notification",
+    "archive",
+    "sha",
+    "usage",
+    "manual",
+    "cleanup"
+  ],
+  "countRule": "必需项全部 pass 才算通过；not_run 和人工 pending 不计入通过；deferred 项不参与通过计数；覆盖按必需断言与可观察事实判定，不按日志成功文本或测试数量判断",
+  "items": [
+    {
+      "id": "P07-FR1-RECOVERY-CLOSURE",
+      "group": "fr",
+      "title": "FR-1 阶段闭环恢复演示",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P07-1",
+        "P07-2",
+        "P07-3",
+        "P07-4"
+      ],
+      "designIndexes": [],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "FR-1",
+        "AC-1",
+        "AC-2",
+        "P07-5"
+      ],
+      "assertions": [
+        "在验证或提交边界终止 Host 后重启，先核对旧进程与 Git 事实再显式恢复；未确认停止前保持隔离或阻塞，不自动重试、不派发新执行",
+        "故障后代码保留、预算/deadline 不清零、依赖不误解锁、通知失败不重跑任务四项同时成立，并用持久状态与证据断言",
+        "备份恢复后记录与制品匹配；重复运行使用独立 run-id 与临时资源，不依赖上一次残留；清理不触及用户仓库"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "git",
+        "process",
+        "artifact",
+        "manifest",
+        "budget",
+        "notification",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-FR2-NEGATIVE-EVIDENCE",
+      "group": "fr",
+      "title": "FR-2 负例与证据完整性",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P07-1",
+        "P07-2",
+        "P07-3",
+        "P07-4"
+      ],
+      "designIndexes": [],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-3",
+        "AC-4",
+        "AC-5",
+        "P07-5"
+      ],
+      "assertions": [
+        "每项检查绑定场景 ID、输入摘要、受测 commit、实际命令、退出码、状态和必需事实类别；正常完成文本或测试数量不构成通过依据",
+        "每个失败用例核对结果、状态与是否产生意外副作用；不能靠手工改 SQLite、忽略失败或跳过必需检查通过",
+        "敏感凭据与开发机绝对路径不进入报告；not_run 与已知缺口如实展示，默认模式不得声称无参数 verify 或全仓历史回归已通过"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "report",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T06-VERIFIER-CRASH-RECOVERY",
+      "group": "scenario",
+      "title": "T06 验证边界 Host 崩溃与显式恢复",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-1"
+      ],
+      "designIndexes": [
+        "T06"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T06",
+        "FR-1",
+        "AC-2",
+        "P07-1"
+      ],
+      "assertions": [
+        "真实 Verifier 已进入等待屏障时终止自有 Host；重启后核对旧 Runner/Verifier 身份、文件与占用，未确认停止保持隔离并拒绝新执行",
+        "确认停止并核对安全现场后经公开命令显式恢复；保留旧 Attempt 与 tracked/untracked 改动，新 Attempt 复用已核验工作区，预算与绝对 deadline 累计不清零",
+        "重复/重叠恢复命令、旧 owner/hostInstanceId/executionVersion 迟到结果和取消/完成竞争只产生获准的一次新认领或启动，迟到结果不覆盖当前业务状态"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "git",
+        "process",
+        "budget",
+        "sha",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T08-COMMIT-RECEIPT-RECOVERY",
+      "group": "scenario",
+      "title": "T08 提交已发生但回执丢失的恢复与公共元数据锁",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-1"
+      ],
+      "designIndexes": [
+        "T08"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T08",
+        "FR-1",
+        "AC-2"
+      ],
+      "assertions": [
+        "提交已发生但回执丢失时，恢复以真实 Git HEAD/tree/worktree 事实核对，不重复提交、不丢失已提交代码，也不把未核对事实记为成功",
+        "新旧仓库身份争用同一公共元数据锁；binding 身份漂移或路径相同但实体不同被拒绝，不靠路径相同推断实体相同",
+        "失败/部分完成保留现场，脏目录不清理；错误目录/分支拒绝，恢复幂等复用唯一 worktree 登记"
+      ],
+      "evidence": [
+        "git",
+        "sqlite",
+        "process",
+        "artifact",
+        "sha",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T11-RECORDER-BACKPRESSURE",
+      "group": "scenario",
+      "title": "T11 Recorder 背压、输出上限与持久化失败",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-2"
+      ],
+      "designIndexes": [
+        "T11"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T11",
+        "FR-1",
+        "AC-2"
+      ],
+      "assertions": [
+        "重复消息去重、长输出有界截断、未知事件明确拒绝或登记、原生存档补录可核对；队列与输出不无限积累",
+        "Recorder 持久化失败受有限预算控制并阻塞执行推进，不静默丢记录；背压事实与水位/缺口如实展示"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact",
+        "manifest",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T11-NATIVE-ARCHIVE-SINGLE-WRITER",
+      "group": "scenario",
+      "title": "T11 原生档案异常、单写入者与双存储不一致",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-2"
+      ],
+      "designIndexes": [
+        "T11"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T11",
+        "FR-1",
+        "AC-2"
+      ],
+      "assertions": [
+        "原生存储缺失/损坏/不兼容、第二写入者打开同一档案和双存储不一致时明确拒绝或修复后继续，不以 SDK 恢复能力替代 Core 结果",
+        "单写入者约束核验通过才允许续接；unsupported/not_run 不计为通过，未运行能力不宣称为支持"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact",
+        "manifest",
+        "sha",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T12-NOTIFICATION-INDEPENDENT-RETRY",
+      "group": "scenario",
+      "title": "T12 通知独立重试、重复投递与结果查询",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-4"
+      ],
+      "designIndexes": [
+        "T12"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T12",
+        "FR-1",
+        "AC-2"
+      ],
+      "assertions": [
+        "通知失败、重复渠道投递和 Host 重启不重跑任务；投递经游标与 delivery 记录独立重试，状态可查询",
+        "事件重连与重复投递幂等；结果查询反映真实业务状态与证据，不以通知成功替代业务验收"
+      ],
+      "evidence": [
+        "sqlite",
+        "notification",
+        "report",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T15-ARCHIVE-DELETE-RETENTION",
+      "group": "scenario",
+      "title": "T15 归档、删除确认与记录保留边界",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-3"
+      ],
+      "designIndexes": [
+        "T15"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T15",
+        "FR-1",
+        "AC-2"
+      ],
+      "assertions": [
+        "项目归档、删除预览/确认和记录保留政策按声明边界执行；删除需显式确认，预览不产生副作用",
+        "保留政策到期清理与备份/归档互不误解锁；越界删除、无确认删除被拒绝且状态不变"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "artifact",
+        "archive",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-T16-BACKUP-RESTORE-CONSISTENCY",
+      "group": "scenario",
+      "title": "T16 备份恢复、制品一致性与升级失败恢复",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P07-3"
+      ],
+      "designIndexes": [
+        "T16"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T16",
+        "FR-1",
+        "AC-2"
+      ],
+      "assertions": [
+        "SQLite 备份恢复后记录与制品匹配；Artifact 不一致恢复后完整性检查通过或明确失败，不以单次正常运行代替故障验收",
+        "数据库升级失败不留下半迁移状态：安全回滚或阻塞启动；恢复后的完整性检查绑定事实证据"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact",
+        "manifest",
+        "sha",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-RERUN-EVIDENCE-INTEGRITY",
+      "group": "scenario",
+      "title": "重复运行隔离与证据完整性",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P07-1",
+        "P07-2",
+        "P07-3",
+        "P07-4"
+      ],
+      "designIndexes": [],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-4",
+        "AC-5",
+        "P07-5"
+      ],
+      "assertions": [
+        "重复运行使用独立 run-id 与临时资源，不依赖上一次残留资源；报告绑定 runId、受测 commit 与输入摘要",
+        "证据哈希、身份或结构不匹配时 fail-closed；not_run、deferred 与人工 pending 不得折算为通过"
+      ],
+      "evidence": [
+        "report",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-MANUAL-OWNER-GATE",
+      "group": "manual",
+      "title": "P07 负责人 macOS 操作与阶段放行",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "features": [
+        "P07-1",
+        "P07-2",
+        "P07-3",
+        "P07-4"
+      ],
+      "designIndexes": [],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-4",
+        "AC-5"
+      ],
+      "assertions": [
+        "负责人按 macOS 清单记录完整 SHA、实际命令、退出码、用量来源、清理事实和未执行项，并明确确认时间与结论",
+        "pending/rejected、缺签署、SHA 不匹配时阶段结论不能通过；机器成功不能代签"
+      ],
+      "evidence": [
+        "manual",
+        "report",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P07-POST-FULL-HISTORY-REGRESSION",
+      "group": "deferred",
+      "title": "后置：全仓历史回归",
+      "layer": "phase-acceptance",
+      "execution": "postponed",
+      "features": [
+        "P07-1",
+        "P07-2",
+        "P07-3",
+        "P07-4"
+      ],
+      "designIndexes": [],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "FULL-REGRESSION"
+      ],
+      "assertions": [
+        "全仓历史回归只能由显式 --full-regression 选项或发布验收发起，不属于默认 P07 阶段门禁",
+        "未运行全仓回归报告为 not_run，不计入阶段通过；无参数 npm run verify 未执行时同样不得声称通过"
+      ],
+      "evidence": [
+        "command-exit",
+        "report",
+        "manifest"
+      ]
+    }
+  ]
+}
