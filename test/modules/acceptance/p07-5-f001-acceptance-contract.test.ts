@@ -432,11 +432,13 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 });
 
 // 索引契约自身登记检查：P07-5 聚合清单与 Task 索引符合 v1/v2 schema。
+// 登记清单随 Task 交付递增（F-002 登记演练夹具回归；不删减既有登记）。
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
+  expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
   const taskIndex = json(join(ROOT, 'test/index/phases/P07/features/P07-5/tasks/F-001.json'));
   expect(taskIndex).toMatchObject({ schema_version: 2, task_id: 'F-001' });
@@ -445,4 +447,11 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
   const files = taskIndex.projects[0].tests.map((test: any) => test.file);
   expect(files).toEqual(['test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts']);
   for (const file of files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  const f002Index = json(join(ROOT, 'test/index/phases/P07/features/P07-5/tasks/F-002.json'));
+  expect(f002Index).toMatchObject({ schema_version: 2, task_id: 'F-002' });
+  expect(f002Index.projects[0].id).toBe('shiploop');
+  const f002Files = f002Index.projects[0].tests.map((test: any) => test.file);
+  expect(f002Files).toEqual(['test/modules/acceptance/p07-5-f002-drill-fixture.test.ts']);
+  for (const file of f002Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });

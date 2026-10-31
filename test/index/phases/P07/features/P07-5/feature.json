@@ -5,6 +5,7 @@
   "feature": "P07-5",
   "scope": "P07 acceptance task indexes; not full/Phase/live acceptance",
   "tasks": [
-    { "task_id": "F-001", "index": "test/index/phases/P07/features/P07-5/tasks/F-001.json" }
+    { "task_id": "F-001", "index": "test/index/phases/P07/features/P07-5/tasks/F-001.json" },
+    { "task_id": "F-002", "index": "test/index/phases/P07/features/P07-5/tasks/F-002.json" }
   ]
 }
