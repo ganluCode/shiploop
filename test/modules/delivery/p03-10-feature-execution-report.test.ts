@@ -127,7 +127,7 @@ test('[case:pages-and-missing] exhausts keyset pages and retains missing or fore
   expect(report.tasks[0].cumulative.attempts).toBe(130);
   expect(report.tasks[0].latestAttempt?.id).toBe('page-130');
   expect(report.tasks[0].attempts[1].evidence).toContainEqual({ artifactId: 'lost-evidence', availability: 'missing', artifact: null });
-  expect(report.tasks[1].attempts[0].issues).toContain('result_evidence_invalid');
+  expect(report.tasks[1].attempts[0].issues).toContain('result_evidence_identity_mismatch');
   expect(report.tasks[1].attempts[0].resultEvidence).toBeNull();
   expect(report.completeness).toBe('partial');
   expect(report.timing.wallClockMs).toBeNull();
@@ -237,8 +237,10 @@ test('[case:artifact-integrity] corrupt and absent bodies remain partial records
   const before = reportDatabaseSnapshot(f);
   const report = await queries(f).getFeatureReport(f.owner, { projectId: f.projectId, featureId: f.featureId });
   expect(report.counts.attempts).toBe(3);
+  // 缺失与损坏分别可诊断：删除 → body_missing；篡改 → body_corrupt；均不伪造 complete。
+  expect(report.tasks[0].attempts[0].issues).toContain('result_evidence_body_corrupt');
+  expect(report.tasks[1].attempts[0].issues).toContain('result_evidence_body_missing');
   for (const task of report.tasks.slice(0, 2)) {
-    expect(task.attempts[0].issues).toContain('result_evidence_invalid');
     expect(task.attempts[0].completeness).toBe('partial');
     expect(task.attempts[0].runtimeDurationMs).toBeNull();
   }

@@ -25,6 +25,39 @@ export type PublicWorkRecordingArtifactRef = Pick<WorkRecordingArtifactRef, 'art
 export function publicWorkRecordingRef(ref: WorkRecordingArtifactRef): PublicWorkRecordingArtifactRef {
   return { artifactId: ref.artifactId, contentHash: ref.contentHash, sizeBytes: ref.sizeBytes };
 }
+
+/**
+ * P07-4 / F-002 Recorder 清单公开摘要：真实 coverage/水位/截断/脱敏/缺失原因，
+ * 原因码经同一白名单映射；不含 nativeRef、自由文本或物理路径。结果摘要据此
+ * 投影 Recorder 事实，不被 settlement 成功文本或查询操作抹平。
+ */
+export interface PublicWorkRecordingManifestSummary {
+  readonly sessionId: string;
+  readonly version: number;
+  readonly source: WorkRecordingManifestRecord['source'];
+  readonly coverage: WorkRecordingManifestRecord['coverage'];
+  readonly watermark: number | null;
+  readonly finalSequence: number | null;
+  readonly sequenceReconciliation: WorkRecordingManifestRecord['sequenceReconciliation'];
+  readonly finalized: boolean;
+  readonly unknownEventCount: number | null;
+  readonly manifestRef: PublicWorkRecordingArtifactRef | null;
+  readonly missingReasons: readonly string[];
+  readonly truncation: { readonly applied: boolean; readonly reasons: readonly string[] };
+  readonly redaction: { readonly applied: boolean; readonly reasons: readonly string[] };
+}
+export function publicWorkRecordingManifestSummary(record: WorkRecordingManifestRecord): PublicWorkRecordingManifestSummary {
+  return {
+    sessionId: record.sessionId, version: record.version, source: record.source, coverage: record.coverage,
+    watermark: record.watermark, finalSequence: record.finalSequence,
+    sequenceReconciliation: record.sequenceReconciliation, finalized: record.finalized,
+    unknownEventCount: record.unknownEventCount,
+    manifestRef: record.manifestRef === null ? null : publicWorkRecordingRef(record.manifestRef),
+    missingReasons: codes(record.missingReasons),
+    truncation: { applied: record.truncation.applied, reasons: codes(record.truncation.reasons) },
+    redaction: { applied: record.redaction.applied, reasons: codes(record.redaction.reasons) },
+  };
+}
 export function validateWorkRecordingTarget(input: unknown, operation: string, body = false) {
   const raw = requirePlainObject(input, { operation }, 'input');
   rejectUnknownKeys(raw, body ? ['projectId', 'sessionId', 'attemptId', 'artifactId']

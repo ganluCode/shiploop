@@ -22,7 +22,7 @@
  * - 核对前的有效读取（readVerifiedContent）执行必要完整性检查：stat 存在性
  *   与字节数、流式实测摘要与索引一致；缺失正文抛 corrupt 而不是返回空内容；
  *   读取缓冲受显式 maxReadBytes 上限约束（超过即 size_limit_exceeded，不无限
- *   缓存大正文）；大正文的流式核对由 verifyArtifact 承担（增量 hash，不缓冲）；
+ *   缓存大正文），读取时长受可选 maxReadMs 上限约束（超过即 timeout）；大正文的流式核对由 verifyArtifact 承担（增量 hash，不缓冲）；
  * - 与发布状态更新竞争：文件核验（事务外）之后一律经端口 CAS 提交，冲突时
  *   重新读取记录并按新状态重新核对（revision 重新核对），绝不让旧检查结果
  *   倒写；重复核对幂等：verified_ready 不改状态、不重复制造索引、不改变内容
@@ -149,7 +149,9 @@ export type ArtifactVerifyErrorCode =
   | 'storage'
   | 'file'
   /** readVerifiedContent 超过 maxReadBytes 缓冲上限。 */
-  | 'size_limit_exceeded';
+  | 'size_limit_exceeded'
+  /** readVerifiedContent 超过 maxReadMs 时间上限（有界读取停止）。 */
+  | 'timeout';
 
 export interface ArtifactVerifyErrorOptions {
   readonly projectId?: string;
@@ -195,6 +197,8 @@ export function isArtifactVerifyError(
 /** 读取缓冲上限（readVerifiedContent）：显式有限，超过即失败。 */
 export interface ArtifactVerifyLimits {
   readonly maxReadBytes: number;
+  /** 正文读取 wall-clock 上限（毫秒；未设置时不限时，由装配方决定）。 */
+  readonly maxReadMs?: number;
 }
 
 export interface ArtifactVerifierDeps {
@@ -290,8 +294,11 @@ export function createArtifactVerifier(deps: ArtifactVerifierDeps) {
     throw validationError(context, 'deps.limits', '必须提供显式有限的读取限制');
   }
   const limitsObject = requirePlainObject(deps.limits, context, 'limits');
-  rejectUnknownKeys(limitsObject, ['maxReadBytes'], context, 'limits');
+  rejectUnknownKeys(limitsObject, ['maxReadBytes', 'maxReadMs'], context, 'limits');
   const maxReadBytes = validatePositiveInteger(limitsObject['maxReadBytes'], context, 'limits.maxReadBytes');
+  const maxReadMs = limitsObject['maxReadMs'] === undefined
+    ? undefined
+    : validatePositiveInteger(limitsObject['maxReadMs'], context, 'limits.maxReadMs');
   const nowMs = deps.nowMs ?? Date.now;
   const { artifacts, files } = deps;
 
@@ -1089,6 +1096,7 @@ export function createArtifactVerifier(deps: ArtifactVerifierDeps) {
       const hash = createHash('sha256');
       const chunks: Buffer[] = [];
       let sizeBytes = 0;
+      const readStartedAtMs = nowMs();
       try {
         for await (const chunk of content.stream) {
           const data = chunk as Buffer;
@@ -1101,6 +1109,16 @@ export function createArtifactVerifier(deps: ArtifactVerifierDeps) {
               record.id,
               undefined,
               { details: { maxReadBytes } },
+            );
+          }
+          if (maxReadMs !== undefined && nowMs() - readStartedAtMs > maxReadMs) {
+            throw errorOf(
+              'timeout',
+              `${op}: 正文读取超过时间上限 ${String(maxReadMs)}ms，停止有界读取`,
+              record.projectId,
+              record.id,
+              undefined,
+              { details: { maxReadMs } },
             );
           }
           hash.update(data);

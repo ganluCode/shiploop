@@ -100,6 +100,34 @@ export const WORK_SESSION_DETAIL_DIAGNOSTICS_MAX_COUNT = 32;
 export const WORK_SESSION_EVIDENCE_MAX_READ_BYTES = 8_388_608;
 /** 结算/未启动证据正文的读取上限（小 JSON；超出即失败）。 */
 export const WORK_SESSION_SETTLEMENT_MAX_READ_BYTES = 1_048_576;
+/** 证据正文读取 wall-clock 上限（超出即 timeout；查询不无限阻塞慢介质）。 */
+export const WORK_SESSION_EVIDENCE_MAX_READ_MS = 30_000;
+/** 结算/未启动证据正文读取 wall-clock 上限。 */
+export const WORK_SESSION_SETTLEMENT_MAX_READ_MS = 10_000;
+
+/**
+ * P07-4 / F-002 结果证据解析 issue 词表（冻结）：按可诊断缺失/损坏/归属类别
+ * 细分，随 issue 携带稳定制品引用；绝不伪造空正文、零 Token 或 complete。
+ */
+export const RESULT_EVIDENCE_ISSUES = [
+  /** 索引缺失、非 ready 或归属不可解析（引用本身不可用）。 */
+  'result_evidence_missing',
+  /** 文件系统拒绝或 IO 不可用（如符号链接越界、非常规文件）。 */
+  'result_evidence_unavailable',
+  /** 正文文件被删除（ready 索引仍在）。 */
+  'result_evidence_body_missing',
+  /** 正文摘要或大小与索引不匹配（疑似篡改/截断）。 */
+  'result_evidence_body_corrupt',
+  /** 正文结构损坏或未知 schema 版本。 */
+  'result_evidence_body_invalid',
+  /** 引用归属/适用执行身份不一致。 */
+  'result_evidence_identity_mismatch',
+  /** 正文超过读取字节上限。 */
+  'result_evidence_body_size_limit',
+  /** 正文读取超过时间上限。 */
+  'result_evidence_body_timeout',
+] as const;
+export type ResultEvidenceIssue = (typeof RESULT_EVIDENCE_ISSUES)[number];
 
 const SETTLEMENT_FAILURE_REASON_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const SETTLEMENT_GAP_MAX_COUNT = 32;

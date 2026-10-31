@@ -186,7 +186,9 @@ import {
   EXECUTION_WORK_SESSION_GET_OPERATION,
   EXECUTION_WORK_SESSIONS_LIST_OPERATION,
   WORK_SESSION_EVIDENCE_MAX_READ_BYTES,
+  WORK_SESSION_EVIDENCE_MAX_READ_MS,
   WORK_SESSION_SETTLEMENT_MAX_READ_BYTES,
+  WORK_SESSION_SETTLEMENT_MAX_READ_MS,
   deriveWorkSessionQueryState,
   isWorkSessionEvidenceLocator,
   toPublicWorkSessionAttempt,
@@ -197,10 +199,12 @@ import {
   validateWorkSessionListSelector,
   validateWorkSessionResultEvidence,
   type PublicWorkSessionResultEvidence,
+  type ResultEvidenceIssue,
   type WorkSessionDetailResult,
   type WorkSessionEvidenceContent,
   type WorkSessionListResult,
   type WorkSessionQueryReadStore,
+  type WorkSessionResultEvidence,
 } from '../ports/work-session-query.js';
 import {
   GIT_OPERATIONS_LIST_OPERATION,
@@ -813,79 +817,134 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   // P03-6 / F-011：结果证据（小 JSON）与诊断制品正文的完整性核验读取器
-  // （复用既有 ArtifactVerifier；缓冲上限显式有限，hash/size 核验失败即拒绝）。
+  // （复用既有 ArtifactVerifier；缓冲与时间上限显式有限，hash/size 核验失败即拒绝）。
   const settlementVerifier = createArtifactVerifier({
     artifacts,
     files: artifactFiles,
-    limits: { maxReadBytes: WORK_SESSION_SETTLEMENT_MAX_READ_BYTES },
+    limits: { maxReadBytes: WORK_SESSION_SETTLEMENT_MAX_READ_BYTES, maxReadMs: WORK_SESSION_SETTLEMENT_MAX_READ_MS },
+    nowMs: nowUtcMs,
   });
   const evidenceVerifier = createArtifactVerifier({
     artifacts,
     files: artifactFiles,
-    limits: { maxReadBytes: WORK_SESSION_EVIDENCE_MAX_READ_BYTES },
+    limits: { maxReadBytes: WORK_SESSION_EVIDENCE_MAX_READ_BYTES, maxReadMs: WORK_SESSION_EVIDENCE_MAX_READ_MS },
+    nowMs: nowUtcMs,
   });
 
-  /** 结果证据正文读取：完整性核验 + JSON + 形状校验任一失败均为 corrupt_state。 */
-  async function readSettlementEvidenceBody(projectId: string, artifactId: string, operation: string) {
-    const corrupt = (): PublicError =>
-      new PublicError('corrupt_state', operation, '证据完整性核验失败', {
-        details: { reason: 'evidence_incomplete' },
-      });
+  /**
+   * P07-4 / F-002：结果证据正文按明确制品引用的核验读取（getWorkSession
+   * fail-closed 与报告/诊断 issue 路径共用）：ready 元数据不等于正文有效——
+   * 索引状态、内容摘要、字节数、JSON 结构/版本与适用执行身份逐项核对；任一
+   * 失败均为 corrupt_state + 冻结细分原因码 + 稳定制品引用，绝不伪造空正文。
+   */
+  async function readVerifiedResultEvidence(
+    projectId: string,
+    attempt: Pick<AttemptRecord, 'id' | 'taskId' | 'runId' | 'owner' | 'hostInstanceId' | 'executionVersion'>,
+    session: { readonly id: string } | null,
+    ref: string | null,
+    artifact: ArtifactRecord | undefined,
+    operation: string,
+  ): Promise<PublicWorkSessionResultEvidence> {
+    const fail = (reason: ResultEvidenceIssue): PublicError =>
+      new PublicError('corrupt_state', operation, '结果证据正文不可读取', { details: { reason, artifactId: ref } });
+    if (artifact === undefined || artifact.status !== 'ready') throw fail('result_evidence_missing');
+    if (artifact.contentHash === null || artifact.sizeBytes === null) throw fail('result_evidence_body_corrupt');
     let verified;
     try {
-      verified = await settlementVerifier.readVerifiedContent(projectId, artifactId);
-    } catch {
-      throw corrupt();
+      verified = await settlementVerifier.readVerifiedContent(projectId, artifact.id);
+    } catch (error) {
+      if (isArtifactVerifyError(error, 'size_limit_exceeded')) throw fail('result_evidence_body_size_limit');
+      if (isArtifactVerifyError(error, 'timeout')) throw fail('result_evidence_body_timeout');
+      if (isArtifactVerifyError(error, 'conflict') || isArtifactVerifyError(error, 'not_found') || isArtifactVerifyError(error, 'ownership')) {
+        throw fail('result_evidence_missing');
+      }
+      if (isArtifactVerifyError(error) && error.corruption?.kind === 'missing') throw fail('result_evidence_body_missing');
+      if (isArtifactVerifyError(error, 'corrupt')) throw fail('result_evidence_body_corrupt');
+      throw fail('result_evidence_unavailable');
     }
-    let parsed: unknown;
+    if (verified.contentHash !== artifact.contentHash || verified.sizeBytes !== artifact.sizeBytes) {
+      throw fail('result_evidence_body_corrupt');
+    }
+    let body: { kind?: unknown; identity?: Record<string, unknown>; taskId?: unknown; runId?: unknown };
     try {
-      parsed = JSON.parse(Buffer.from(verified.content).toString('utf8'));
+      const decoded: unknown = JSON.parse(Buffer.from(verified.content).toString('utf8'));
+      if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('shape');
+      body = decoded as typeof body;
     } catch {
-      throw corrupt();
+      throw fail('result_evidence_body_invalid');
     }
+    let evidence: WorkSessionResultEvidence;
     try {
-      return validateWorkSessionResultEvidence(parsed);
+      evidence = validateWorkSessionResultEvidence(body);
     } catch {
-      throw corrupt();
+      throw fail('result_evidence_body_invalid');
     }
+    const identity = body.identity;
+    if (artifact.kind !== 'runtime-settlement' || identity?.projectId !== projectId
+      || identity.attemptId !== attempt.id || identity.executionVersion !== attempt.executionVersion
+      || identity.owner !== attempt.owner || identity.hostInstanceId !== attempt.hostInstanceId
+      || (evidence.kind === 'runtime-settlement'
+        ? identity.taskId !== attempt.taskId || identity.runId !== attempt.runId || identity.sessionId !== session?.id
+        : body.taskId !== attempt.taskId || body.runId !== attempt.runId)) {
+      throw fail('result_evidence_identity_mismatch');
+    }
+    return toPublicWorkSessionResultEvidence(evidence);
+  }
+
+  /** 结果证据索引解析：索引缺失/归属不可解析为 result_evidence_missing（fail-closed 携带引用）。 */
+  async function readSettlementEvidence(
+    projectId: string,
+    artifactId: string,
+    attempt: Pick<AttemptRecord, 'id' | 'taskId' | 'runId' | 'owner' | 'hostInstanceId' | 'executionVersion'>,
+    session: { readonly id: string } | null,
+    operation: string,
+  ): Promise<PublicWorkSessionResultEvidence> {
+    let artifact: ArtifactRecord | undefined;
+    try {
+      artifact = await artifacts.getArtifact(projectId, artifactId);
+    } catch (error) {
+      if (isStorageError(error, 'not_found') || isStorageError(error, 'ownership')) {
+        throw new PublicError('corrupt_state', operation, '结果证据正文不可读取', {
+          details: { reason: 'result_evidence_missing', artifactId },
+        });
+      }
+      throw error;
+    }
+    return readVerifiedResultEvidence(projectId, attempt, session, artifactId, artifact, operation);
   }
 
   /**
-   * P07-4 / F-001：Attempt 结果证据解析（与 Feature 报告同一规则）：正文按读
-   * 事务内冻结的不可变快照核验 hash/size，身份绑定（项目/Attempt/Task/Run/
-   * Session/owner/执行版本）不一致即结构化 issue；缺失/损坏不伪造空正文。
+   * P07-4 / F-001/F-002：Attempt 结果证据解析（与 Feature 报告同一规则）：
+   * 正文按读事务内冻结的不可变快照核验 hash/size 与执行身份绑定；问题按冻结
+   * 细分词表返回 issue + 稳定制品引用；缺失/损坏不伪造空正文。
    */
   async function readAttemptResultEvidence(
     projectId: string,
     attempt: Pick<AttemptRecord, 'id' | 'taskId' | 'runId' | 'owner' | 'hostInstanceId' | 'executionVersion'>,
     session: { readonly id: string } | null,
+    ref: string | null,
     artifact: ArtifactRecord | undefined,
     operation: string,
   ): Promise<ResultEvidenceResolution> {
-    if (artifact === undefined || artifact.status !== 'ready') {
-      return { evidence: null, issue: 'result_evidence_missing' };
+    if (ref === null || artifact === undefined || artifact.status !== 'ready') {
+      return { evidence: null, issue: 'result_evidence_missing', artifactId: ref };
     }
     try {
-      const verified = await settlementVerifier.readVerifiedContent(projectId, artifact.id);
-      if (verified.contentHash !== artifact.contentHash || verified.sizeBytes !== artifact.sizeBytes) {
-        return { evidence: null, issue: 'result_evidence_invalid' };
-      }
-      const body = JSON.parse(Buffer.from(verified.content).toString('utf8')) as {
-        kind?: unknown; identity?: Record<string, unknown>; taskId?: unknown; runId?: unknown;
+      return {
+        evidence: await readVerifiedResultEvidence(projectId, attempt, session, ref, artifact, operation),
+        issue: null,
+        artifactId: ref,
       };
-      const identity = body.identity;
-      if (identity?.projectId !== projectId || identity.attemptId !== attempt.id
-        || identity.executionVersion !== attempt.executionVersion
-        || identity.owner !== attempt.owner || identity.hostInstanceId !== attempt.hostInstanceId
-        || (body.kind === 'runtime-settlement'
-          ? identity.taskId !== attempt.taskId || identity.runId !== attempt.runId || identity.sessionId !== session?.id
-          : body.taskId !== attempt.taskId || body.runId !== attempt.runId)
-        || artifact.kind !== 'runtime-settlement') {
-        return { evidence: null, issue: 'result_evidence_invalid' };
+    } catch (error) {
+      if (error instanceof PublicError && error.code === 'corrupt_state') {
+        const reason = (error.details as { reason?: unknown } | undefined)?.reason;
+        return {
+          evidence: null,
+          issue: typeof reason === 'string' ? (reason as ResultEvidenceIssue) : 'result_evidence_unavailable',
+          artifactId: ref,
+        };
       }
-      return { evidence: toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence(body)), issue: null };
-    } catch {
-      return { evidence: null, issue: 'result_evidence_invalid' };
+      throw error;
     }
   }
 
@@ -2306,17 +2365,21 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         if (artifact.status !== 'ready') workSessionTargetNotFound(operation, 'artifact');
         if (artifact.contentHash !== ref.contentHash || artifact.expectedHash !== ref.contentHash
           || artifact.sizeBytes !== ref.sizeBytes || artifact.locator !== ref.locator) {
-          throw new PublicError('corrupt_state', operation, '记录制品索引不一致', { details: { reason: 'recording_reference_mismatch' } });
+          throw new PublicError('corrupt_state', operation, '记录制品索引不一致', { details: { reason: 'recording_reference_mismatch', artifactId } });
         }
         let verified;
         try { verified = await evidenceVerifier.readVerifiedContent(projectId, artifactId); }
         catch (error) {
+          // P07-4 / F-002：缺失/篡改/上限/超时/未信任文件分别可诊断 + 稳定引用。
           const reason = isArtifactVerifyError(error, 'size_limit_exceeded') ? 'recording_body_size_limit'
-            : isArtifactVerifyError(error) && error.corruption?.kind === 'missing' ? 'recording_body_missing' : 'recording_body_corrupt';
-          throw new PublicError('corrupt_state', operation, '记录正文不可读取', { details: { reason } });
+            : isArtifactVerifyError(error, 'timeout') ? 'recording_body_timeout'
+            : isArtifactVerifyError(error) && error.corruption?.kind === 'missing' ? 'recording_body_missing'
+            : isArtifactVerifyError(error, 'corrupt') ? 'recording_body_corrupt'
+            : 'recording_body_unavailable';
+          throw new PublicError('corrupt_state', operation, '记录正文不可读取', { details: { reason, artifactId } });
         }
         if (verified.contentHash !== ref.contentHash || verified.sizeBytes !== ref.sizeBytes || verified.locator !== ref.locator) {
-          throw new PublicError('corrupt_state', operation, '记录正文与引用不一致', { details: { reason: 'recording_reference_mismatch' } });
+          throw new PublicError('corrupt_state', operation, '记录正文与引用不一致', { details: { reason: 'recording_reference_mismatch', artifactId } });
         }
         return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'work-recording-body',
           artifact: publicWorkRecordingRef(ref), content: verified.content };
@@ -2403,8 +2466,9 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           workSessionTargetNotFound(operation, 'attempt');
         }
         // 结果证据：Session 已结算时读 resultRef；启动前拒绝场景回退到受控
-        // locator 的未启动拒绝证据。正文经完整性核验读取并严格校验；缺失/
-        // 损坏为 corrupt_state（fail-closed），绝不降级为「无证据」。
+        // locator 的未启动拒绝证据。正文经完整性核验读取并严格校验（含执行
+        // 身份绑定）；缺失/损坏/归属错误按细分原因码 fail-closed（P07-4/F-002），
+        // 绝不降级为「无证据」。
         const settlementRef =
           view.session?.resultRef ??
           view.evidence.find(
@@ -2416,9 +2480,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           null;
         let resultEvidence: PublicWorkSessionResultEvidence | null = null;
         if (settlementRef !== null) {
-          resultEvidence = toPublicWorkSessionResultEvidence(
-            await readSettlementEvidenceBody(projectId, settlementRef, operation),
-          );
+          resultEvidence = await readSettlementEvidence(projectId, settlementRef, view.attempt, view.session, operation);
         }
         return {
           schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
@@ -2494,9 +2556,16 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         let verified;
         try {
           verified = await evidenceVerifier.readVerifiedContent(projectId, artifactId);
-        } catch {
+        } catch (error) {
+          // P07-4 / F-002：missing/corrupt/上限/超时/未信任文件分别可诊断，
+          // 携带稳定制品引用；不降级为「无证据」。
+          const reason = isArtifactVerifyError(error, 'size_limit_exceeded') ? 'evidence_body_size_limit'
+            : isArtifactVerifyError(error, 'timeout') ? 'evidence_body_timeout'
+            : isArtifactVerifyError(error) && error.corruption?.kind === 'missing' ? 'evidence_body_missing'
+            : isArtifactVerifyError(error, 'corrupt') ? 'evidence_body_corrupt'
+            : 'evidence_body_unavailable';
           throw new PublicError('corrupt_state', operation, '证据完整性核验失败', {
-            details: { reason: 'evidence_incomplete' },
+            details: { reason, artifactId },
           });
         }
         return {
@@ -2864,7 +2933,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           const ref = detail.session?.resultRef ?? detail.evidence.find(a =>
             a.kind === 'runtime-settlement' && a.locator === `attempts/${detail.attempt.id}/launch-rejection.json`)?.id;
           const artifact = ref == null ? undefined : artifactsById.get(ref);
-          results.set(detail.attempt.id, await readAttemptResultEvidence(projectId, detail.attempt, detail.session, artifact, operation));
+          results.set(detail.attempt.id, await readAttemptResultEvidence(projectId, detail.attempt, detail.session, ref ?? null, artifact, operation));
         }
         return buildFeatureExecutionReport(view, results);
       } catch (error) {
@@ -2970,7 +3039,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           const ref = row.session?.resultRef ?? row.evidence.find(a =>
             a.kind === 'runtime-settlement' && a.locator === `attempts/${row.attempt.id}/launch-rejection.json`)?.id ?? null;
           const artifact = ref === null ? undefined : row.evidence.find(a => a.id === ref);
-          const resolution = await readAttemptResultEvidence(projectId, row.attempt, row.session, artifact, operation);
+          const resolution = await readAttemptResultEvidence(projectId, row.attempt, row.session, ref, artifact, operation);
           const built = buildResultDiagnosticRecord(row, resolution);
           observations[index] = built.normalized;
           records.push(built.record);

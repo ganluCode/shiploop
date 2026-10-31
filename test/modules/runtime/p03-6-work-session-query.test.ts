@@ -635,11 +635,11 @@ describe('P03-6 / F-011 Work Session query surface', () => {
       writeFileSync(join(f.box.dataRoot, placement.finalRelativePath), Buffer.from('corrupted-body'), );
       await expectPublicError(
         () => queries.getWorkSession(owner, { projectId: f.projectId, attemptId: f.attemptId }),
-        { code: 'corrupt_state', operation: 'execution.session.get', reason: 'evidence_incomplete' },
+        { code: 'corrupt_state', operation: 'execution.session.get', reason: 'result_evidence_body_corrupt' },
       );
       await expectPublicError(
         () => queries.readWorkSessionEvidence(owner, { projectId: f.projectId, attemptId: f.attemptId, artifactId: settlementRef }),
-        { code: 'corrupt_state', operation: 'execution.session.evidence.get', reason: 'evidence_incomplete' },
+        { code: 'corrupt_state', operation: 'execution.session.evidence.get', reason: 'evidence_body_corrupt' },
       );
     } finally {
       f.close();

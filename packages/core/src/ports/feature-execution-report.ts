@@ -2,7 +2,7 @@ import type { AttemptRecord } from './attempt-store.js';
 import type { ArtifactRecord } from './artifact-store.js';
 import type { FeatureDeliveryView, FeatureDeliveryRunRow, FeatureDeliveryVerificationView } from './feature-delivery-query.js';
 import type { GitOperationRecord } from './git-operations.js';
-import type { WorkSessionDetailView, PublicWorkSessionResultEvidence } from './work-session-query.js';
+import type { WorkSessionDetailView, PublicWorkSessionResultEvidence, ResultEvidenceIssue } from './work-session-query.js';
 import type { WorkSessionRecord } from './work-session.js';
 
 export const FEATURE_REPORT_GET_OPERATION = 'features.report.get' as const;
@@ -37,7 +37,9 @@ export function featureReportAttemptArtifactIds(attempt: AttemptRecord): readonl
   ].filter((id): id is string => id != null))];
 }
 
+/** 结果证据解析（P07-4 / F-002）：issue 为冻结细分词表，artifactId 为稳定引用。 */
 export interface FeatureReportResultEvidence {
   readonly evidence: PublicWorkSessionResultEvidence | null;
-  readonly issue: 'result_evidence_missing' | 'result_evidence_invalid' | null;
+  readonly issue: ResultEvidenceIssue | null;
+  readonly artifactId: string | null;
 }

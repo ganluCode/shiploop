@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/delivery/p07-4-f002-result-evidence-integrity.test.ts", "all": true },
+        { "file": "test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-built.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-session-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-work-recording-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-recording-host-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p07-2-f007-recording-default-query.test.ts", "all": true },
+        { "file": "test/modules/storage/artifacts/artifact-verify.test.ts", "all": true },
+        { "file": "test/modules/delivery/p05-9-f001-batch-delivery-query.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-schedule-query.test.ts", "all": true },
+        { "file": "test/modules/cli/p04-5-recording-cli.test.ts", "all": true },
+        { "file": "test/modules/host/p03-10-feature-report-contract.test.ts", "all": true }
+      ]
+    }
+  ]
+}

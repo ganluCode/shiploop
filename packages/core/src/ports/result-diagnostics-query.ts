@@ -38,6 +38,8 @@ import type { ExecutionBatchStatus, ExecutionRunStatus } from './execution-store
 import type { FeatureDeliveryStatus } from './git-operations.js';
 import type { WorkSessionRecord } from './work-session.js';
 import type { WorkSessionQueryState } from './work-session-query.js';
+import type { WorkRecordingManifestRecord } from './work-recording.js';
+import type { PublicWorkRecordingManifestSummary } from './work-recording-query.js';
 import type { ArtifactRecord } from './artifact-store.js';
 import type {
   AttemptNotificationDiagnosticRecord,
@@ -126,6 +128,14 @@ export interface ResultDiagnosticsGitRef {
 export const RESULT_DIAGNOSTICS_STOP_OPERATIONS_MAX_COUNT = 32;
 export const RESULT_DIAGNOSTICS_VERIFICATION_CHECKS_MAX_COUNT = 32;
 export const RESULT_DIAGNOSTICS_GIT_OPERATIONS_MAX_COUNT = 16;
+/** P07-4 / F-002：Recorder 清单投影按 Work Session 数的上限（超出置 truncated）。 */
+export const RESULT_DIAGNOSTICS_RECORDER_MANIFESTS_MAX_COUNT = 16;
+
+/** Recorder 事实（P07-4 / F-002）：每 Work Session 最新清单元数据（有界，不含正文）。 */
+export interface ResultDiagnosticsRecorderFacts {
+  readonly manifests: readonly WorkRecordingManifestRecord[];
+  readonly truncated: boolean;
+}
 
 /** 结果诊断行：一个 Attempt 的完整定位事实（同一读事务内取得）。 */
 export interface ResultDiagnosticsRow {
@@ -149,6 +159,8 @@ export interface ResultDiagnosticsRow {
   /** 受控 locator 前缀内的证据索引行（有界；正文由应用层按需核验读取）。 */
   readonly evidence: readonly ArtifactRecord[];
   readonly evidenceTruncated: boolean;
+  /** Recorder 清单事实（无 Work Session 为 null；只读元数据，不扫正文）。 */
+  readonly recorder: ResultDiagnosticsRecorderFacts | null;
 }
 
 /** 父级范围摘要（定位入口；不含正文）。 */
@@ -325,6 +337,8 @@ export interface PublicResultDiagnosticRecord {
   readonly codeRef: string | null;
   readonly diagnosticRef: string | null;
   readonly resultArtifactId: string | null;
+  /** 结果证据正文实际核验引用（含 launch-rejection 回退；无证据为 null）。 */
+  readonly resultEvidenceRef: string | null;
   readonly checkRefs: readonly { readonly batchId: string; readonly operation: string; readonly status: string; readonly endedAt: string | null }[];
   readonly gitOperationRefs: readonly ResultDiagnosticsGitRef[];
   readonly recording: {
@@ -333,6 +347,11 @@ export interface PublicResultDiagnosticRecord {
     readonly failure: string | null;
     readonly gaps: readonly string[];
     readonly watermark: number | null;
+  } | null;
+  /** P07-4 / F-002 Recorder 真实事实（无 Work Session 为 null）：coverage/水位/截断/脱敏/缺失原因。 */
+  readonly recorder: {
+    readonly sessions: readonly PublicWorkRecordingManifestSummary[];
+    readonly truncated: boolean;
   } | null;
   readonly usage: PublicResultUsageSummary;
   readonly issues: readonly string[];

@@ -11,16 +11,18 @@
  *   部分覆盖显式标注（coverage）；
  * - 三轴（runtime / task / feature）各自独立投影；Runtime 成功不推导
  *   Task 验收，Task 通过不推导 Feature 交付；
- * - 结果证据缺失/损坏/身份不匹配只产生结构化 issue
- *   （result_evidence_missing / result_evidence_invalid），绝不伪造空正文、
- *   零 Token 或 complete 记录。
+ * - P07-4 / F-002：结果证据缺失/损坏/身份不匹配产生冻结细分 issue
+ *   （ResultEvidenceIssue）并携带稳定制品引用，绝不伪造空正文、零 Token
+ *   或 complete；Recorder 真实 coverage/水位/截断/脱敏/缺失原因独立投影，
+ *   settlement 成功主张不抹平 P07-2 背压或尾部丢失事实。
  */
 import { normalizeRuntimeUsage, aggregateUsage } from './usage-normalization.js';
 import type { NormalizedUsageObservation } from './usage-normalization.js';
 import type { RuntimeUsageReport } from '../ports/runtime-execution.js';
 import type { UsageDiagnosticIdentity, UsageCoverage } from '../ports/usage-diagnostics.js';
-import type { PublicWorkSessionResultEvidence } from '../ports/work-session-query.js';
+import type { PublicWorkSessionResultEvidence, ResultEvidenceIssue } from '../ports/work-session-query.js';
 import { deriveWorkSessionQueryState } from '../ports/work-session-query.js';
+import { publicWorkRecordingManifestSummary } from '../ports/work-recording-query.js';
 import {
   deriveResultPendingActions,
   deriveResultBlockReasons,
@@ -32,7 +34,9 @@ import {
 
 export interface ResultEvidenceResolution {
   readonly evidence: PublicWorkSessionResultEvidence | null;
-  readonly issue: 'result_evidence_missing' | 'result_evidence_invalid' | null;
+  readonly issue: ResultEvidenceIssue | null;
+  /** 实际核验的稳定制品引用（含 launch-rejection 回退；无引用为 null）。 */
+  readonly artifactId: string | null;
 }
 
 /** 复用 Feature 报告的观察身份规则：Attempt 终值观察，recovery 原样携带。 */
@@ -125,6 +129,20 @@ export function buildResultDiagnosticRecord(
   };
   if (recording !== null && (!recording.complete || recording.gaps.length > 0)) issues.push('recording_partial');
 
+  // P07-4 / F-002：Recorder 真实事实独立投影；settlement 成功主张或查询
+  // 操作不得抹平 P07-2 背压/尾部丢失（两轴并列展示，不互相覆盖）。
+  const recorder = row.recorder === null ? null : {
+    sessions: row.recorder.manifests.map(publicWorkRecordingManifestSummary),
+    truncated: row.recorder.truncated,
+  };
+  if (recorder !== null) {
+    if (recorder.sessions.length === 0) issues.push('recording_manifest_missing');
+    else if (recorder.sessions.some(summary => summary.coverage !== 'complete' || summary.missingReasons.length > 0)) {
+      issues.push('recording_partial');
+    }
+    if (recorder.truncated) issues.push('recording_manifests_truncated');
+  }
+
   const rework = attempt.inputSnapshot.rework;
   const recovery = attempt.inputSnapshot.recovery;
   const stopStatuses = row.stopOperations.map(stop => stop.status);
@@ -182,9 +200,11 @@ export function buildResultDiagnosticRecord(
     codeRef: attempt.codeRef,
     diagnosticRef: attempt.diagnosticRef,
     resultArtifactId: session?.resultRef ?? null,
+    resultEvidenceRef: resolution.artifactId,
     checkRefs: verification === null ? [] : [{ batchId: verification.batchId, operation: verification.operation, status: verification.status, endedAt: verification.endedAt }],
     gitOperationRefs: row.gitOperations.map(op => ({ ...op })),
     recording,
+    recorder,
     usage: usageSummary,
     issues: [...new Set(issues)].sort(),
   };

@@ -163,7 +163,7 @@ test('[case:built-usage-diagnostics-history] 用量诊断跨失败取消返工�
   expect(report.tasks[0].attempts.map(a => a.usage.inputTokens)).toEqual([100, 900, 50]);
   expect(report.tasks[0].attempts[1].rework?.previousAttemptId).toBe(failed.id);
   expect(report.tasks[0].attempts[2].rework?.previousAttemptId).toBe(cancelled.id);
-  expect(report.tasks[1].attempts[0].issues).toContain('result_evidence_invalid');
+  expect(report.tasks[1].attempts[0].issues).toContain('result_evidence_body_invalid');
   expect(report.tasks[2].attempts).toEqual([]);
   expect(report.tasks[2].usage.aggregate).toMatchObject({ basis: 'none', coverage: 'unknown', totals: { inputTokens: null } });
   expect(report.usage.feature.aggregate).toMatchObject({ basis: 'synthetic', countedObservations: 3,

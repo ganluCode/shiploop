@@ -33,6 +33,7 @@ import {
   RESULT_DIAGNOSTICS_STOP_OPERATIONS_MAX_COUNT,
   RESULT_DIAGNOSTICS_VERIFICATION_CHECKS_MAX_COUNT,
   RESULT_DIAGNOSTICS_GIT_OPERATIONS_MAX_COUNT,
+  RESULT_DIAGNOSTICS_RECORDER_MANIFESTS_MAX_COUNT,
 } from '../../ports/result-diagnostics-query.js';
 import type {
   BatchDeliveryStopRecord,
@@ -44,10 +45,12 @@ import type {
   ResultDiagnosticsRow,
   ResultDiagnosticsScope,
 } from '../../ports/result-diagnostics-query.js';
+import type { WorkRecordingManifestRecord } from '../../ports/work-recording.js';
 import { attemptFromRow } from './attempt-store.js';
 import type { AttemptRow } from './attempt-store.js';
 import { artifactFromRow } from './artifact-store.js';
 import type { ArtifactRow } from './artifact-store.js';
+import { manifestFromRow } from './work-recording-store.js';
 import { SESSION_COLUMNS, workSessionRecordFromRow } from './work-session-store.js';
 import type { SessionRow } from './work-session-store.js';
 import { VERIFICATION_BATCH_COLUMNS, CHECK_RESULT_COLUMNS, verificationBatchRecordFromRow, checkResultRecordFromRow } from './verification-store.js';
@@ -88,6 +91,7 @@ interface DiagnosticRow {
 function corrupt(message: string, entity?: StorageEntityRef): never {
   throw new StorageError('corrupt', OPERATION, message, { ...(entity === undefined ? {} : { entity }) });
 }
+type Row = Record<string, string | number | null>;
 function idOf(value: unknown, field: string): string {
   try {
     return validateStableId(value, { operation: OPERATION }, field);
@@ -244,6 +248,35 @@ export function createSqliteResultDiagnosticsQueryStore(
     const evidenceContext: ValidationContext = { operation: OPERATION, entity: { type: 'artifact', projectId } };
     const evidence = evidenceRows.slice(0, WORK_SESSION_DETAIL_EVIDENCE_MAX_COUNT).map(row => artifactFromRow(row, evidenceContext));
 
+    // P07-4 / F-002：Recorder 真实事实——Work 树内各 Session 的最新清单元数据
+    // （单行读取，不递归扫正文）；归属/执行身份不一致 fail-closed（防御纵深）。
+    let recorder: ResultDiagnosticsRow['recorder'] = null;
+    if (workSession !== null) {
+      const treeRows = db.prepare<[string, string, string, number], { id: string }>(
+        `WITH RECURSIVE work_tree(id) AS (
+          SELECT id FROM sessions WHERE project_id = ? AND attempt_id = ? AND kind = 'work' AND purpose <> 'chat'
+          UNION
+          SELECT s.id FROM sessions s JOIN work_tree t ON s.parent_session_id = t.id
+            WHERE s.project_id = ? AND s.kind = 'work' AND s.purpose <> 'chat' AND s.attempt_id IS NULL
+        ) SELECT id FROM work_tree ORDER BY id LIMIT ?`)
+        .all(projectId, attemptId, projectId, RESULT_DIAGNOSTICS_RECORDER_MANIFESTS_MAX_COUNT + 1);
+      const recorderTruncated = treeRows.length > RESULT_DIAGNOSTICS_RECORDER_MANIFESTS_MAX_COUNT;
+      const manifests: WorkRecordingManifestRecord[] = [];
+      for (const { id: sessionId } of treeRows.slice(0, RESULT_DIAGNOSTICS_RECORDER_MANIFESTS_MAX_COUNT)) {
+        const manifestRow = db.prepare<[string, string], Row>(
+          'SELECT * FROM recording_manifests WHERE project_id = ? AND session_id = ? ORDER BY version DESC LIMIT 1')
+          .get(projectId, sessionId);
+        if (manifestRow === undefined) continue;
+        const manifest = manifestFromRow(manifestRow);
+        if (manifest.attemptId !== attempt.id || manifest.runId !== attempt.runId
+          || manifest.invocationId !== attempt.invocationId || manifest.executionVersion !== attempt.executionVersion) {
+          corrupt('Recorder 清单归属不一致', { type: 'work_session', projectId, id: sessionId });
+        }
+        manifests.push(manifest);
+      }
+      recorder = { manifests, truncated: recorderTruncated };
+    }
+
     return {
       attempt,
       session: workSession,
@@ -264,6 +297,7 @@ export function createSqliteResultDiagnosticsQueryStore(
       gitOperationsTruncated,
       evidence,
       evidenceTruncated,
+      recorder,
     };
   }
 
