@@ -111,6 +111,8 @@ export function assembleWorkExecution(options: {
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly runtimeFactory?: WorkRuntimeFactory;
   readonly recordingMode?: RecordingMode;
+  /** P07-4：业务终态事件提交后唤醒独立通知补扫；通知失败不得影响执行结算。 */
+  readonly notificationWake?: () => void;
   readonly nowUtcMs?: () => number;
   readonly startupRecovery: ReturnType<typeof createWorkStartupRecovery>;
   /** P03-9 / F-011：finalization-only Run 在编码认领前分流到受信重验执行。 */
@@ -595,6 +597,8 @@ export function assembleWorkExecution(options: {
         dispatches.delete(attempt.id);
         // 完成/失败/取消共用同一结算入口：释放与否由持久事实决定。
         settleRun(attempt.projectId, attempt.runId, fence);
+        // 终态事件已提交后立即提示通知运行时；wake 只是内存优化，周期补扫仍是兜底。
+        try { options.notificationWake?.(); } catch { /* 通知唤醒不改变业务结算结果。 */ }
       }, () => undefined);
     } catch (error) {
       cancelRequested.delete(attempt.id);

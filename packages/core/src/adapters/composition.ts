@@ -1390,7 +1390,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: dataRestoreIsolation ? undefined : object.workRuntimeFactory as WorkRuntimeFactory | undefined,
-      recordingMode: object.workRecordingMode as CoreApplicationOptions['workRecordingMode'], nowUtcMs, readReworkScene, startupRecovery,
+      notificationWake: () => notificationRuntime.wake(), recordingMode: object.workRecordingMode as CoreApplicationOptions['workRecordingMode'], nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
         finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
       }),
