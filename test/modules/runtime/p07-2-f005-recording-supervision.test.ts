@@ -95,6 +95,38 @@ describe('P07-2 F-005 整体期限与监督结算', () => {
     } finally { clock.mockRestore(); f.close(); }
   });
 
+  it('[case:deadline-attribution-before-window] recorder 共享预算期限耗尽抢先定案时仍确定性归因超时事实', async () => {
+    const f = await fixture();
+    let monotonic = 100;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+    try {
+      const recordingError = new WorkEvidenceRecordingError('recording_deadline_exceeded', 'deadline', {
+        watermark: null, gaps: ['recording_failed:recording_deadline_exceeded'], safeStopRequired: true,
+      });
+      const recordingGate = gate<PromiseSettledResult<WorkEvidenceRecordingOutcome>>();
+      let persisted!: RuntimeSettlementInput;
+      const runtime = f.handle({ async *[Symbol.asyncIterator]() {} });
+      const supervision = superviseExecution({ request: { ...f.request, limits: { ...f.request.limits, timeoutMs: 1000 } },
+        runtime: runtime as RuntimeSession,
+        controller: new AbortController(), result: settle(Promise.resolve(completed)), stopped: settle(Promise.resolve(stopped)),
+        recording: recordingGate.promise,
+        settlement: { async settle(input) { persisted = input; return f.settlement.settle(input); } },
+        options: { stopWaitMs: 20, drainWaitMs: 100, closeWaitMs: 100, retain: async () => {} },
+        quarantine: () => {}, evidenceRef: () => f.sessions.getWorkSession(f.projectId, f.request.sessionId).resultRef,
+        timeoutMs: 1000, timeoutReason: 'runtime_timeout', timeoutLayer: 'session', timeoutLimitMs: 1000 });
+      // Recorder 失败收尾先调 handle.cancel（停止原因抢先定案），此时监督观察
+      // 窗口尚未到达（双计时器起点差的竞态）；随后 recording 才 settle。
+      monotonic = 300;
+      supervision.stop('recording_failed');
+      recordingGate.resolve({ status: 'rejected', reason: recordingError });
+      expect(await supervision.completion).toMatchObject({ persisted: true });
+      // 共享预算期限耗尽是超预算表征：归因保持 timeout 事实，不因抢先后定案为 recording_failed。
+      expect(persisted.control).toMatchObject({ reason: 'runtime_timeout',
+        timeout: { layer: 'session', stage: 'runtime', limitMs: 1000 } });
+      expect(persisted.recording).toMatchObject({ status: 'rejected', reason: { reason: 'recording_deadline_exceeded' } });
+    } finally { clock.mockRestore(); f.close(); }
+  });
+
   for (const scenario of ['both-hang', 'small-events', 'body-hang', 'manifest-hang'] as const) {
     it(`[case:deadline-${scenario}] 采集与发布共用整体期限，失败收尾有界且迟到发布不推进水位`, async () => {
       const f = await fixture();

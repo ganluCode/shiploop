@@ -5,7 +5,7 @@ import { RuntimeError } from '../ports/runtime-execution.js';
 import type { RuntimeControlFacts, RuntimeTimeoutFact } from '../ports/runtime-settlement.js';
 import type { RuntimeSettlementInput, RuntimeSettlementService } from './runtime-settlement.js';
 import type { AttemptApplicationResult } from '../ports/attempt-lifecycle.js';
-import { WorkEvidenceRecordingError, recordingRequiresStop, type WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
+import { WorkEvidenceRecordingError, isWorkEvidenceRecordingError, recordingRequiresStop, type WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import type { WorkspaceRetentionReason } from '../ports/workspace-retention.js';
 
 export interface ExecutionCompletion {
@@ -113,7 +113,22 @@ export function superviseExecution(input: {
   });
   const timer = setTimeout(() => stop(input.timeoutReason, timeoutFact(elapsed())), Math.max(1, input.timeoutMs));
   void input.recording.then(outcome => {
-    if (recordingRequiresStop(outcome)) stop('recording_failed');
+    if (!recordingRequiresStop(outcome)) return;
+    // Recorder 与 Runtime 共享同一执行预算。其整体期限耗尽
+    // （recording_deadline_exceeded）是超预算的表征：即使 recorder 失败收尾的
+    // cancel 抢先把停止原因定案为 recording_failed，也在 recording settle 后、
+    // settle 读取 reason 前确定性改判为超时事实，不受双计时器起点先后的竞态
+    // 影响；其余记录故障（存储/背压/写失败等）仍归 recording_failed。
+    if (outcome.status === 'rejected' && isWorkEvidenceRecordingError(outcome.reason, 'recording_deadline_exceeded')) {
+      if (reason === null) {
+        stop(input.timeoutReason, timeoutFact(elapsed()));
+      } else if (reason === 'recording_failed') {
+        reason = input.timeoutReason;
+        timeout = timeoutFact(elapsed());
+      }
+      return;
+    }
+    stop('recording_failed');
   });
   void input.result.then(outcome => {
     if (outcome.status === 'rejected' || outcome.value.terminal === 'failed') stop('runtime_failed');
