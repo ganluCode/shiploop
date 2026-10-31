@@ -11,6 +11,7 @@ import {
   type AttemptApplicationResult, type AttemptLifecycleStore, type VerificationSubmission,
 } from '../../ports/attempt-lifecycle.js';
 import { StorageError } from '../../ports/errors.js';
+import { TASK_TERMINAL_EVENT_TYPE } from '../../ports/execution-store.js';
 import { stableStringify } from '../../ports/feature-plan.js';
 import type { WorkResourceIdentity, WorkResourceStopVerifier, WorkWorkspaceAuthority } from '../../ports/work-resources.js';
 import { validateWorkResourceIdentity } from '../../ports/work-resources.js';
@@ -101,6 +102,24 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         AND (status <> ? OR reason IS NULL OR reason <> 'user_pause' OR pause_requested_at IS NULL)`)
       .run(batchStatus, row.batch_pause, now, projectId, row.batch_id, row.batch_revision, batchStatus);
   }
+  function appendTaskTerminalEventInTransaction(input: {
+    readonly projectId: string;
+    readonly taskId: string;
+    readonly attemptId: string;
+    readonly runId: string;
+    readonly revision: number;
+    readonly status: 'passed' | 'failed' | 'cancelled';
+    readonly resultCategory: 'passed' | 'verification_failed' | 'runtime_failed' | 'preparation_failed' | 'cancelled' | 'budget_exhausted';
+    readonly resultRef: string | null;
+  }): void {
+    executions.appendExecutionEventInTransaction({
+      projectId: input.projectId, eventType: TASK_TERMINAL_EVENT_TYPE, aggregateType: 'task', aggregateId: input.taskId,
+      aggregateRevision: input.revision,
+      payload: { schemaVersion: 1, status: input.status, resultCategory: input.resultCategory,
+        attemptId: input.attemptId, runId: input.runId, resultRef: input.resultRef },
+    });
+  }
+
   function applyInTransaction(transaction: CommandTransaction, input: unknown, stopEvidence?: unknown,
     preparationIsolated = false): AttemptApplicationResult {
       if (!db.inTransaction) throw new TypeError('Attempt lifecycle primitive requires a write transaction');
@@ -270,6 +289,12 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
         const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
           aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+        if (status === 'failed' || status === 'cancelled') {
+          appendTaskTerminalEventInTransaction({ projectId: valid.projectId, taskId: valid.taskId, attemptId: valid.attemptId,
+            runId: valid.runId, revision: counters.revision, status: status === 'failed' ? 'failed' : 'cancelled',
+            resultCategory: valid.kind === 'preparation_failed' ? 'preparation_failed' : status === 'cancelled' ? 'cancelled' : 'runtime_failed',
+            resultRef: valid.kind === 'executing' ? null : valid.evidenceRef });
+        }
         const waitingFor: AttemptApplicationResult['waitingFor'] = runtime !== null && targetStatus === 'verifying'
           ? approvalWaiting ? 'approval' : !stopConfirmed ? 'execution_uncertain'
             : !runtime.recording.complete && runtime.recording.mode !== 'best_effort' ? 'recording_required' : 'verification_not_assembled'
@@ -371,6 +396,8 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
       const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
         aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+      appendTaskTerminalEventInTransaction({ projectId: valid.projectId, taskId: valid.taskId, attemptId: valid.attemptId,
+        runId: valid.runId, revision: counters.revision, status: 'failed', resultCategory: 'preparation_failed', resultRef: valid.evidenceRef });
       return persist({ disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null, waitingFor: null,
         runtimeCompleted: false, resultSaved: true, stopConfirmed, eventId });
     }
@@ -454,6 +481,12 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
     const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
       aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+    if (finalStatus === 'succeeded' || finalStatus === 'failed' || finalStatus === 'cancelled') {
+      appendTaskTerminalEventInTransaction({ projectId: valid.projectId, taskId: valid.taskId, attemptId: valid.attemptId,
+        runId: valid.runId, revision: counters.revision, status: finalStatus === 'succeeded' ? 'passed' : finalStatus,
+        resultCategory: finalStatus === 'succeeded' ? 'passed' : finalStatus === 'cancelled' ? 'cancelled' : 'runtime_failed',
+        resultRef: valid.evidenceRef });
+    }
     return persist({ disposition: 'applied', attemptId: valid.attemptId, status: finalStatus, reason: null, waitingFor: null,
       runtimeCompleted: runtime.result?.terminal === 'completed', resultSaved: true, stopConfirmed, eventId });
   }
@@ -614,6 +647,10 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         const taskFailed = db.prepare(`UPDATE tasks SET status = 'failed', revision = revision + 1, updated_at = ?
           WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
         if (taskFailed.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+        const terminalCounters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+        appendTaskTerminalEventInTransaction({ projectId: valid.projectId, taskId: valid.taskId, attemptId: valid.attemptId,
+          runId: valid.runId, revision: terminalCounters.revision, status: 'failed', resultCategory: 'verification_failed',
+          resultRef: valid.verificationBatchId });
         db.prepare(`UPDATE runs SET status = 'paused', reason = 'code_attempts_exhausted', revision = revision + 1, updated_at = ?
           WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused')
           AND (reason IS NULL OR reason <> 'approval')`).run(now, valid.runId, valid.projectId);
@@ -671,6 +708,10 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     const taskChanged = db.prepare(`UPDATE tasks SET status = 'passed', revision = revision + 1, updated_at = ?
       WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
     if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+    const terminalCounters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+    appendTaskTerminalEventInTransaction({ projectId: valid.projectId, taskId: valid.taskId, attemptId: valid.attemptId,
+      runId: valid.runId, revision: terminalCounters.revision, status: 'passed', resultCategory: 'passed',
+      resultRef: valid.verificationBatchId });
     const pendingApprovals = db.prepare<[string, string], { count: number }>(
       `SELECT COUNT(*) AS count FROM task_approval_items WHERE project_id = ? AND feature_id = ? AND status = 'pending'`)
       .get(valid.projectId, attempt.feature_id)!.count;

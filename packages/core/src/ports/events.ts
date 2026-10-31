@@ -38,7 +38,12 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_CANCELLING_EVENT_TYPE, EXECUTION_FEATURE_CANCELLED_EVENT_TYPE, EXECUTION_FEATURE_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
+import {
+  ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE,
+  TASK_TERMINAL_EVENT_TYPE, TASK_ACTION_REQUIRED_EVENT_TYPE, EXECUTION_RUN_TERMINAL_EVENT_TYPE,
+  EXECUTION_BATCH_TERMINAL_EVENT_TYPE, TASK_TERMINAL_STATUSES, TASK_RESULT_CATEGORIES, EXECUTION_RESULT_CATEGORIES,
+  EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_CANCELLING_EVENT_TYPE, EXECUTION_FEATURE_CANCELLED_EVENT_TYPE, EXECUTION_FEATURE_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
+} from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_DAG_UPDATED_EVENT_TYPE,
@@ -104,6 +109,11 @@ export { EXECUTION_INPUT_PREPARED_EVENT_TYPE };
 /** P03-3 / F-005：仅命令路径派发成功后写入（脱敏 payload 恒 {dispatched:true}）。 */
 export { EXECUTION_RUN_DISPATCHED_EVENT_TYPE };
 /** P03-3 / F-009：仅命令路径预算修订成功后写入（脱敏 payload 恒 {revised:true}）。 */
+/** P07-4：结果通知源事件；payload 含冻结的结果轴与稳定引用。 */
+export {
+  TASK_TERMINAL_EVENT_TYPE, TASK_ACTION_REQUIRED_EVENT_TYPE,
+  EXECUTION_RUN_TERMINAL_EVENT_TYPE, EXECUTION_BATCH_TERMINAL_EVENT_TYPE,
+};
 export { EXECUTION_BUDGET_REVISED_EVENT_TYPE };
 /** P03-9 / F-001：仅暂停命令成功写入（Run/Batch 各自聚合；payload 恒 {paused:true}）。 */
 export { EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE };
@@ -197,6 +207,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
   TASK_APPROVAL_DECIDED_EVENT_TYPE,
+  TASK_TERMINAL_EVENT_TYPE,
+  TASK_ACTION_REQUIRED_EVENT_TYPE,
+  EXECUTION_RUN_TERMINAL_EVENT_TYPE,
+  EXECUTION_BATCH_TERMINAL_EVENT_TYPE,
   FEATURE_FINALIZED_EVENT_TYPE,
   FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
   WORKSPACE_EVENT_TYPE,
@@ -243,6 +257,9 @@ type EventPayloadKind =
   | 'attemptUpdated'
   | 'taskApprovalBlocked'
   | 'taskApprovalDecided'
+  | 'taskTerminal'
+  | 'taskActionRequired'
+  | 'executionResult'
   | 'featureFinalized'
   | 'featureFinalizationBlocked'
   | 'workspaceOperationUpdated'
@@ -484,6 +501,10 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'attemptUpdated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalBlocked' }),
   [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalDecided' }),
+  [TASK_TERMINAL_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskTerminal' }),
+  [TASK_ACTION_REQUIRED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskActionRequired' }),
+  [EXECUTION_RUN_TERMINAL_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', scopeKind: 'project', payloadKind: 'executionResult' }),
+  [EXECUTION_BATCH_TERMINAL_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', scopeKind: 'project', payloadKind: 'executionResult' }),
   [FEATURE_FINALIZED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featureFinalized' }),
   [FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featureFinalizationBlocked' }),
   'work.recovery.updated': Object.freeze({ aggregateType: 'run', scopeKind: 'project', payloadKind: 'workRecovery' }),
@@ -1192,8 +1213,43 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateExecutionRunDispatchedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'featureFinalized' || spec.payloadKind === 'featureFinalizationBlocked') {
     const key = spec.payloadKind === 'featureFinalized' ? 'finalized' : 'blocked';
-    if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
-    payload = { [key]: true };
+    if (Object.keys(row.payload).length === 1 && row.payload[key] === true) {
+      payload = { [key]: true };
+    } else {
+      exactPayloadKeys(operation, row.payload, ['schemaVersion', 'outcome', 'deliveryStatus', 'reasonCode', 'runId', 'batchId', 'operationId']);
+      if (row.payload.schemaVersion !== 1 || typeof row.payload.outcome !== 'string' || typeof row.payload.deliveryStatus !== 'string'
+        || typeof row.payload.reasonCode !== 'string' || !/^[a-z][a-z0-9_.-]{0,63}$/.test(row.payload.reasonCode)) corrupt(operation, 'event_payload_violation');
+      try {
+        validateStableId(row.payload.runId, { operation }, 'runId');
+        validateStableId(row.payload.batchId, { operation }, 'batchId');
+        if (row.payload.operationId !== null) validateStableId(row.payload.operationId, { operation }, 'operationId');
+      } catch { corrupt(operation, 'event_payload_violation'); }
+      payload = { schemaVersion: 1, outcome: row.payload.outcome, deliveryStatus: row.payload.deliveryStatus,
+        reasonCode: row.payload.reasonCode, runId: row.payload.runId, batchId: row.payload.batchId, operationId: row.payload.operationId };
+    }
+  } else if (spec.payloadKind === 'taskTerminal') {
+    exactPayloadKeys(operation, row.payload, ['schemaVersion', 'status', 'resultCategory', 'attemptId', 'runId', 'resultRef']);
+    if (row.payload.schemaVersion !== 1 || !requireEventEnum(row.payload.status, TASK_TERMINAL_STATUSES)
+      || !requireEventEnum(row.payload.resultCategory, TASK_RESULT_CATEGORIES)) corrupt(operation, 'event_payload_violation');
+    try { validateStableId(row.payload.attemptId, { operation }, 'attemptId'); validateStableId(row.payload.runId, { operation }, 'runId');
+      if (row.payload.resultRef !== null) validateStableId(row.payload.resultRef, { operation }, 'resultRef');
+    } catch { corrupt(operation, 'event_payload_violation'); }
+    payload = { schemaVersion: 1, status: row.payload.status, resultCategory: row.payload.resultCategory,
+      attemptId: row.payload.attemptId, runId: row.payload.runId, resultRef: row.payload.resultRef };
+  } else if (spec.payloadKind === 'taskActionRequired') {
+    exactPayloadKeys(operation, row.payload, ['schemaVersion', 'action', 'itemId', 'reason']);
+    if (row.payload.schemaVersion !== 1 || row.payload.action !== 'manual_review' || row.payload.reason !== 'approval_required') corrupt(operation, 'event_payload_violation');
+    try { validateStableId(row.payload.itemId, { operation }, 'itemId'); } catch { corrupt(operation, 'event_payload_violation'); }
+    payload = { schemaVersion: 1, action: 'manual_review', itemId: row.payload.itemId, reason: 'approval_required' };
+  } else if (spec.payloadKind === 'executionResult') {
+    exactPayloadKeys(operation, row.payload, ['schemaVersion', 'status', 'resultCategory', 'resultRef', 'batchId', 'featureId']);
+    if (row.payload.schemaVersion !== 1 || !['succeeded', 'failed', 'cancelled'].includes(String(row.payload.status))
+      || !requireEventEnum(row.payload.resultCategory, EXECUTION_RESULT_CATEGORIES)) corrupt(operation, 'event_payload_violation');
+    try { validateStableId(row.payload.batchId, { operation }, 'batchId'); validateStableId(row.payload.featureId, { operation }, 'featureId');
+      if (row.payload.resultRef !== null) validateStableId(row.payload.resultRef, { operation }, 'resultRef');
+    } catch { corrupt(operation, 'event_payload_violation'); }
+    payload = { schemaVersion: 1, status: row.payload.status, resultCategory: row.payload.resultCategory,
+      resultRef: row.payload.resultRef, batchId: row.payload.batchId, featureId: row.payload.featureId };
   } else if (spec.payloadKind === 'workspaceOperationUpdated') {
     exactPayloadKeys(operation, row.payload, ['schemaVersion', 'operationId', 'status', 'executionStage']);
     if (row.payload.schemaVersion !== 1 || !requireEventEnum(row.payload.status, WORKSPACE_OPERATION_STATUSES)

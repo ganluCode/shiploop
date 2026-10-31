@@ -99,7 +99,31 @@ export function createSqliteAtomicCommandStore(
             const runUpdate = session.database.prepare('UPDATE runs SET status = ?, reason = ?, ended_at = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(runStatus, value.reason, outcome === 'awaiting_approval' ? null : timestamp, timestamp, projectId, runId, value.expectedRunRevision);
             const batchUpdate = session.database.prepare('UPDATE execution_batches SET status = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(batchStatus, value.reason, timestamp, projectId, batchId, value.expectedBatchRevision);
             if (featureUpdate.changes !== 1 || runUpdate.changes !== 1 || batchUpdate.changes !== 1) throw new StorageError('conflict', operation, '最终收尾 CAS 未命中');
-            executions.appendExecutionEventInTransaction({ projectId, eventType: outcome === 'completed' ? 'feature.finalized' : 'feature.finalization_blocked', aggregateType: 'feature', aggregateId: featureId, aggregateRevision: snapshot.feature.revision + 1, payload: outcome === 'completed' ? { finalized: true } : { blocked: true } });
+            const reasonCode = /^[a-z][a-z0-9_.-]{0,63}$/.test(value.reason as string) ? value.reason as string : 'finalization_failed';
+            const featureEventPayload = {
+              schemaVersion: 1, outcome, deliveryStatus, reasonCode,
+              runId, batchId, operationId: value.operationId as string | null,
+            };
+            executions.appendExecutionEventInTransaction({
+              projectId,
+              eventType: outcome === 'completed' ? 'feature.finalized' : 'feature.finalization_blocked',
+              aggregateType: 'feature', aggregateId: featureId, aggregateRevision: snapshot.feature.revision + 1,
+              payload: featureEventPayload,
+            });
+            if (outcome !== 'awaiting_approval') {
+              executions.appendExecutionEventInTransaction({
+                projectId, eventType: 'execution.run.ended', aggregateType: 'run', aggregateId: runId,
+                aggregateRevision: currentRun.revision + 1,
+                payload: { schemaVersion: 1, status: runStatus, resultCategory: 'feature_finalization',
+                  resultRef: value.operationId as string | null, batchId, featureId },
+              });
+              executions.appendExecutionEventInTransaction({
+                projectId, eventType: 'execution.batch.ended', aggregateType: 'execution_batch', aggregateId: batchId,
+                aggregateRevision: currentBatch.revision + 1,
+                payload: { schemaVersion: 1, status: batchStatus, resultCategory: 'feature_finalization',
+                  resultRef: value.operationId as string | null, batchId, featureId },
+              });
+            }
           }
           const resultFeature = plan.getFeaturePlanInTransaction(projectId, featureId).feature;
           const resultRun = executions.getExecutionRunInTransaction(projectId, runId);

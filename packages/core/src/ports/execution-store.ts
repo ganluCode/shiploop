@@ -84,6 +84,25 @@ export const TASK_CLAIMED_EVENT_TYPE = 'task.claimed';
 export const ATTEMPT_UPDATED_EVENT_TYPE = 'task.attempt.updated';
 export const TASK_APPROVAL_BLOCKED_EVENT_TYPE = 'task.approval.blocked';
 export const TASK_APPROVAL_DECIDED_EVENT_TYPE = 'task.approval.decided';
+/** P07-4：Task 最终结果事件；只在 Task 进入不可返工终态时写入。 */
+export const TASK_TERMINAL_EVENT_TYPE = 'task.terminal';
+/** P07-4：人工处理需求事件；与普通 Attempt 更新和暂停意图区分。 */
+export const TASK_ACTION_REQUIRED_EVENT_TYPE = 'task.action_required';
+/** P07-4：Run 终态结果事件；Runtime 完成本身不触发。 */
+export const EXECUTION_RUN_TERMINAL_EVENT_TYPE = 'execution.run.ended';
+/** P07-4：Batch 因预算或连续无进展进入终态的结果事件。 */
+export const EXECUTION_BATCH_TERMINAL_EVENT_TYPE = 'execution.batch.ended';
+
+export const TASK_TERMINAL_STATUSES = ['passed', 'failed', 'cancelled'] as const;
+export type TaskTerminalStatus = (typeof TASK_TERMINAL_STATUSES)[number];
+export const TASK_RESULT_CATEGORIES = [
+  'passed', 'verification_failed', 'runtime_failed', 'preparation_failed', 'cancelled', 'budget_exhausted',
+] as const;
+export type TaskResultCategory = (typeof TASK_RESULT_CATEGORIES)[number];
+export const EXECUTION_RESULT_CATEGORIES = [
+  'succeeded', 'failed', 'cancelled', 'budget_exhausted', 'feature_finalization',
+] as const;
+export type ExecutionResultCategory = (typeof EXECUTION_RESULT_CATEGORIES)[number];
 
 /** 执行域事件白名单（与 ports/events.ts 公开白名单同源）。 */
 export const FEATURE_FINALIZED_EVENT_TYPE = 'feature.finalized';
@@ -109,6 +128,10 @@ export const EXECUTION_EVENT_TYPES = [
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
   TASK_APPROVAL_DECIDED_EVENT_TYPE,
+  TASK_TERMINAL_EVENT_TYPE,
+  TASK_ACTION_REQUIRED_EVENT_TYPE,
+  EXECUTION_RUN_TERMINAL_EVENT_TYPE,
+  EXECUTION_BATCH_TERMINAL_EVENT_TYPE,
   FEATURE_FINALIZED_EVENT_TYPE,
   FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
 ] as const;
@@ -118,7 +141,8 @@ interface ExecutionEventSpec {
   readonly aggregateType: 'run' | 'execution_batch' | 'task' | 'feature';
   readonly payloadKey:
     | 'dispatched' | 'labelsUpdated' | 'revised' | 'paused' | 'cancelling' | 'cancelled' | 'resumed'
-    | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized';
+    | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized'
+    | 'result' | 'actionRequired';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
@@ -128,6 +152,10 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'updated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'blocked' }),
   [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'decided' }),
+  [TASK_TERMINAL_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'result' }),
+  [TASK_ACTION_REQUIRED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'actionRequired' }),
+  [EXECUTION_RUN_TERMINAL_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'result' }),
+  [EXECUTION_BATCH_TERMINAL_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'result' }),
   [FEATURE_FINALIZED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'finalized' }),
   [FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'blocked' }),
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
@@ -819,15 +847,56 @@ export function validateExecutionEventAppendInput(
   ) {
     throw validationError(context, 'aggregateRevision', '必须是 ≥1 的安全整数', object.aggregateRevision);
   }
-  if (!isPlainObject(object.payload) || object.payload[spec.payloadKey] !== true) {
-    throw validationError(
-      context,
-      'payload',
-      `必须是 {${spec.payloadKey}:true}（脱敏事件固定形状）`,
-      object.payload,
-    );
+  if (!isPlainObject(object.payload)) {
+    throw validationError(context, 'payload', '必须是对象', object.payload);
   }
-  const payload: Readonly<Record<string, unknown>> = { [spec.payloadKey]: true };
+  const rawPayload = object.payload;
+  const requireVersionedId = (field: string): string => requireStableIdField(rawPayload[field], context, field);
+  const requireNullableId = (field: string): string | null => {
+    if (rawPayload[field] === null) return null;
+    return requireStableIdField(rawPayload[field], context, field);
+  };
+  let payload: Readonly<Record<string, unknown>>;
+  if (spec.payloadKey === 'result') {
+    if (eventType === TASK_TERMINAL_EVENT_TYPE) {
+      rejectUnknownKeys(rawPayload, ['schemaVersion', 'status', 'resultCategory', 'attemptId', 'runId', 'resultRef'], context, 'payload');
+      if (rawPayload.schemaVersion !== 1 || !(TASK_TERMINAL_STATUSES as readonly unknown[]).includes(rawPayload.status)
+        || !(TASK_RESULT_CATEGORIES as readonly unknown[]).includes(rawPayload.resultCategory)) {
+        throw validationError(context, 'payload', 'Task 终态事件 payload 版本、状态或结果类别非法', rawPayload);
+      }
+      payload = { schemaVersion: 1, status: rawPayload.status, resultCategory: rawPayload.resultCategory,
+        attemptId: requireVersionedId('attemptId'), runId: requireVersionedId('runId'), resultRef: requireNullableId('resultRef') };
+    } else {
+      rejectUnknownKeys(rawPayload, ['schemaVersion', 'status', 'resultCategory', 'resultRef', 'batchId', 'featureId'], context, 'payload');
+      if (rawPayload.schemaVersion !== 1 || !['succeeded', 'failed', 'cancelled'].includes(String(rawPayload.status))
+        || !(EXECUTION_RESULT_CATEGORIES as readonly unknown[]).includes(rawPayload.resultCategory)) {
+        throw validationError(context, 'payload', 'Run/Batch 终态事件 payload 版本、状态或结果类别非法', rawPayload);
+      }
+      payload = { schemaVersion: 1, status: rawPayload.status, resultCategory: rawPayload.resultCategory,
+        resultRef: requireNullableId('resultRef'), batchId: requireVersionedId('batchId'), featureId: requireVersionedId('featureId') };
+    }
+  } else if (spec.payloadKey === 'actionRequired') {
+    rejectUnknownKeys(rawPayload, ['schemaVersion', 'action', 'itemId', 'reason'], context, 'payload');
+    if (rawPayload.schemaVersion !== 1 || rawPayload.action !== 'manual_review' || rawPayload.reason !== 'approval_required') {
+      throw validationError(context, 'payload', '人工处理事件 payload 非法', rawPayload);
+    }
+    payload = { schemaVersion: 1, action: 'manual_review', itemId: requireVersionedId('itemId'), reason: 'approval_required' };
+  } else if ((eventType === FEATURE_FINALIZED_EVENT_TYPE || eventType === FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE)
+    && Object.keys(rawPayload).length > 1) {
+    rejectUnknownKeys(rawPayload, ['schemaVersion', 'outcome', 'deliveryStatus', 'reasonCode', 'runId', 'batchId', 'operationId'], context, 'payload');
+    if (rawPayload.schemaVersion !== 1 || typeof rawPayload.outcome !== 'string' || typeof rawPayload.deliveryStatus !== 'string'
+      || typeof rawPayload.reasonCode !== 'string' || !/^[a-z][a-z0-9_.-]{0,63}$/.test(rawPayload.reasonCode)) {
+      throw validationError(context, 'payload', 'Feature 收尾事件 payload 非法', rawPayload);
+    }
+    payload = { schemaVersion: 1, outcome: rawPayload.outcome, deliveryStatus: rawPayload.deliveryStatus,
+      reasonCode: rawPayload.reasonCode, runId: requireVersionedId('runId'), batchId: requireVersionedId('batchId'),
+      operationId: requireNullableId('operationId') };
+  } else {
+    if (rawPayload[spec.payloadKey] !== true) {
+      throw validationError(context, 'payload', `必须是 {${spec.payloadKey}:true}（脱敏事件固定形状）`, rawPayload);
+    }
+    payload = { [spec.payloadKey]: true };
+  }
   return {
     projectId: requireStableIdField(object.projectId, context, 'projectId'),
     eventType,

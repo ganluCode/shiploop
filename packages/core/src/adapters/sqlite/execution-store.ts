@@ -59,6 +59,8 @@ import {
   EXECUTION_FEATURE_CANCELLING_EVENT_TYPE,
   EXECUTION_FEATURE_CANCELLED_EVENT_TYPE,
   EXECUTION_FEATURE_RESUMED_EVENT_TYPE,
+  EXECUTION_RUN_TERMINAL_EVENT_TYPE,
+  EXECUTION_BATCH_TERMINAL_EVENT_TYPE,
   FINALIZATION_RETRY_BATCH_OPEN_REASON,
   executionCorruptError,
   isExecutionActiveStatus,
@@ -2396,12 +2398,38 @@ export function createSqliteExecutionAccess(
 
   function appendRunCancelEvent(projectId: string, runId: string, revision: number,
     cancelled: boolean): string {
-    return appendExecutionEventInTransaction({
+    const eventId = appendExecutionEventInTransaction({
       projectId,
       eventType: cancelled ? EXECUTION_RUN_CANCELLED_EVENT_TYPE : EXECUTION_RUN_CANCELLING_EVENT_TYPE,
       aggregateType: 'run', aggregateId: runId, aggregateRevision: revision,
       payload: cancelled ? { cancelled: true } : { cancelling: true },
     });
+    if (cancelled) {
+      const run = getExecutionRunInTransaction(projectId, runId);
+      appendExecutionEventInTransaction({
+        projectId, eventType: EXECUTION_RUN_TERMINAL_EVENT_TYPE, aggregateType: 'run', aggregateId: runId,
+        aggregateRevision: revision,
+        payload: { schemaVersion: 1, status: 'cancelled', resultCategory: 'cancelled', resultRef: null,
+          batchId: run.batchId, featureId: run.featureId },
+      });
+    }
+    return eventId;
+  }
+
+  function appendBatchCancelEvent(projectId: string, batchId: string, revision: number): string {
+    const eventId = appendExecutionEventInTransaction({
+      projectId, eventType: EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
+      aggregateType: 'execution_batch', aggregateId: batchId,
+      aggregateRevision: revision, payload: { cancelled: true },
+    });
+    const batch = getExecutionBatchInTransaction(projectId, batchId);
+    appendExecutionEventInTransaction({
+      projectId, eventType: EXECUTION_BATCH_TERMINAL_EVENT_TYPE, aggregateType: 'execution_batch', aggregateId: batchId,
+      aggregateRevision: revision,
+      payload: { schemaVersion: 1, status: 'cancelled', resultCategory: 'cancelled', resultRef: null,
+        batchId, featureId: batch.featureId },
+    });
+    return eventId;
   }
 
   function requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult {
@@ -2638,11 +2666,7 @@ export function createSqliteExecutionAccess(
         { id: targetId, status: targetStatus, revision: targetRevision }, 'cancelled', timestamp);
       if (result.changed) {
         changed = true; currentRevision = result.revision;
-        eventId = appendExecutionEventInTransaction({
-          projectId, eventType: EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
-          aggregateType: 'execution_batch', aggregateId: targetId,
-          aggregateRevision: result.revision, payload: { cancelled: true },
-        });
+        eventId = appendBatchCancelEvent(projectId, targetId, result.revision);
       }
     }
     const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
@@ -2833,11 +2857,7 @@ export function createSqliteExecutionAccess(
     const result = applyBatchCancelStatus(stop.projectId,
       { id: batch.id, status: batch.status, revision: batch.revision }, 'cancelled', timestamp);
     if (result.changed) {
-      appendExecutionEventInTransaction({
-        projectId: stop.projectId, eventType: EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
-        aggregateType: 'execution_batch', aggregateId: stop.targetId,
-        aggregateRevision: result.revision, payload: { cancelled: true },
-      });
+      appendBatchCancelEvent(stop.projectId, stop.targetId, result.revision);
     }
   }
 
@@ -3317,6 +3337,20 @@ export function createSqliteExecutionAccess(
     const inserted = db
       .prepare<[string], RunOutcomeSettlementSqlRow>(`${SELECT_SETTLEMENT} WHERE id = ?`)
       .get(id) as RunOutcomeSettlementSqlRow;
+    const resultCategory = shouldTerminalize && valid.outcome !== 'cancelled'
+      ? 'budget_exhausted' : valid.outcome;
+    appendExecutionEventInTransaction({
+      projectId: valid.projectId, eventType: EXECUTION_RUN_TERMINAL_EVENT_TYPE, aggregateType: 'run', aggregateId: valid.runId,
+      aggregateRevision: runRow.revision + 1,
+      payload: { schemaVersion: 1, status: valid.outcome, resultCategory, resultRef: id, batchId: valid.batchId, featureId: batchRow.feature_id },
+    });
+    if (shouldTerminalize) {
+      appendExecutionEventInTransaction({
+        projectId: valid.projectId, eventType: EXECUTION_BATCH_TERMINAL_EVENT_TYPE, aggregateType: 'execution_batch', aggregateId: valid.batchId,
+        aggregateRevision: batchRow.revision + 1,
+        payload: { schemaVersion: 1, status: 'failed', resultCategory: 'budget_exhausted', resultRef: id, batchId: valid.batchId, featureId: batchRow.feature_id },
+      });
+    }
     return settlementFromRow(inserted, operation);
   }
 

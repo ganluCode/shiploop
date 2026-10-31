@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { CommandTransaction } from '../ports/atomic-commands.js';
 import { createCompletedReceipt, PublicError, type CommandReceipt, type ValidatedCommandEnvelope } from '../ports/commands.js';
 import { createResultRef } from '../ports/command-receipts.js';
-import { TASK_APPROVAL_BLOCKED_EVENT_TYPE } from '../ports/execution-store.js';
+import { TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_ACTION_REQUIRED_EVENT_TYPE } from '../ports/execution-store.js';
 import { verifyFeaturePlanApprovalInTransaction } from './plan-approval-verification.js';
 
 export const TASK_APPROVAL_BLOCK_OPERATION = 'task.approval.block';
@@ -34,6 +34,11 @@ export function submitTaskApprovalBlock(identity: {
   if (item.created) transaction.appendExecutionEvent({ projectId, eventType: TASK_APPROVAL_BLOCKED_EVENT_TYPE,
     aggregateType: 'task', aggregateId: task.id, aggregateRevision: revision,
     payload: { blocked: true, itemId: item.record.id, kind: item.record.kind } });
+  if (item.created) {
+    transaction.appendExecutionEvent({ projectId, eventType: TASK_ACTION_REQUIRED_EVENT_TYPE,
+      aggregateType: 'task', aggregateId: task.id, aggregateRevision: revision,
+      payload: { schemaVersion: 1, action: 'manual_review', itemId: item.record.id, reason: 'approval_required' } });
+  }
   const receipt = createCompletedReceipt({ ...identity, resultRef: createResultRef(randomBytes(32)),
     result: { taskId: task.id, manualBlock: true, revision, item: item.record,
       planDigest: approval.planDigest, checkPolicyDigest: approval.checkPolicyDigest } });
