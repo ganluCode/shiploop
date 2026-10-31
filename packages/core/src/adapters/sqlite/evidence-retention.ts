@@ -143,6 +143,9 @@ export function createSqliteRetentionCleanupStore(options: SqliteRetentionCleanu
     if (existsSync(backupRoot)) {
       for (const entry of readdirSync(backupRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         if (!entry.isDirectory() || !ID.test(entry.name) || entry.name.startsWith('.')) continue;
+        // `operations` 是受管备份操作日志目录（Core 打开即创建），不是备份包；
+        // 不跳过会把真实数据根上的每次清理都变成全量保守（F-016）。
+        if (entry.name === 'operations') continue;
         const manifestPath = join(backupRoot, entry.name, 'manifest.json');
         try {
           const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Row;

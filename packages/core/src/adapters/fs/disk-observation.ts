@@ -237,9 +237,10 @@ export function createBackupCatalogReader(options: { readonly backupRoot: string
       const catalog: BackupCatalogEntry[] = [];
       let unreadable = 0;
       for (const entry of entries) {
-        // staging 目录以 `.` 开头、未完成报告为 `<backupId>.incomplete.json` 文件：
-        // 都不是完整包，跳过（孤儿处理属 F-013 清理，不在清单估计内）。
-        if (!entry.isDirectory() || entry.name.startsWith('.') || !BACKUP_ID_PATTERN.test(entry.name)) {
+        // staging 目录以 `.` 开头、未完成报告为 `<backupId>.incomplete.json` 文件、
+        // `operations` 为受管备份操作日志目录（Core 打开即创建）：都不是完整包，
+        // 跳过（孤儿处理属 F-013 清理，不在清单估计内）。
+        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'operations' || !BACKUP_ID_PATTERN.test(entry.name)) {
           continue;
         }
         const item = await readCatalogEntry(backupRoot, entry.name);

@@ -107,8 +107,12 @@ const KNOWN_PROJECT_TABLES: Readonly<Record<string, { readonly cursorColumn: str
   workspace_operations: { cursorColumn: 'id', disposition: 'delete' },
 });
 
-/** 制品引用列（与 F-004 备份包同一清单 + 标量输出制品列；引用安全同一口径）。json=true 表示 TEXT 列为 JSON 数组（元素 {artifactId}）。 */
-const REFERENCE_COLUMNS: ReadonlyArray<{ readonly table: string; readonly column: string; readonly json?: true }> = Object.freeze([
+/** 制品引用列（与 F-004 备份包同一清单 + 标量输出制品列；引用安全同一口径）。json=true 表示 TEXT 列为 JSON 数组（元素 {artifactId}）。
+ * artifactShapedOnly=true 表示该列除制品引用外还合法携带 builtin: 等不透明引用
+ * （P06 画像能力模块；无制品正文），非制品稳定 ID 形态不参与引用分类，
+ * 不凭空制造 unknown_reference 阻塞（F-016，与备份包同口径）。 */
+const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const REFERENCE_COLUMNS: ReadonlyArray<{ readonly table: string; readonly column: string; readonly json?: true; readonly artifactShapedOnly?: true }> = Object.freeze([
   { table: 'attempts', column: 'input_ref' },
   { table: 'attempts', column: 'code_ref' },
   { table: 'attempts', column: 'diagnostic_ref' },
@@ -118,7 +122,7 @@ const REFERENCE_COLUMNS: ReadonlyArray<{ readonly table: string; readonly column
   { table: 'recording_manifests', column: 'manifest_ref' },
   { table: 'document_versions', column: 'content_ref' },
   { table: 'memory_records', column: 'content_ref' },
-  { table: 'capability_modules', column: 'content_ref' },
+  { table: 'capability_modules', column: 'content_ref', artifactShapedOnly: true },
   { table: 'baseline_check_results', column: 'output_artifact_id' },
   { table: 'check_results', column: 'output_artifact_id' },
   { table: 'planning_contexts', column: 'candidate_artifact_id' },
@@ -362,6 +366,7 @@ export function createSqliteProjectDeleteInventory(options: {
               }
             }
           } else {
+            if (ref.artifactShapedOnly === true && !ARTIFACT_ID_PATTERN.test(value)) continue;
             classifyReference(owner, value, `${ref.table}.${ref.column}`, artifactIds, projectId, referenceCounters, note);
           }
         }

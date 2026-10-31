@@ -215,18 +215,28 @@ export function createBackupPackageService(options: BackupPackageServiceOptions)
           projectCursor = selectedProjects.length === limits.pageSize ? String(selectedProjects.at(-1)!.id) : undefined;
         } while (projectCursor !== undefined);
         const requiredRefs: Array<{ projectId: string; artifactId: string; reason: string }> = [];
-        const requireRef = (projectId: string, artifactId: unknown, reason: string): void => {
-          if (typeof artifactId !== 'string' || !artifactByProject.get(projectId)?.has(artifactId)) requiredRefs.push({ projectId, artifactId: String(artifactId), reason });
+        // 制品稳定 ID 形态（[A-Za-z0-9._-]）：只有该形态的引用才可能是制品引用。
+        // capability_modules.content_ref 除制品引用外还合法携带 builtin: 等不透明
+        // 内置模块引用（P06 画像检测写入，无包内正文）；非制品形态不参与
+        // “必需制品引用缺失”核对，也不误报 unknown_required_reference（F-016）。
+        const ARTIFACT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+        const requireRef = (projectId: string, artifactId: unknown, reason: string, artifactShapedOnly = false): void => {
+          if (typeof artifactId !== 'string') {
+            requiredRefs.push({ projectId, artifactId: String(artifactId), reason });
+            return;
+          }
+          if (artifactShapedOnly && !ARTIFACT_ID.test(artifactId)) return;
+          if (!artifactByProject.get(projectId)?.has(artifactId)) requiredRefs.push({ projectId, artifactId, reason });
         };
-        const refColumns: Array<[string, string, string]> = [
-          ['attempts', 'input_ref', 'execution-input'], ['attempts', 'code_ref', 'attempt-code'], ['attempts', 'diagnostic_ref', 'attempt-diagnostic'],
-          ['sessions', 'input_ref', 'session-input'], ['sessions', 'result_ref', 'session-result'], ['session_messages', 'content_ref', 'recording-content'],
-          ['recording_manifests', 'manifest_ref', 'recording-manifest'], ['document_versions', 'content_ref', 'document-content'],
-          ['memory_records', 'content_ref', 'memory-content'], ['capability_modules', 'content_ref', 'capability-content'],
+        const refColumns: Array<[table: string, column: string, reason: string, artifactShapedOnly: boolean]> = [
+          ['attempts', 'input_ref', 'execution-input', false], ['attempts', 'code_ref', 'attempt-code', false], ['attempts', 'diagnostic_ref', 'attempt-diagnostic', false],
+          ['sessions', 'input_ref', 'session-input', false], ['sessions', 'result_ref', 'session-result', false], ['session_messages', 'content_ref', 'recording-content', false],
+          ['recording_manifests', 'manifest_ref', 'recording-manifest', false], ['document_versions', 'content_ref', 'document-content', false],
+          ['memory_records', 'content_ref', 'memory-content', false], ['capability_modules', 'content_ref', 'capability-content', true],
         ];
-        for (const [table, column, reason] of refColumns) if (tableExists(snapshotDb, table)) {
+        for (const [table, column, reason, artifactShapedOnly] of refColumns) if (tableExists(snapshotDb, table)) {
           const rows = snapshotDb.prepare(`SELECT project_id, ${column} AS ref FROM ${table} WHERE ${column} IS NOT NULL`).all() as Row[];
-          for (const row of rows) requireRef(String(row.project_id), row.ref, reason);
+          for (const row of rows) requireRef(String(row.project_id), row.ref, reason, artifactShapedOnly);
         }
         for (const [table, columns] of [['document_versions', ['source_refs']], ['memory_records', ['source_refs']], ['session_messages', ['source_refs', 'attachment_refs']]] as const) {
           if (!tableExists(snapshotDb, table)) continue;
