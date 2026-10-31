@@ -717,7 +717,9 @@ export type PlanListScope =
   | { readonly kind: 'git-repairs'; readonly projectId: string }
   /** P05-5：项目/Feature/Batch 资源租约分页；游标绑定筛选范围。 */
   | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string }
-  | { readonly kind: 'batch-delivery'; readonly projectId: string; readonly batchId: string };
+  | { readonly kind: 'batch-delivery'; readonly projectId: string; readonly batchId: string }
+  /** P07-4 / F-001 结果诊断分页；父级固定为 Batch/Run/Attempt/Work Session 之一。 */
+  | { readonly kind: 'result-diagnostics'; readonly projectId: string; readonly parentKind: 'batch' | 'run' | 'attempt' | 'session'; readonly parentId: string };
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
   readonly rootIdentity: string;
@@ -961,6 +963,18 @@ export function createPlanListCursorBinding(
       batchId: validateStableId(scope.batchId, { operation }, 'scope.batchId'),
     } };
   }
+  if (scope.kind === 'result-diagnostics') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'parentKind', 'parentId'], { operation }, 'scope');
+    if (typeof scope.parentKind !== 'string' || !['batch', 'run', 'attempt', 'session'].includes(scope.parentKind)) {
+      planInvalidInput(operation, 'scope.parentKind', '必须是 batch / run / attempt / session', scope.parentKind);
+    }
+    return { rootIdentity: input.rootIdentity, scope: {
+      kind: 'result-diagnostics',
+      projectId: validateStableId(scope.projectId, { operation }, 'scope.projectId'),
+      parentKind: scope.parentKind as 'batch' | 'run' | 'attempt' | 'session',
+      parentId: validateStableId(scope.parentId, { operation }, 'scope.parentId'),
+    } };
+  }
   if (scope.kind === 'git-repairs') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
     return {
@@ -1007,7 +1021,7 @@ export function createPlanListCursorBinding(
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'git-repairs' / 'planning-contexts' / 'feature-planning-contexts'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'git-repairs' / 'planning-contexts' / 'feature-planning-contexts' / 'result-diagnostics'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -1040,7 +1054,8 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'git-repairs' &&
       binding.scope.kind !== 'execution-resources' &&
       binding.scope.kind !== 'planning-contexts' &&
-      binding.scope.kind !== 'feature-planning-contexts')
+      binding.scope.kind !== 'feature-planning-contexts' &&
+      binding.scope.kind !== 'result-diagnostics')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }
@@ -1095,6 +1110,9 @@ function planScopeFingerprint(scope: PlanListScope): string {
     case 'batch-delivery':
     case 'budget-revisions':
       parent = scope.batchId;
+      break;
+    case 'result-diagnostics':
+      parent = `${scope.parentKind}:${scope.parentId}`;
       break;
     case 'attempt-diagnostics':
       parent = scope.attemptId;

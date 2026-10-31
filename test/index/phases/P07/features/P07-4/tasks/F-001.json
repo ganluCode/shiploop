@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts", "all": true },
+        { "file": "test/modules/delivery/p05-9-f001-batch-delivery-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-session-query.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-schedule-query.test.ts", "all": true }
+      ]
+    }
+  ]
+}

@@ -225,6 +225,17 @@ import {
   type BatchDeliveryQueryReadStore,
   type PublicBatchDeliveryResult,
 } from '../ports/batch-delivery-query.js';
+import {
+  EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION,
+  RESULT_DIAGNOSTICS_INPUT_KEYS,
+  resultDiagnosticsParentId,
+  validateResultDiagnosticsSelector,
+  type ResultDiagnosticsListResult,
+  type ResultDiagnosticsQueryReadStore,
+} from '../ports/result-diagnostics-query.js';
+import { buildResultDiagnosticRecord, buildResultPageUsage } from './result-diagnostics.js';
+import type { BuiltResultDiagnostic, ResultEvidenceResolution } from './result-diagnostics.js';
+import type { PublicResultDiagnosticRecord } from '../ports/result-diagnostics-query.js';
 
 import {
   INTEGRATION_PLAN_GET_OPERATION,
@@ -259,6 +270,7 @@ import {
 } from '../ports/execution-control-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
+import type { ArtifactRecord } from '../ports/artifact-store.js';
 import { createArtifactVerifier, isArtifactVerifyError } from './artifact-verify.js';
 import { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION, validateWorkRecordingTarget,
   publicWorkRecordingRow, publicWorkRecordingRef } from '../ports/work-recording-query.js';
@@ -540,6 +552,8 @@ export interface QueryService {
   getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
   /** P05-9 / F-001 fixed Batch delivery aggregation; read-only and bounded. */
   getBatchDelivery(principal: unknown, input: unknown): Promise<PublicBatchDeliveryResult>;
+  /** P07-4 / F-001：按 Batch/Run/Attempt/Work Session 定位的结果诊断分页查询。 */
+  listResultDiagnostics(principal: unknown, input: unknown): Promise<ResultDiagnosticsListResult>;
   /** P05-8 / F-006 GitAgent 修复授权/Attempt 只读投影。 */
   listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult>;
   getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult>;
@@ -607,6 +621,8 @@ export interface QueryServiceOptions {
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
   /** P05-9 / F-001 Batch 收尾聚合查询一致读取窄端口（只读）。 */
   readonly batchDeliveryReads?: BatchDeliveryQueryReadStore;
+  /** P07-4 / F-001 结果诊断分页一致读取窄端口（只读）。 */
+  readonly resultDiagnosticsReads?: ResultDiagnosticsQueryReadStore;
   /** P05-8 / F-006 GitAgent 修复一致读投影（只读）。 */
   readonly gitAgentRepairReads?: GitAgentRepairQueryReadStore;
   /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
@@ -782,6 +798,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     featureReportReads,
     featureDeliveryReads,
     batchDeliveryReads,
+    resultDiagnosticsReads,
     gitAgentRepairReads,
     integrationPlanReads,
     executionControlReads,
@@ -830,6 +847,45 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       return validateWorkSessionResultEvidence(parsed);
     } catch {
       throw corrupt();
+    }
+  }
+
+  /**
+   * P07-4 / F-001：Attempt 结果证据解析（与 Feature 报告同一规则）：正文按读
+   * 事务内冻结的不可变快照核验 hash/size，身份绑定（项目/Attempt/Task/Run/
+   * Session/owner/执行版本）不一致即结构化 issue；缺失/损坏不伪造空正文。
+   */
+  async function readAttemptResultEvidence(
+    projectId: string,
+    attempt: Pick<AttemptRecord, 'id' | 'taskId' | 'runId' | 'owner' | 'hostInstanceId' | 'executionVersion'>,
+    session: { readonly id: string } | null,
+    artifact: ArtifactRecord | undefined,
+    operation: string,
+  ): Promise<ResultEvidenceResolution> {
+    if (artifact === undefined || artifact.status !== 'ready') {
+      return { evidence: null, issue: 'result_evidence_missing' };
+    }
+    try {
+      const verified = await settlementVerifier.readVerifiedContent(projectId, artifact.id);
+      if (verified.contentHash !== artifact.contentHash || verified.sizeBytes !== artifact.sizeBytes) {
+        return { evidence: null, issue: 'result_evidence_invalid' };
+      }
+      const body = JSON.parse(Buffer.from(verified.content).toString('utf8')) as {
+        kind?: unknown; identity?: Record<string, unknown>; taskId?: unknown; runId?: unknown;
+      };
+      const identity = body.identity;
+      if (identity?.projectId !== projectId || identity.attemptId !== attempt.id
+        || identity.executionVersion !== attempt.executionVersion
+        || identity.owner !== attempt.owner || identity.hostInstanceId !== attempt.hostInstanceId
+        || (body.kind === 'runtime-settlement'
+          ? identity.taskId !== attempt.taskId || identity.runId !== attempt.runId || identity.sessionId !== session?.id
+          : body.taskId !== attempt.taskId || body.runId !== attempt.runId)
+        || artifact.kind !== 'runtime-settlement') {
+        return { evidence: null, issue: 'result_evidence_invalid' };
+      }
+      return { evidence: toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence(body)), issue: null };
+    } catch {
+      return { evidence: null, issue: 'result_evidence_invalid' };
     }
   }
 
@@ -2808,27 +2864,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           const ref = detail.session?.resultRef ?? detail.evidence.find(a =>
             a.kind === 'runtime-settlement' && a.locator === `attempts/${detail.attempt.id}/launch-rejection.json`)?.id;
           const artifact = ref == null ? undefined : artifactsById.get(ref);
-          if (artifact?.status !== 'ready') {
-            results.set(detail.attempt.id, { evidence: null, issue: 'result_evidence_missing' });
-            continue;
-          }
-          try {
-            const verified = await settlementVerifier.readVerifiedContent(projectId, artifact.id);
-            if (verified.contentHash !== artifact.contentHash || verified.sizeBytes !== artifact.sizeBytes) throw new Error('snapshot_artifact_mismatch');
-            const body = JSON.parse(Buffer.from(verified.content).toString('utf8'));
-            const { attempt, session } = detail;
-            const identity = body.identity;
-            if (identity?.projectId !== projectId || identity?.attemptId !== attempt.id
-              || identity?.executionVersion !== attempt.executionVersion
-              || identity?.owner !== attempt.owner || identity?.hostInstanceId !== attempt.hostInstanceId
-              || (body.kind === 'runtime-settlement'
-                ? identity.taskId !== attempt.taskId || identity.runId !== attempt.runId || identity.sessionId !== session?.id
-                : body.taskId !== attempt.taskId || body.runId !== attempt.runId)
-              || artifact.kind !== 'runtime-settlement') throw new Error('evidence_ownership_mismatch');
-            results.set(detail.attempt.id, { evidence: toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence(body)), issue: null });
-          } catch {
-            results.set(detail.attempt.id, { evidence: null, issue: 'result_evidence_invalid' });
-          }
+          results.set(detail.attempt.id, await readAttemptResultEvidence(projectId, detail.attempt, detail.session, artifact, operation));
         }
         return buildFeatureExecutionReport(view, results);
       } catch (error) {
@@ -2887,6 +2923,71 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         if (view === undefined) executionEntityNotFound(operation);
         const nextCursor = view.nextId === null ? null : encodePlanListCursor(view.nextId, binding);
         return buildBatchDeliveryResult(view, nextCursor, filter.limit);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P07-4 / F-001：按 Batch/Run/Attempt/Work Session 定位的结果诊断分页查询
+    //（能力核验 → 恰一父级选择器校验 → 项目可见 → 受控游标解码先于读取 →
+    // 单一一致读视图分页 → 结果证据正文按不可变快照核验；三轴区分 Runtime
+    // 完成/Task 验收/Feature 交付；查询零写入、零事件、不触发 Git 或执行）。
+    async listResultDiagnostics(principal: unknown, input: unknown): Promise<ResultDiagnosticsListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_RESULT_DIAGNOSTICS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, [...RESULT_DIAGNOSTICS_INPUT_KEYS], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const parent = validateResultDiagnosticsSelector(object, operation);
+        requireProjectVisible(principal, projectId, operation);
+        if (resultDiagnosticsReads === undefined) throw new PublicError('unsupported', operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({
+          kind: 'result-diagnostics',
+          projectId,
+          parentKind: parent.kind,
+          parentId: resultDiagnosticsParentId(parent),
+        }, operation);
+        // 游标解析先于任何读取：跨父级/跨项目/跨根重放或篡改载荷一律
+        // invalid_cursor，绝不当作从零读取，也不先泄漏目标存在性。
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const page = resultDiagnosticsReads.readResultDiagnosticsPage(projectId, parent, request);
+        if (page === undefined) {
+          throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
+            details: { reason: 'execution_entity_not_found', entityType: parent.kind === 'batch' ? 'execution_batch' : parent.kind === 'run' ? 'run' : parent.kind === 'attempt' ? 'attempt' : 'work_session' },
+          });
+        }
+        const observations: (BuiltResultDiagnostic['normalized'])[] = page.records.map(() => null);
+        const records: PublicResultDiagnosticRecord[] = [];
+        for (let index = 0; index < page.records.length; index++) {
+          const row = page.records[index];
+          const ref = row.session?.resultRef ?? row.evidence.find(a =>
+            a.kind === 'runtime-settlement' && a.locator === `attempts/${row.attempt.id}/launch-rejection.json`)?.id ?? null;
+          const artifact = ref === null ? undefined : row.evidence.find(a => a.id === ref);
+          const resolution = await readAttemptResultEvidence(projectId, row.attempt, row.session, artifact, operation);
+          const built = buildResultDiagnosticRecord(row, resolution);
+          observations[index] = built.normalized;
+          records.push(built.record);
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'result-diagnostics',
+          parent,
+          parentFacts: page.scope,
+          records,
+          nextCursor: page.nextKey === null
+            ? null
+            : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+          eventWatermark: page.eventWatermark,
+          usage: buildResultPageUsage(observations),
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

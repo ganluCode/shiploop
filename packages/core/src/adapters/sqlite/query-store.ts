@@ -67,6 +67,8 @@ import type {
 } from '../../ports/feature-delivery-query.js';
 import { createSqliteBatchDeliveryQueryStore } from './batch-delivery-query-store.js';
 import type { BatchDeliveryQueryReadStore, BatchDeliveryView } from '../../ports/batch-delivery-query.js';
+import { createSqliteResultDiagnosticsQueryStore } from './result-diagnostics-query-store.js';
+import type { ResultDiagnosticsPage, ResultDiagnosticsParent, ResultDiagnosticsQueryReadStore } from '../../ports/result-diagnostics-query.js';
 import { createSqliteIntegrationPlanAccess } from './integration-plan-store.js';
 import { createSqliteIntegrationPlanQueryStore } from './integration-plan-query-store.js';
 import type { IntegrationPlanQueryReadStore } from '../../ports/integration-plan-query.js';
@@ -128,7 +130,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P03-8 / F-010 起追加 Feature 分轴结果查询窄读取（FeatureDeliveryQueryReadStore）；
  * P03-9 / F-013 起追加 Run/Batch 控制进度与恢复诊断窄读取（ExecutionControlQueryReadStore）；
  * P05-1 / F-011 起追加规划上下文/候选查询窄读取（PlanningQueryReadStore）；
- * P05-9 / F-001 起追加 Batch 收尾聚合查询窄读取（BatchDeliveryQueryReadStore）。 */
+ * P05-9 / F-001 起追加 Batch 收尾聚合查询窄读取（BatchDeliveryQueryReadStore）；
+ * P07-4 / F-001 起追加结果诊断分页窄读取（ResultDiagnosticsQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     EntityLabelQueryReadStore,
@@ -149,6 +152,7 @@ export interface SqliteQueryStore
     FeatureExecutionReportReadStore,
     ExecutionControlQueryReadStore,
     PlanningQueryReadStore,
+    ResultDiagnosticsQueryReadStore,
     KnowledgeQueryReadStore,
     MemoryQueryReadStore {}
 
@@ -175,6 +179,7 @@ export function createSqliteQueryStore(
   const gitOperations = createSqliteGitOperationQueryStore(session);
   const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
   const batchDelivery = createSqliteBatchDeliveryQueryStore(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs });
+  const resultDiagnostics = createSqliteResultDiagnosticsQueryStore(session);
   const featureReport = createSqliteFeatureExecutionReportStore(session, featureDelivery, workSessions);
   const integrationPlan = createSqliteIntegrationPlanQueryStore(
     createSqliteIntegrationPlanAccess(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs }),
@@ -354,6 +359,8 @@ export function createSqliteQueryStore(
       featureDelivery.readFeatureDeliveryView(projectId, featureId),
     readBatchDeliveryView: (projectId: unknown, batchId: unknown, request): BatchDeliveryView | undefined =>
       batchDelivery.readBatchDeliveryView(projectId, batchId, request),
+    readResultDiagnosticsPage: (projectId: unknown, parent: ResultDiagnosticsParent, request): ResultDiagnosticsPage | undefined =>
+      resultDiagnostics.readResultDiagnosticsPage(projectId, parent, request),
     readIntegrationPlanView: (projectId: unknown, integrationId: unknown) =>
       integrationPlan.readIntegrationPlanView(projectId, integrationId),
     readRunControlView: (projectId: unknown, runId: unknown): ExecutionRunControlView | undefined =>

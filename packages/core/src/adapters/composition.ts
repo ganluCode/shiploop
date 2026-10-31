@@ -1586,6 +1586,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       gitAgentRepairReads: createSqliteGitAgentRepairQueryStore(session),      featureReportReads: queryStore,
       featureDeliveryReads: queryStore,
       batchDeliveryReads: createSqliteBatchDeliveryQueryStore(session, { nowUtcMs }),
+      resultDiagnosticsReads: queryStore,
       integrationPlanReads: queryStore,
       executionControlReads: queryStore,
       artifacts: artifactStore,
