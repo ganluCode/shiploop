@@ -4345,6 +4345,74 @@ ALTER TABLE notification_deliveries ADD COLUMN claim_until_at INTEGER;
 CREATE INDEX notification_deliveries_claim_index ON notification_deliveries(status, next_attempt_at, claim_until_at);
 `;
 
+// P07-4 / F-007：v62 以 ALTER TABLE 追加认领字段，SQLite 无法追加表级 CHECK；
+// v63 重建表以把认领字段约束纳入实际 DDL，并恢复与 Drizzle Schema 一致的列顺序。
+const MIGRATION_063_SQL = `
+PRAGMA legacy_alter_table = ON;
+
+CREATE TABLE notification_deliveries_v63 (
+  id TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  event_sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  summary_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL,
+  policy_version INTEGER NOT NULL,
+  policy_digest TEXT NOT NULL,
+  claim_generation INTEGER NOT NULL DEFAULT 0,
+  claim_owner TEXT,
+  claim_until_at INTEGER,
+  last_receipt TEXT,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT,
+  FOREIGN KEY (event_id) REFERENCES state_events(id) ON DELETE RESTRICT,
+  FOREIGN KEY (project_id, event_id) REFERENCES state_events(project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT notification_deliveries_revision_check CHECK (revision >= 1),
+  CONSTRAINT notification_deliveries_updated_check CHECK (updated_at >= created_at),
+  CONSTRAINT notification_deliveries_channel_check CHECK (channel_id IN ('local-results')),
+  CONSTRAINT notification_deliveries_status_check CHECK (status IN ('pending','in_flight','delivered','retry_scheduled','exhausted')),
+  CONSTRAINT notification_deliveries_attempt_count_check CHECK (attempt_count BETWEEN 0 AND 16),
+  CONSTRAINT notification_deliveries_claim_generation_check CHECK (claim_generation >= 0),
+  CONSTRAINT notification_deliveries_claim_owner_check CHECK (claim_owner IS NULL OR length(claim_owner) BETWEEN 1 AND 128),
+  CONSTRAINT notification_deliveries_claim_until_check CHECK (claim_until_at IS NULL OR claim_until_at >= created_at),
+  CONSTRAINT notification_deliveries_event_sequence_check CHECK (event_sequence >= 1),
+  CONSTRAINT notification_deliveries_policy_version_check CHECK (policy_version >= 1),
+  CONSTRAINT notification_deliveries_policy_digest_check CHECK (length(policy_digest) = 64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT notification_deliveries_summary_check CHECK (json_valid(summary_json) AND json_type(summary_json) = 'object' AND length(summary_json) <= 4096),
+  CONSTRAINT notification_deliveries_receipt_check CHECK (last_receipt IS NULL OR (json_valid(last_receipt) AND json_type(last_receipt) = 'object' AND length(last_receipt) <= 8192)),
+  CONSTRAINT notification_deliveries_next_attempt_check CHECK (next_attempt_at >= created_at),
+  CONSTRAINT notification_deliveries_pending_shape_check CHECK (status <> 'pending' OR (attempt_count = 0 AND last_receipt IS NULL)),
+  CONSTRAINT notification_deliveries_in_flight_shape_check CHECK (status <> 'in_flight' OR last_receipt IS NULL),
+  CONSTRAINT notification_deliveries_delivered_shape_check CHECK (status <> 'delivered' OR last_receipt IS NOT NULL),
+  CONSTRAINT notification_deliveries_retry_shape_check CHECK (status NOT IN ('retry_scheduled','exhausted') OR attempt_count >= 1)
+);
+INSERT INTO notification_deliveries_v63 (
+  id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence,
+  event_type, summary_json, status, attempt_count, next_attempt_at, policy_version,
+  policy_digest, claim_generation, claim_owner, claim_until_at, last_receipt
+)
+SELECT
+  id, revision, created_at, updated_at, project_id, event_id, channel_id, event_sequence,
+  event_type, summary_json, status, attempt_count, next_attempt_at, policy_version,
+  policy_digest, claim_generation, claim_owner, claim_until_at, last_receipt
+FROM notification_deliveries;
+DROP TABLE notification_deliveries;
+ALTER TABLE notification_deliveries_v63 RENAME TO notification_deliveries;
+CREATE UNIQUE INDEX notification_deliveries_event_channel_unique ON notification_deliveries(event_id, channel_id);
+CREATE UNIQUE INDEX notification_deliveries_project_id_id_unique ON notification_deliveries(project_id, id);
+CREATE INDEX notification_deliveries_due_index ON notification_deliveries(status, next_attempt_at);
+CREATE INDEX notification_deliveries_claim_index ON notification_deliveries(status, next_attempt_at, claim_until_at);
+CREATE INDEX notification_deliveries_project_status_index ON notification_deliveries(project_id, status);
+
+PRAGMA legacy_alter_table = OFF;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4472,4 +4540,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 60, sql: VERIFICATION_PROCESS_RETENTION_MESSAGE_MIGRATION_SQL, checksum: sha256Hex(VERIFICATION_PROCESS_RETENTION_MESSAGE_MIGRATION_SQL) },
   { version: 61, sql: MIGRATION_061_SQL, checksum: sha256Hex(MIGRATION_061_SQL) },
   { version: 62, sql: MIGRATION_062_SQL, checksum: sha256Hex(MIGRATION_062_SQL) },
+  { version: 63, sql: MIGRATION_063_SQL, checksum: sha256Hex(MIGRATION_063_SQL), foreignKeysOff: true },
 ];
