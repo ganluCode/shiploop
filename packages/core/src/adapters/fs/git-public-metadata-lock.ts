@@ -5,7 +5,7 @@ import {
   closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, opendirSync,
   readSync, realpathSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { PublicError, isUuidV4 } from '../../ports/commands.js';
 import {
   GIT_PUBLIC_METADATA_CLAIM_FILE,
@@ -54,11 +54,20 @@ function marker(path: string): string {
 }
 function canonicalize(input: GitPublicMetadataLockInput): Claim {
   if (!isUuidV4(input.operationId)) throw new TypeError('Invalid Git metadata lock owner');
+  if (!isAbsolute(input.workspacePath) || !isAbsolute(input.gitCommonDir)) throw conflict();
   try {
-    const workspacePath = realpathSync(input.workspacePath);
-    const gitCommonDir = realpathSync(input.gitCommonDir);
-    if (!lstatSync(input.workspacePath).isDirectory() || !lstatSync(input.gitCommonDir).isDirectory()
-      || workspacePath !== resolve(input.workspacePath) || gitCommonDir !== resolve(input.gitCommonDir)) throw conflict();
+    const rawWorkspacePath = resolve(input.workspacePath);
+    const rawGitCommonDir = resolve(input.gitCommonDir);
+    const workspacePath = realpathSync(rawWorkspacePath);
+    const gitCommonDir = realpathSync(rawGitCommonDir);
+    /* A source alias is safe only when the workspace and its .git path use the
+     * same alias.  A workspace alias paired with the original common directory
+     * could otherwise bind two path identities to one claim inconsistently. */
+    const pairedWorkspaceAlias = rawWorkspacePath !== workspacePath
+      && rawGitCommonDir !== gitCommonDir
+      && rawGitCommonDir === resolve(rawWorkspacePath, '.git');
+    if ((rawWorkspacePath !== workspacePath || rawGitCommonDir !== gitCommonDir) && !pairedWorkspaceAlias) throw conflict();
+    if (!lstatSync(workspacePath).isDirectory() || !lstatSync(gitCommonDir).isDirectory()) throw conflict();
     const observedIdentity = deriveObservedRepoIdentity(gitCommonDir);
     // Existing pre-P06 bindings retain their path-derived identity; new bindings use inode identity.
     if ((input.repoIdentity !== observedIdentity && input.repoIdentity !== deriveRepoIdentity(gitCommonDir))
