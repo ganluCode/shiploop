@@ -92,7 +92,7 @@ if (verifierConfig !== undefined) {
 }
 const barriers = config.barriers === null || config.barriers === undefined
   ? {}
-  : config.barriers as { readonly verificationEntry?: boolean; readonly commitEntry?: boolean };
+  : config.barriers as { readonly verificationEntry?: boolean; readonly commitEntry?: boolean; readonly taskId?: string };
 const closeTimeoutMs = typeof config.closeTimeoutMs === 'number' ? config.closeTimeoutMs : 150_000;
 const watchdogMs = typeof config.watchdogMs === 'number' ? config.watchdogMs : 300_000;
 /* 可信装配定时释放门闩（有限预算，watchdog 兜底）：暂停写入场景的正常续跑。 */
@@ -299,6 +299,7 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
       const identity = verificationCodeIdentity(inspection);
       const snapshot = JSON.parse(attempt.input_snapshot) as { approval: { checkPolicyDigest: string; planDigest: string } };
       const now = () => Date.now();
+      const selectedBoundary = barriers.taskId === undefined || barriers.taskId === attempt.task_id;
       const processes = createCommandProcessAdapter({
         stopGraceMs: verifierConfig.stopGraceMs, stopConfirmMs: verifierConfig.stopConfirmMs,
       });
@@ -306,8 +307,11 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
         processes: {
           ...processes,
           async start(...args) {
-            const handle = await processes.start(...args);
-            if (barriers.verificationEntry !== true) return handle;
+            const override = config.verifierIdentityOverride as
+              { pid: number; processGroupId: number; startTime: string } | undefined;
+            const handle = await processes.start(args[0], identity => args[1](
+              override === undefined ? identity : { ...identity, ...override }), args[2]);
+            if (barriers.verificationEntry !== true || !selectedBoundary) return handle;
             /* 进入验证边界：真实检查命令已启动（等待其自写启动标记，有界），
              * 批次尚未定版；阻塞 executor 使父进程可在此终止 Host 或放行。 */
             const markerDeadline = Date.now() + 10_000;
@@ -354,7 +358,7 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
           selectedChecks: [{
             checkKey: 'tests', scope: 'task' as const, kind: 'command' as const,
             argv: [process.execPath, '--no-warnings', verifierConfig.checkRunner,
-              verifierConfig.markerPath, verifierConfig.holdPath, verifierConfig.targetPath,
+              verifierConfig.markerPath, selectedBoundary ? verifierConfig.holdPath : `${verifierConfig.holdPath}.unused`, verifierConfig.targetPath,
               verifierConfig.expectedContent, String(verifierConfig.holdBudgetMs),
               String(verifierConfig.testCount ?? 1)],
             cwdRef: null, environmentRef: null,
@@ -371,7 +375,7 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
         testCount: result.results[0]?.testCount ?? null,
       });
       if (result.status !== 'passed') continue;
-      if (barriers.commitEntry === true) {
+      if (barriers.commitEntry === true && selectedBoundary) {
         /* 进入提交边界：批次已通过、公开收尾（真实 commit + 回执）未开始。 */
         await drillBarrier('entered_commit', {
           attemptId: attempt.id, taskId: attempt.task_id, projectId: attempt.project_id,

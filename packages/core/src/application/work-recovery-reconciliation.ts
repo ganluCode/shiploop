@@ -353,6 +353,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           attemptId: attempt.id, invocationId: snapshot.resources.invocationId, executionVersion: attempt.executionVersion },
         sessionStatus: snapshot.session.status,
         sessionWatermark: snapshot.session.recordingWatermark,
+        settlementArtifactId: snapshot.session.resultRef,
         sessionGaps: [...recordingGaps, ...(snapshot.recording.indexGaps ?? [])],
         messages: snapshot.recording.messages, manifests: snapshot.recording.manifests,
         artifacts: snapshot.artifacts, indexLimited: snapshot.recording.indexLimited,

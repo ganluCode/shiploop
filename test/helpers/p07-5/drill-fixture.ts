@@ -130,7 +130,7 @@ export interface DrillProjectFacts {
   readonly projectId: string;
   readonly featureId: string;
   readonly repositoryPath: string;
-  readonly taskIds: readonly [string, string];
+  readonly taskIds: readonly [string, string, ...string[]];
   /** 依赖 Task（dependsOn: [首个 Task]）。 */
   readonly dependentTaskId: string;
   readonly requirementArtifactIds: Readonly<Record<string, string>>;
@@ -237,12 +237,18 @@ export interface DrillSpawnOptions {
   /** 暂停写入屏障：FakeRuntime 在写入目标文件前挂起（gates: ['pause_write']）。 */
   readonly pauseWrite?: boolean;
   /** 进入验证/进入提交 IPC drill_barrier 屏障。 */
-  readonly barriers?: { readonly verificationEntry?: boolean; readonly commitEntry?: boolean };
+  readonly barriers?: { readonly verificationEntry?: boolean; readonly commitEntry?: boolean; readonly taskId?: string };
+  /** Write a tracked progress file and a new untracked file on each Task. */
+  readonly progressWrites?: boolean;
+  readonly verifierTestCount?: number;
+  /** Trusted fault injection: persist another live PID with an unmatching start identity. */
+  readonly verifierIdentityOverride?: { readonly pid: number; readonly processGroupId: number; readonly startTime: string };
   /** 预置 Verifier hold 文件（检查命令启动后挂起，构成可终止的验证边界）。 */
   readonly verifierHold?: boolean;
 }
 
 export interface DrillFixtureOptions {
+  readonly taskCount?: 2 | 3;
   readonly prefix?: string;
   readonly stopAfter?: DrillFixtureStage;
   /** 部分初始化/清理观察：box 临时根创建后回调（测试断言清理事实）。 */
@@ -449,12 +455,11 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         id: phaseId, title: `演练阶段 ${key}`, description: null, labels: [],
       }, { scope }), 'phase.create');
 
-      const taskIds = [`t-${key}1`, `t-${key}2`] as const;
-      const contents: Readonly<Record<string, string>> = {
-        [taskIds[0]]: `# 演练需求一（${key}）\n\nP07 故障演练任务一规格正文（真实字节）。\n`,
-        [taskIds[1]]: `# 演练需求二（${key}）\n\nP07 故障演练任务二规格正文（依赖任务一）。\n`,
-      };
-      const requirementArtifactIds: Record<string, string> = { [taskIds[0]]: '', [taskIds[1]]: '' };
+      const taskIds: [string, string, ...string[]] = [`t-${key}1`, `t-${key}2`];
+      if (options.taskCount === 3) taskIds.push(`t-${key}3`);
+      const contents = Object.fromEntries(taskIds.map((id, index) =>
+        [id, `# 演练需求（${key} / ${index + 1}）\n\nP07 故障演练规格正文，经公开入口建立依赖链。\n`]));
+      const requirementArtifactIds: Record<string, string> = {};
       for (const taskId of taskIds) {
         const body = Buffer.from(contents[taskId], 'utf8');
         const published = await publisher.publishArtifact({
@@ -469,19 +474,12 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         plan: {
           schemaVersion: 1,
           feature: { title: `演练 Feature ${key}`, description: null, labels: [], sourceRefs: [] },
-          tasks: [
-            {
-              id: taskIds[0], title: `演练任务一（${key}）`,
-              acceptance: { criteria: ['验收甲：经公开入口建立', '验收乙：不依赖补写状态'] },
-              requirementsRefs: [{ artifactId: requirementArtifactIds[taskIds[0]]! }],
-            },
-            {
-              id: taskIds[1], title: `演练任务二（${key}）`,
-              acceptance: { criteria: ['验收丙：依赖解锁后执行'] },
-              requirementsRefs: [{ artifactId: requirementArtifactIds[taskIds[1]]! }],
-              dependsOn: [taskIds[0]],
-            },
-          ],
+          tasks: taskIds.map((id, index) => ({
+            id, title: `演练任务（${key} / ${index + 1}）`,
+            acceptance: { criteria: ['经公开入口建立，依赖通过才解锁，不补写状态'] },
+            requirementsRefs: [{ artifactId: requirementArtifactIds[id]! }],
+            ...(index === 0 ? {} : { dependsOn: [taskIds[index - 1]!] }),
+          })),
         },
       }, { scope, expectedRevision: 1 }), 'feature.plan.import');
       const featureId = (imported['feature'] as { id: string }).id;
@@ -611,7 +609,9 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         watchdogMs: 300_000,
         gates: spawnOptions.pauseWrite === true ? ['pause_write'] : [],
         script: { schemaVersion: 1, steps, result },
-        toolCommands: { probe: { argv: ['/usr/bin/true'], environment: {}, timeoutMs: 10_000 } },
+        toolCommands: { probe: { argv: spawnOptions.progressWrites ? [process.execPath, '-e',
+          "const fs = require('node:fs'); const p = 'progress.txt'; const n = fs.existsSync(p) ? Number(fs.readFileSync(p, 'utf8')) + 1 : 1; fs.writeFileSync(p, String(n)); fs.writeFileSync('pending-' + n + '.txt', 'preserved progress ' + n);"
+        ] : ['/usr/bin/true'], environment: {}, timeoutMs: 10_000 } },
         verifier: {
           checkRunner: CHECK_RUNNER,
           markerPath: verifierMarkerPath,
@@ -623,9 +623,10 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
           waitAttemptTimeoutMs: 120_000,
           stopGraceMs: 500,
           stopConfirmMs: 2_000,
-          testCount: 1,
+          testCount: spawnOptions.verifierTestCount ?? 1,
         },
         barriers: spawnOptions.barriers ?? {},
+        verifierIdentityOverride: spawnOptions.verifierIdentityOverride,
       };
     };
 

@@ -1,3 +1,4 @@
+import { readCurrentWorkspaceWriter } from './workspace-writer.js';
 import { createSqliteVerificationStore } from './verification-store.js';
 import { createSqliteDispatchRecovery, workRecoveryFingerprint } from './dispatch-recovery.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
@@ -119,7 +120,6 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
     if (indexLimited) indexGaps.push('recording_recovery_scan_limit');
     const artifactIds = [...new Set([...messages.flatMap(message => [message.contentRef.artifactId, ...message.attachments.map(a => a.artifactId)]),
       ...manifests.flatMap(manifest => manifest.manifestRef === null ? [] : [manifest.manifestRef.artifactId])])];
-    if (recordingArtifactRows.some(row => !artifactIds.includes(row.id))) indexGaps.push('recording_unindexed_artifact');
     return {
       messages, manifests, indexGaps: [...new Set(indexGaps)], indexLimited,
       artifactIds: [...new Set([...artifactIds, ...recordingArtifactRows.map(row => row.id)])],
@@ -174,10 +174,11 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
   }
 
   function assertCurrentWorkspaceOwner(workspace: ManagedWorkspaceRecord, attempt: ReturnType<typeof attempts.getAttempt>): void {
+    const writer = readCurrentWorkspaceWriter(session, workspace.projectId, workspace.id);
     if (workspace.projectId !== attempt.projectId || workspace.featureId !== attempt.featureId
-      || workspace.runId !== attempt.runId || workspace.attemptId !== attempt.id
-      || workspace.ownerId !== attempt.owner || workspace.hostInstanceId !== attempt.hostInstanceId
-      || workspace.executionVersion !== attempt.executionVersion) fail('workspace_identity_changed');
+      || !writer || writer.run_id !== attempt.runId || writer.attempt_id !== attempt.id
+      || writer.owner_id !== attempt.owner || writer.host_instance_id !== attempt.hostInstanceId
+      || writer.execution_version !== attempt.executionVersion) fail('workspace_identity_changed');
   }
 
   function updateAttemptDiagnostic(attemptId: string, evidenceRef: string, timestamp: number): void {
@@ -197,7 +198,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
       revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status <> 'cleaned'
       AND feature_id = ? AND run_id = ? AND attempt_id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ?`)
       .run(status, headCommit, codeDigest, timestamp, workspace.projectId, workspace.id, workspace.revision,
-        attempt.featureId, attempt.runId, attempt.id, attempt.owner, attempt.hostInstanceId, attempt.executionVersion);
+        workspace.featureId, workspace.runId, workspace.attemptId, workspace.ownerId, workspace.hostInstanceId, workspace.executionVersion);
     if (changed.changes !== 1) fail('workspace_identity_changed');
   }
 

@@ -1,5 +1,6 @@
 import type { ArtifactRecord } from '../ports/artifact-store.js';
 import type { WorkRecordingManifestRecord, WorkRecordingMessageRecord } from '../ports/work-recording.js';
+import { validateWorkEvidenceManifest, WORK_EVIDENCE_MANIFEST_KIND } from '../ports/work-evidence-recorder.js';
 import { assertWorkRecordingIdentity } from '../ports/work-recording.js';
 
 type RecoveryArtifactVerifier = {
@@ -27,6 +28,7 @@ export interface WorkRecordingRecoveryInput {
   readonly sessionStatus: string;
   readonly sessionWatermark: number | null;
   readonly sessionGaps: readonly string[];
+  readonly settlementArtifactId?: string | null;
   readonly messages: readonly WorkRecordingMessageRecord[];
   readonly manifests: readonly WorkRecordingManifestRecord[];
   readonly artifacts: readonly ArtifactRecord[];
@@ -103,6 +105,8 @@ export async function inspectWorkRecordingRecovery(
   const artifacts = new Map(input.artifacts.map(artifact => [artifact.id, artifact]));
   const checked = new Set<string>();
   const verified = new Set<string>();
+  const bodies = new Map<string, unknown>();
+  const indexed = new Set<string>();
   const verify = async (artifactId: string): Promise<void> => {
     if (checked.has(artifactId)) return;
     checked.add(artifactId);
@@ -131,7 +135,10 @@ export async function inspectWorkRecordingRecovery(
           // Recording bodies and manifests are JSON documents. Parsing the
           // bounded read proves the durable block is complete, rather than
           // trusting a path or a final DB row alone.
-          JSON.parse(Buffer.from(content.content).toString('utf8'));
+          const text = Buffer.from(content.content).toString('utf8');
+          if (record.mediaType === 'application/x-ndjson') {
+            for (const line of text.split('\n').filter(Boolean)) JSON.parse(line);
+          } else bodies.set(artifactId, JSON.parse(text));
         } catch {
           result = reportGap(result, 'recording_artifact_body_invalid');
           return;
@@ -143,6 +150,10 @@ export async function inspectWorkRecordingRecovery(
     }
   };
 
+  if (input.settlementArtifactId) {
+    indexed.add(input.settlementArtifactId);
+    await verify(input.settlementArtifactId);
+  }
   const messages = [...input.messages].sort((left, right) => left.sequence - right.sequence);
   let expected = 1;
   for (const message of messages) {
@@ -155,8 +166,12 @@ export async function inspectWorkRecordingRecovery(
       result = reportGap(result, 'recording_sequence_gap');
       expected = Math.max(expected, message.sequence + 1);
     } else expected += 1;
+    indexed.add(message.contentRef.artifactId);
     await verify(message.contentRef.artifactId);
-    for (const attachment of message.attachments) await verify(attachment.artifactId);
+    for (const attachment of message.attachments) {
+      indexed.add(attachment.artifactId);
+      await verify(attachment.artifactId);
+    }
   }
   const contiguous = messages.length > 0 && messages[0]!.sequence === 1
     ? messages.reduce((last, message) => message.sequence === last + 1 ? message.sequence : last, 0)
@@ -187,9 +202,40 @@ export async function inspectWorkRecordingRecovery(
     if (manifest.formatVersion !== 'work-recording/v1') {
       result = reportGap(result, 'recording_manifest_version_unknown');
     }
-    if (manifest.manifestRef !== null) await verify(manifest.manifestRef.artifactId);
-    else result = reportGap(result, 'recording_manifest_unpublished');
-    if (manifest.coverage !== 'complete') result = reportGap(result, 'recording_manifest_incomplete');
+    const supersededProgress = manifest !== manifests.at(-1) && !manifest.finalized && manifest.source === 'live'
+      && !manifest.truncation.applied && (manifest.unknownEventCount === null || manifest.unknownEventCount === 0)
+      && manifest.missingReasons.every(reason => reason === 'recording_in_progress' || reason === 'terminal_watermark_unknown');
+    if (manifest.manifestRef !== null) {
+      indexed.add(manifest.manifestRef.artifactId);
+      await verify(manifest.manifestRef.artifactId);
+      const record = artifacts.get(manifest.manifestRef.artifactId);
+      if (record?.kind === WORK_EVIDENCE_MANIFEST_KIND && verified.has(record.id)) {
+        try {
+          const evidence = validateWorkEvidenceManifest(bodies.get(record.id));
+          if ((['projectId', 'sessionId', 'runId', 'attemptId', 'invocationId', 'executionVersion'] as const)
+            .some(key => evidence.identity[key] !== input.identity[key])) {
+            result = reportGap(result, 'recording_manifest_identity_mismatch');
+            continue;
+          }
+          for (const chunk of evidence.chunks) {
+            indexed.add(chunk.artifactId);
+            const artifact = artifacts.get(chunk.artifactId);
+            if (!artifact || artifact.contentHash !== chunk.contentHash || artifact.sizeBytes !== chunk.sizeBytes
+              || artifact.locator !== chunk.locator) {
+              result = reportGap(result, 'recording_chunk_identity_mismatch');
+            }
+            await verify(chunk.artifactId);
+          }
+        } catch { result = reportGap(result, 'recording_artifact_body_invalid'); }
+      }
+    } else if (!supersededProgress) {
+      result = reportGap(result, 'recording_manifest_unpublished');
+    }
+    // Intermediate projections describe progress. Only a published, finalized
+    // complete tail may supersede them; historical finalized failures stay gaps.
+    if (!supersededProgress && manifest.coverage !== 'complete') {
+      result = reportGap(result, 'recording_manifest_incomplete');
+    }
     if ((manifest.watermark ?? 0) > (candidateWatermark ?? 0)) {
       result = reportGap(result, 'recording_manifest_watermark_ahead');
     }
@@ -199,6 +245,12 @@ export async function inspectWorkRecordingRecovery(
       }
     }
   }
+  for (const artifact of input.artifacts) {
+    if (artifact.locator?.startsWith(`sessions/${input.identity.sessionId}/`) && !indexed.has(artifact.id)) {
+      result = reportGap(result, 'recording_unindexed_artifact');
+    }
+  }
+  if (latest !== undefined && !latest.finalized) result = reportGap(result, 'recording_manifest_incomplete');
   if (latest === undefined && (candidateWatermark !== null || messages.length > 0
     || (input.sessionStatus === 'stopped' && input.sessionGaps.length > 0))) {
     result = reportGap(result, 'recording_manifest_missing');

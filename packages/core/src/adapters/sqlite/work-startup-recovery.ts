@@ -1,3 +1,4 @@
+import { readCurrentWorkspaceWriter } from './workspace-writer.js';
 import { readVerificationProcesses } from './verification-processes.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -136,9 +137,10 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           const workspace = db.prepare<[string, string], { id: string; project_id: string; owner_id: string; host_instance_id: string; execution_version: number; revision: number; run_id: string; attempt_id: string }>(
             'SELECT id, project_id, revision, owner_id, host_instance_id, execution_version, run_id, attempt_id FROM managed_workspaces WHERE project_id = ? AND feature_id = ?')
             .get(row.project_id, row.feature_id);
-          if (workspace && (workspace.owner_id !== row.owner_id || workspace.host_instance_id !== row.host_instance_id
-            || workspace.execution_version !== row.execution_version || workspace.run_id !== row.run_id
-            || workspace.attempt_id !== row.id)) gaps.push('workspace_identity_mismatch');
+          const writer = workspace === undefined ? null : readCurrentWorkspaceWriter(session, row.project_id, workspace.id);
+          if (workspace && (!writer || writer.owner_id !== row.owner_id || writer.host_instance_id !== row.host_instance_id
+            || writer.execution_version !== row.execution_version || writer.run_id !== row.run_id
+            || writer.attempt_id !== row.id)) gaps.push('workspace_identity_mismatch');
           let verificationProcesses: ReturnType<typeof readVerificationProcesses> | undefined = undefined;
           try { verificationProcesses = readVerificationProcesses(session, row.project_id, row.id); }
           catch { gaps.push('verifier_process_census_incomplete'); }
@@ -180,9 +182,9 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           db.prepare(`UPDATE workspace_leases SET state = 'quarantined', revision = revision + 1, updated_at = ?
             WHERE project_id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND state <> 'quarantined'`)
             .run(timestamp, row.project_id, row.id, row.host_instance_id, row.execution_version);
-          const workspaceOwnerActive = workspace !== undefined && db.prepare<[string], { id: string }>(
+          const workspaceOwnerActive = writer !== null && db.prepare<[string], { id: string }>(
             "SELECT id FROM attempts WHERE id = ? AND status IN ('preparing', 'executing', 'verifying') LIMIT 1",
-          ).get(workspace.attempt_id) !== undefined;
+          ).get(writer.attempt_id) !== undefined;
           if (workspace && !workspaceOwnerActive) {
             db.prepare(`UPDATE managed_workspaces SET status = 'quarantined', revision = revision + 1, updated_at = ?
               WHERE project_id = ? AND id = ? AND revision = ? AND status <> 'cleaned'`)
@@ -211,7 +213,9 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
               WHERE latest.event_type = 'work.recovery.updated' AND latest.attempt_id = e.attempt_id
                 AND json_extract(latest.payload, '$.phase') IN ('recorded', 'reprobed'))
             AND a.status = 'interrupted'
-            AND (w.attempt_id IS NULL OR w.attempt_id = a.id)
+            AND (w.id IS NULL OR COALESCE((SELECT writer.attempt_id FROM state_events writer
+              WHERE writer.project_id = w.project_id AND writer.aggregate_id = w.feature_id
+                AND writer.event_type = 'workspace.operation_updated' ORDER BY writer.sequence DESC LIMIT 1), w.attempt_id) = a.id)
             AND NOT EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = a.run_id
               AND c.state IN ('held', 'quarantined') AND c.id IS NOT json_extract(
                 (SELECT receipt FROM task_claim_receipts WHERE attempt_id = a.id), '$.dispatch.claimId'))

@@ -432,11 +432,11 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 });
 
 // 索引契约自身登记检查：P07-5 聚合清单与 Task 索引符合 v1/v2 schema。
-// 登记清单随 Task 交付递增（F-002 登记演练夹具回归；不删减既有登记）。
+// 登记清单随 Task 交付递增；F-003 登记恢复矩阵及最终 diff 的基础回归。
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
   expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
@@ -454,4 +454,17 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
   const f002Files = f002Index.projects[0].tests.map((test: any) => test.file);
   expect(f002Files).toEqual(['test/modules/acceptance/p07-5-f002-drill-fixture.test.ts']);
   for (const file of f002Files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  expect(manifest.tasks[2].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-003.json');
+  const f003Index = json(join(ROOT, manifest.tasks[2].index));
+  expect(f003Index).toMatchObject({ schema_version: 2, task_id: 'F-003' });
+  const f003Files = f003Index.projects[0].tests.map((test: any) => test.file);
+  expect(f003Files).toEqual(expect.arrayContaining([
+    'test/modules/acceptance/p07-5-f003-verifier-crash.test.ts',
+    'test/modules/recovery/p07-5-f003-recording-prefix.test.ts',
+    'test/modules/recovery/p07-1-f004-sqlite-fencing.test.ts',
+    'test/modules/scheduling/p04-9-f003-execution-slot.test.ts',
+    'test/modules/execution/control/p04-8-control-fault-matrix.test.ts',
+  ]));
+  for (const file of f003Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });
