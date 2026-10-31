@@ -244,8 +244,15 @@ export function createBackupPackageService(options: BackupPackageServiceOptions)
           for (const row of rows) for (const column of columns) {
             try {
               for (const item of jsonArray(row[column], `invalid_${table}_${column}`)) {
-                if (item !== null && typeof item === 'object') requireRef(String(row.project_id), (item as Row).artifactId, `${table}.${column}`);
-                else reasons.push(`invalid_reference_json:${table}.${column}`);
+                // P07-4 / F-010 修复：与 project-delete-inventory 同口径——
+                // 仅对象元素 {artifactId:string} 是制品引用；非对象元素是合法
+                // 不透明来源引用（如 session_messages.source_refs 按
+                // ports/work-recording.ts 契约写入的事件 ID 字符串），不是非法
+                // 引用 JSON，也不凭空制造缺失阻塞。真实 Recorder 工作流的备份
+                // 不得因此永久 incomplete；无效 JSON 文本仍 fail-closed。
+                if (item !== null && typeof item === 'object' && typeof (item as Row).artifactId === 'string') {
+                  requireRef(String(row.project_id), (item as Row).artifactId, `${table}.${column}`);
+                }
               }
             } catch { reasons.push(`invalid_reference_json:${table}.${column}`); }
           }

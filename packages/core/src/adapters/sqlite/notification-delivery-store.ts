@@ -37,6 +37,8 @@ import {
   NOTIFICATION_DELIVERY_SCHEMA_VERSION,
   NOTIFICATION_DELIVERY_STATUSES,
   NOTIFICATION_PROJECTION_OPERATION,
+  isNotificationSubscriptionEventType,
+  isNotificationKnownEventType,
   canonicalNotificationJson,
   computeNotificationPolicyDigest,
   computeNotificationRetryDelayMs,
@@ -556,19 +558,29 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
         };
       }
       // 4) 逐行白名单/形状核验 + 脱敏摘要派生；非订阅事件只推进扫描位置。
+      //    （P07-4 / F-010 修复：真实公开入口事件流包含不在公开事件词汇内的
+      //    权威内部事件（work.session.updated 等）；全量严格 mapStateEvent 会
+      //    使整轮 corrupt、通知永久停摆。已知非订阅事件只推进扫描位置；订阅
+      //    事件仍逐行严格映射；真正未知类型仍 fail-closed 带 sequence 定位
+      //    （保留 F-006 损坏事件可诊断要求，不静默越过）。）
       const context = readContext(NOTIFICATION_PROJECTION_OPERATION);
       const created: NotificationDeliveryRecord[] = [];
       for (const row of rows) {
-        const event = mapScannedEvent(row);
-        const summary = deriveNotificationSummary(event);
-        if (summary === null) {
-          continue;
-        }
-        // 防御性摘要上界核验（派生路径只产冻结词汇；越界属编程错误，fail-closed）。
-        validateNotificationSummary(summary, context, 'summary');
-        const result = insertDeliveryInTransaction(db, NOTIFICATION_PROJECTION_OPERATION, event.eventId, request.channelId, summary, timestamp);
-        if (result.created) {
-          created.push(result.delivery);
+        if (isNotificationSubscriptionEventType(row.event_type)) {
+          const event = mapScannedEvent(row);
+          const summary = deriveNotificationSummary(event);
+          if (summary === null) {
+            continue;
+          }
+          // 防御性摘要上界核验（派生路径只产冻结词汇；越界属编程错误，fail-closed）。
+          validateNotificationSummary(summary, context, 'summary');
+          const result = insertDeliveryInTransaction(db, NOTIFICATION_PROJECTION_OPERATION, event.eventId, request.channelId, summary, timestamp);
+          if (result.created) {
+            created.push(result.delivery);
+          }
+        } else if (!isNotificationKnownEventType(row.event_type)) {
+          // 未知类型：交由严格映射抛出可诊断 corrupt（含 sequence），事务整体回滚。
+          mapScannedEvent(row);
         }
       }
       // 5) 消费水位与 delivery 同事务推进（同值幂等零变更）。

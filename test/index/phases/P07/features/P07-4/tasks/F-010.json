@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/notifications/p07-4-f010-vertical-loop.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f010-notification-restart.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f010-restore-archive.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-4-f004-notification-delivery-store.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f007-notification-worker.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f008-notification-runtime.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f009-notification-query.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f008-notification-host.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f009-notification-host.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-3-f005-backup-verification.test.ts", "all": true },
+        { "file": "test/modules/recovery/p07-3-f006-offline-restore.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f007-host-upgrade.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f014-backup-host.test.ts", "all": true },
+        { "file": "test/modules/lifecycle/p07-3-f016-backup-restore-integration.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f012-retention-evaluation.test.ts", "all": true },
+        { "file": "test/modules/retention/p07-3-f013-evidence-retention.test.ts", "all": true }
+      ]
+    }
+  ]
+}

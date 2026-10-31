@@ -38,6 +38,7 @@ import {
   type ValidationContext,
   validationError,
 } from './validation.js';
+import { STATE_EVENT_TYPE_SPECS } from './events.js';
 
 /** 独立通知契约版本（记录/端口形状演化时递增；未知版本明确拒绝）。 */
 export const NOTIFICATION_DELIVERY_SCHEMA_VERSION = 1 as const;
@@ -555,6 +556,21 @@ export type NotificationSubscriptionEventType = (typeof NOTIFICATION_SUBSCRIPTIO
 /** 是否默认订阅事件类型（冻结词汇判断，不猜测降级）。 */
 export function isNotificationSubscriptionEventType(value: string): value is NotificationSubscriptionEventType {
   return (NOTIFICATION_SUBSCRIPTION_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * 通知投影消费的已知内部事件类型：不由公开事件面（STATE_EVENT_TYPE_SPECS）
+ * 映射、但由 Core 权威写入 state_events 的持久类型。非订阅的已知类型只推进
+ * 扫描位置；真正未知类型仍 fail-closed（保留 F-006 损坏事件可诊断要求）。
+ * 'work.session.updated' 见 ports/work-session.ts WORK_SESSION_EVENT_TYPE。
+ */
+export const NOTIFICATION_KNOWN_INTERNAL_EVENT_TYPES = ['work.session.updated'] as const;
+
+/** 是否投影可识别的持久事件类型（订阅/公开/已知内部；未知类型 fail-closed）。 */
+export function isNotificationKnownEventType(value: string): boolean {
+  return isNotificationSubscriptionEventType(value)
+    || (NOTIFICATION_KNOWN_INTERNAL_EVENT_TYPES as readonly string[]).includes(value)
+    || Object.hasOwn(STATE_EVENT_TYPE_SPECS, value);
 }
 
 /**
