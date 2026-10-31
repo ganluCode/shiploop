@@ -34,7 +34,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { homedir } from 'node:os';
 import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core';
-import type { RuntimeCapabilityCatalog, RuntimeRecoveryCapabilities, RuntimeRecoverySourceReader, WorkToolChannelDeps } from 'shiploop-core';
+import type { RuntimeCapabilityCatalog, RuntimeRecoveryCapabilities, RuntimeRecoverySourceReader, WorkToolChannelDeps, NotificationChannel } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import { PI_RUNTIME_RECOVERY_DESCRIPTOR } from './pi-adapter.js';
 import type { BatchDeliveryFactory } from 'shiploop-core/assembly';
@@ -103,6 +103,7 @@ const ALLOWED_OPTION_KEYS = [
   'runtimeRecoveryDescriptors',
   'runtimeRecoverySources',
   'projectResourceSources',
+  'notificationChannels',
   'platform',
   'env',
   'nativeAddonPath',
@@ -141,6 +142,8 @@ export interface HostStartOptions {
   readonly projectResourceSources?: CoreApplicationOptions['projectResourceSources'];
   /** Core 恢复来源权威；缺省时恢复来源请求保持拒绝。 */
   readonly runtimeRecoverySources?: RuntimeRecoverySourceReader;
+  /** P07-4 / F-008：受信通知渠道（缺省 local-results；仅静态受信装配/测试注入）。 */
+  readonly notificationChannels?: readonly NotificationChannel[];
   /** 平台注入口（默认 process.platform）；仅 'darwin' 受支持。 */
   readonly platform?: string;
   /** 环境检查注入口（默认 process.env）；只读，不修改。 */
@@ -243,6 +246,12 @@ function validateStartOptions(options: HostStartOptions): void {
   if (options.projectResourceSources !== undefined && (options.projectResourceSources === null
     || typeof options.projectResourceSources !== 'object' || typeof options.projectResourceSources.getSource !== 'function')) {
     throw invalidInput('trusted_resource_source_required', { field: 'projectResourceSources' });
+  }
+  if (options.notificationChannels !== undefined && (!Array.isArray(options.notificationChannels)
+    || options.notificationChannels.length === 0
+    || options.notificationChannels.some(channel => channel === null || typeof channel !== 'object'
+      || typeof channel.channelId !== 'string' || typeof channel.send !== 'function'))) {
+    throw invalidInput('trusted_notification_channels_required', { field: 'notificationChannels' });
   }
   if (options.runtimeRecoverySources !== undefined && (
     options.runtimeRecoverySources === null || typeof options.runtimeRecoverySources !== 'object'
@@ -394,6 +403,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       ...(options.runtimeRecoverySources === undefined ? {}
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
       ...(options.projectResourceSources === undefined ? {} : { projectResourceSources: options.projectResourceSources }),
+      ...(options.notificationChannels === undefined ? {} : { notificationChannels: options.notificationChannels }),
       workRuntimeFactory: options.workRuntimeFactory,
       workRecordingMode: options.workRecordingMode,
       batchDeliveryFactory: options.batchDeliveryFactory,
@@ -428,23 +438,28 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     if (!locked.writer.dataRestoreIsolation) await locked.writer.baselineExecutionService.recover();
     await work.recover();
     const baseline = locked.writer.baselineExecutionService;
+    // P07-4 / F-008：默认通知运行时纳入同一活动门：quiesce 停止新认领，
+    // 有限预算内在途发送收尾；未确认时停止流程保持隔离，不关闭状态库。
+    const notifications = locked.writer.notificationRuntime;
     const activityGate: HostActivityGate = {
       enterQuiesce() {
         const local = baseline.enterQuiesce(options.baselineStopPolicy ?? 'wait');
         const runtime = work.enterQuiesce();
+        const notificationQuiesce = notifications.enterQuiesce();
         const delivery = locked.writer.commandService.deliveryActivity?.enterQuiesce();
         const additional = options.activityGate?.enterQuiesce();
-        return { accepted: local.accepted + runtime.accepted + (delivery?.accepted ?? 0) + (additional?.accepted ?? 0) };
+        return { accepted: local.accepted + runtime.accepted + notificationQuiesce.accepted + (delivery?.accepted ?? 0) + (additional?.accepted ?? 0) };
       },
       async awaitQuiesce(budgetMs) {
-        const [local, runtime, delivery, additional] = await Promise.all([
+        const [local, runtime, notificationSettled, delivery, additional] = await Promise.all([
           baseline.awaitQuiesce(budgetMs),
           work.awaitQuiesce(budgetMs),
+          notifications.awaitQuiesce(budgetMs),
           locked.writer.commandService.deliveryActivity?.awaitQuiesce(budgetMs),
           options.activityGate?.awaitQuiesce(budgetMs),
         ]);
-        return { confirmed: local.confirmed && runtime.confirmed && (delivery?.confirmed ?? true) && (additional?.confirmed ?? true),
-          pending: [...local.pending, ...runtime.pending, ...(delivery?.pending ?? []), ...(additional?.pending ?? [])] };
+        return { confirmed: local.confirmed && runtime.confirmed && notificationSettled.confirmed && (delivery?.confirmed ?? true) && (additional?.confirmed ?? true),
+          pending: [...local.pending, ...runtime.pending, ...notificationSettled.pending, ...(delivery?.pending ?? []), ...(additional?.pending ?? [])] };
       },
     };
     const store = createHostFileStore({ canonicalRoot });
@@ -585,6 +600,9 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     });
     lifecycle = 'ready';
     work.start();
+    // P07-4 / F-008：锁 + Schema + 恢复核对完成后启动本地通知服务（立即补扫
+    // 积压 + 周期持久补扫）；通知恢复不自动恢复业务 Task 或新建 Run/Attempt。
+    notifications.start();
 
     const listeningServer = server;
     const port = address.port;

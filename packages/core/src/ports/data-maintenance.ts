@@ -14,7 +14,7 @@ export type MaintenanceOperation = (typeof MAINTENANCE_OPERATIONS)[number];
 
 export const MAINTENANCE_WRITE_KINDS = [
   'planning', 'baseline', 'work', 'verification', 'git', 'recording',
-  'configuration', 'artifact', 'cleanup',
+  'configuration', 'artifact', 'cleanup', 'notification',
 ] as const;
 export type MaintenanceWriteKind = (typeof MAINTENANCE_WRITE_KINDS)[number];
 

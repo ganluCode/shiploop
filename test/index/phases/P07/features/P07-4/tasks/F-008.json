@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/notifications/p07-4-f008-notification-runtime.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f008-notification-host.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p07-4-f004-notification-delivery-store.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f007-notification-worker.test.ts", "all": true },
+        { "file": "test/modules/storage/p07-3-f002-maintenance-gate.test.ts", "all": true },
+        { "file": "test/modules/host/host-startup.test.ts", "all": true },
+        { "file": "test/modules/host/host-stop-lifecycle.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/host/host-sse-events.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f014-backup-host.test.ts", "all": true },
+        { "file": "test/modules/host/p07-3-f015-public-lifecycle-host.test.ts", "all": true },
+        { "file": "test/modules/recovery/p07-3-f006-offline-restore.test.ts", "all": true },
+        { "file": "test/modules/lifecycle/p07-3-f016-backup-restore-integration.test.ts", "all": true }
+      ]
+    }
+  ]
+}

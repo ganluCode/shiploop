@@ -36,7 +36,7 @@ describe('P07-3 F-002 maintenance fencing and quiesce gate', () => {
   it('[case:maintenance-write-fence] blocks every mutating class and preserves uncertain cleanup as blocked', () => {
     const gate = createMaintenanceWriteGate();
     const lease = gate.acquire(leaseInput);
-    for (const kind of ['planning', 'baseline', 'work', 'verification', 'git', 'recording', 'configuration', 'artifact', 'cleanup'] as const) {
+    for (const kind of ['planning', 'baseline', 'work', 'verification', 'git', 'recording', 'configuration', 'artifact', 'cleanup', 'notification'] as const) {
       expect(() => gate.assertCanWrite(kind)).toThrowError(expect.objectContaining({ kind: 'busy' }));
     }
     expect(gate.release({ ...lease, confirmed: false, reason: 'cleanup_unconfirmed' })).toMatchObject({ state: 'blocked', blockedReason: 'cleanup_unconfirmed' });

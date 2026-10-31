@@ -62,6 +62,7 @@ import {
   type NotificationScanStateRecord,
 } from '../../ports/notification-delivery.js';
 import { StorageError } from '../../ports/errors.js';
+import type { MaintenanceWriteGate } from '../../ports/data-maintenance.js';
 import { validationError, type ValidationContext } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 
@@ -166,12 +167,21 @@ export interface SqliteNotificationDeliveryStoreOptions {
   readonly session: SqliteStorageSession;
   /** 注入时钟（UTC 毫秒）；缺省 Date.now。 */
   readonly nowUtcMs?: () => number;
+  /**
+   * P07-4 / F-008：维护门控（可选）。备份/迁移/恢复/项目归档/删除占用期间，
+   * 全部通知写事务在提交前 assertCanWrite('notification') busy 拒绝，
+   * 不因新增通知写入破坏一致性快照；只读入口不经过该门控。
+   */
+  readonly maintenanceGate?: MaintenanceWriteGate;
 }
 
 /** 独立通知写模型装配：所有入口先经端口校验，再进单事务原子写入。 */
 export function createSqliteNotificationDeliveryStore(options: SqliteNotificationDeliveryStoreOptions): NotificationDeliveryStore {
   const { session } = options;
   const now = options.nowUtcMs ?? Date.now;
+  const maintenanceGate = options.maintenanceGate;
+  /** 写事务内的维护门控检查（占用期间一致性快照不被通知写入穿透）。 */
+  const assertWritable = (): void => maintenanceGate?.assertCanWrite('notification');
   const readContext = (operation: string): ValidationContext => ({ operation });
 
   function conflict(operation: string, reason: string, deliveryId?: string): StorageError {
@@ -241,16 +251,18 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
 
   function createDelivery(input: unknown): NotificationDeliveryWriteResult {
     const request = validateNotificationDeliveryCreateInput(input);
-    return session.transactWrite(NOTIFICATION_DELIVERY_CREATE_OPERATION, (db) =>
-      insertDeliveryInTransaction(
+    return session.transactWrite(NOTIFICATION_DELIVERY_CREATE_OPERATION, (db) => {
+      assertWritable();
+      return insertDeliveryInTransaction(
         db, NOTIFICATION_DELIVERY_CREATE_OPERATION, request.eventId, request.channelId, request.summary, now(),
-      ),
-    );
+      );
+    });
   }
 
   function recordDeliveryResult(input: unknown): NotificationDeliveryRecord {
     const request: NotificationDeliveryResultInput = validateNotificationDeliveryResultInput(input);
     return session.transactWrite(NOTIFICATION_DELIVERY_RESULT_OPERATION, (db) => {
+      assertWritable();
       const timestamp = now();
       const context = readContext(NOTIFICATION_DELIVERY_RESULT_OPERATION);
       // 输入级退避界检查（只依赖时钟，不依赖行状态）：写入前拒绝超界/非未来延迟。
@@ -338,10 +350,15 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
   function claimDueDeliveries(input: unknown): NotificationDeliveryClaimResult {
     const request = validateNotificationDeliveryClaimInput(input);
     return session.transactWrite(NOTIFICATION_DELIVERY_CLAIM_OPERATION, (db) => {
+      assertWritable();
       const timestamp = now();
       if (!Number.isSafeInteger(timestamp) || timestamp < 1) throw conflict(NOTIFICATION_DELIVERY_CLAIM_OPERATION, 'invalid_clock');
+      // P07-4 / F-008：项目生命周期门控——只认领 active 项目的 delivery；
+      // 归档/删除中的项目是禁止投递目标，事实行保留待项目状态恢复。
       const rows = db.prepare<[string, number, number], DeliveryRow>(
-        "SELECT * FROM notification_deliveries WHERE channel_id = ? AND status IN ('pending','retry_scheduled') AND next_attempt_at <= ? ORDER BY next_attempt_at ASC, id ASC LIMIT ?",
+        "SELECT d.* FROM notification_deliveries d JOIN projects p ON p.id = d.project_id " +
+        "WHERE d.channel_id = ? AND d.status IN ('pending','retry_scheduled') AND d.next_attempt_at <= ? " +
+        "AND p.status = 'active' ORDER BY d.next_attempt_at ASC, d.id ASC LIMIT ?",
       ).all(request.channelId, timestamp, request.limit);
       const deliveries: NotificationDeliveryRecord[] = [];
       for (const row of rows) {
@@ -363,6 +380,7 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
   function releaseDeliveryClaim(input: unknown): NotificationDeliveryRecord {
     const request: NotificationDeliveryClaimReleaseInput = validateNotificationDeliveryClaimReleaseInput(input);
     return session.transactWrite(NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, (db) => {
+      assertWritable();
       const timestamp = now();
       const row = db.prepare<[string], DeliveryRow>('SELECT * FROM notification_deliveries WHERE id = ?').get(request.deliveryId);
       if (row === undefined) throw new StorageError('not_found', NOTIFICATION_DELIVERY_CLAIM_RELEASE_OPERATION, '投递不存在', { entity: { type: 'notification_delivery', id: request.deliveryId } });
@@ -411,6 +429,7 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
   function advanceScanState(input: unknown): NotificationScanStateRecord {
     const request = validateNotificationScanAdvanceInput(input);
     return session.transactWrite(NOTIFICATION_DELIVERY_SCAN_OPERATION, (db) => {
+      assertWritable();
       const timestamp = now();
       const maxRow = db.prepare<[], { max: unknown }>('SELECT COALESCE(MAX(sequence), 0) AS max FROM state_events').get();
       const maxSequence = Number(maxRow?.max);
@@ -496,6 +515,7 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
   function projectNotificationBatch(input: unknown): NotificationProjectionBatchResult {
     const request = validateNotificationProjectionBatchRequest(input);
     return session.transactWrite(NOTIFICATION_PROJECTION_OPERATION, (db) => {
+      assertWritable();
       const timestamp = now();
       // 1) 持久消费水位（未建立按 0；损坏 fail-closed）。
       const existingScan = db.prepare<[string], ScanRow>(

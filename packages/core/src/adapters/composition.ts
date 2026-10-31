@@ -110,7 +110,11 @@ import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-que
 import { createSqliteNotificationDeliveryStore } from './sqlite/notification-delivery-store.js';
 import { createNotificationDeliveryService } from '../application/notification-delivery.js';
 import type { NotificationDeliveryService } from '../application/notification-delivery.js';
-import type { NotificationDeliveryStore } from '../ports/notification-delivery.js';
+import { createNotificationProjectionService } from '../application/notification-projection.js';
+import type { NotificationProjectionService } from '../application/notification-projection.js';
+import { createNotificationRuntime } from '../application/notification-runtime.js';
+import type { NotificationRuntime } from '../application/notification-runtime.js';
+import type { NotificationDeliveryStore, NotificationChannel } from '../ports/notification-delivery.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
 import { createKnowledgeQueryService } from '../application/knowledge-query-service.js';
@@ -355,6 +359,8 @@ export interface CoreApplicationOptions {
   readonly inputSourceRoots?: Readonly<Record<string, string>>;
   /** Trusted project-scoped source directory; absent means no candidate may be imported. */
   readonly projectResourceSources?: ProjectResourceCandidateSources;
+  /** P07-4 / F-008：受信通知渠道装配（缺省 local-results；仅静态受信注入）。 */
+  readonly notificationChannels?: readonly NotificationChannel[];
   /** 状态库单次 busy 等待预算（毫秒）；默认沿用适配器有限预算。 */
   readonly busyTimeoutMs?: number;
   /** 状态库 busy 重试次数（含首次）；默认沿用适配器有限预算。 */
@@ -446,6 +452,13 @@ export interface CoreApplication {
   /** P07-4 / F-007：本地通知认领/发送驱动；渠道调用在事务外，失败不改业务结果。 */
   readonly notificationDeliveryStore: NotificationDeliveryStore;
   readonly notificationDelivery: NotificationDeliveryService;
+  /** P07-4 / F-006：持久事件 → delivery 有界幂等投影服务。 */
+  readonly notificationProjection: NotificationProjectionService;
+  /**
+   * P07-4 / F-008：默认通知运行时（投影 + 认领/发送 + 周期补扫）。装配后不自动
+   * 启动（无副作用）；Host 在锁/Schema/恢复核对后 start，并纳入 quiesce/teardown。
+   */
+  readonly notificationRuntime: NotificationRuntime;
   readonly queryService: QueryService;
   /** P06-2：受信项目内文档登记/版本追加/受控读取服务。 */
   readonly documentService: DocumentService;
@@ -546,6 +559,7 @@ const ALLOWED_OPTION_KEYS = [
   'baselineEnvironmentDirectory',
   'inputSourceRoots',
   'projectResourceSources',
+  'notificationChannels',
   'busyTimeoutMs',
   'busyRetryAttempts',
 ] as const;
@@ -703,6 +717,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     object.projectResourceSources === null || typeof object.projectResourceSources !== 'object'
     || typeof (object.projectResourceSources as ProjectResourceCandidateSources).getSource !== 'function'
   )) throw validationError(context, 'projectResourceSources', 'Trusted project source directory required');
+  if (object.notificationChannels !== undefined) {
+    const channels = object.notificationChannels as unknown;
+    if (!Array.isArray(channels) || channels.length === 0
+      || channels.some(channel => channel === null || typeof channel !== 'object'
+        || typeof (channel as NotificationChannel).channelId !== 'string'
+        || typeof (channel as NotificationChannel).send !== 'function')) {
+      throw validationError(context, 'notificationChannels', 'trusted_notification_channels_required');
+    }
+  }
 
   const rootCandidate = resolveRootCandidate(object, context);
   ensureDataRootDirectory(rootCandidate);
@@ -771,8 +794,23 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // P03-5 / F-001：查询门面提前装配，PathService 的 Feature 归属核验与
     // QueryService 共用同一 PlanStore 读取面（createSqliteQueryStore）。
     const queryStore = createSqliteQueryStore(session);
-    const notificationDeliveryStore = createSqliteNotificationDeliveryStore({ session, ...(nowUtcMs === undefined ? {} : { nowUtcMs }) });
-    const notificationDelivery = createNotificationDeliveryService({ store: notificationDeliveryStore });
+    const notificationDeliveryStore = createSqliteNotificationDeliveryStore({
+      session,
+      maintenanceGate,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const notificationDelivery = createNotificationDeliveryService({
+      store: notificationDeliveryStore,
+      ...(object.notificationChannels === undefined ? {} : { channels: object.notificationChannels as readonly NotificationChannel[] }),
+    });
+    // P07-4 / F-008：默认通知运行时（未启动；Host 在恢复核对后 start）。
+    // 维护门控作为轮次预检查；写事务内的权威拒绝由存储适配器承担。
+    const notificationProjection = createNotificationProjectionService({ store: notificationDeliveryStore });
+    const notificationRuntime = createNotificationRuntime({
+      projection: notificationProjection,
+      delivery: notificationDelivery,
+      ...(maintenanceGate === undefined ? {} : { maintenanceGate }),
+    });
     const documentStore = createSqliteDocumentStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
     const documentService = createDocumentService({
       documents: documentStore,
@@ -1737,6 +1775,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       queryService,
       notificationDeliveryStore,
       notificationDelivery,
+      notificationProjection,
+      notificationRuntime,
       knowledgeQueryService,
       memoryService,
       memoryQueryService,
@@ -1764,6 +1804,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       close(): void {
         if (!dataRestoreIsolation && object.workRuntimeFactory !== undefined && !workExecution.isClosed()) throw new StorageError('conflict', 'CoreApplication.close', 'Work 执行须先完成关闭核验');
         if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
+        // P07-4 / F-008：确认通知服务不再写入（无在途轮次）后才关闭状态库；
+        // 在途未收尾时 conflict 拒绝，保留现场，不吞掉未确认失败。
+        notificationRuntime.close();
         session.close();
       },
     };
