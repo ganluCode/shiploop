@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p07-5-f010-report.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f002-drill-fixture.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
