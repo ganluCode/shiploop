@@ -1,3 +1,4 @@
+import { observeP07Entry } from './p07-5/entry-observation.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ const HASH = createHash('sha256').update('verified').digest('hex');
 const confirm = async (identity: { launchId: string }) => ({ launchId: identity.launchId });
 export async function gitCommitFixture(): Promise<any> {
   const box = await openBudgetFixture();
-  cleanups.push(() => box.close());
+  cleanups.push(() => { observeP07Entry(box.box.root, box.box.dbPath, { repo: box.box.repoDirA }); box.close(); });
   const ids = await box.start(), db = box.session.database;
   const root = realpathSync(box.box.repoDirA);
   const binding = db.prepare('SELECT id, repo_identity, binding_revision FROM repository_bindings WHERE project_id = ?')

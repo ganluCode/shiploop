@@ -18,6 +18,7 @@
  * 8. [case:p07-f006-evidence-separation] 公开恢复闭环与 adapter 本地验证分开
  *    留证：Core 水位与原生水位分字段绑定，历史用量排除，live 续聊 not_run。
  */
+import { observeP07Native } from '../../../helpers/p07-5/entry-observation.ts';
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -35,7 +36,7 @@ import { preparePiRecovery, validatePiNativeArchive } from '../../../../packages
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) { observeP07Native(root); await rm(root, { recursive: true, force: true }); } });
 
 const usage = {
   input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,

@@ -7,6 +7,7 @@
  * （与 F-006 相同纪律：Runtime 写路径不是客户端 payload）。
  * 提供有界条件等待（observable progress），不用固定长 sleep 代替断言。
  */
+import { observeP07Entry } from '../p07-5/entry-observation.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -80,12 +81,21 @@ export async function openLifecycleApp(prefix: string): Promise<LifecycleApp> {
       schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date().toISOString(),
       operation, payload, ...extra,
     } as never) as Promise<Record<string, any>>;
+  const archiveOperations: { operation: string; projectId: string; outcome: string }[] = [];
   const openSession = () => openSqliteStorageSession({ path: join(sandbox.path, 'core.sqlite') });
   const readonlyDatabase = () => new Database(join(sandbox.path, 'core.sqlite'), { readonly: true });
   return {
-    sandbox, repoDir, app, owner, submit, openSession, readonlyDatabase,
+    sandbox, repoDir, app, owner, submit: async (...args) => {
+      const receipt = await submit(...args);
+      if (['project.archive', 'project.unarchive', 'project.delete.confirm', 'retention.cleanup.execute'].includes(args[0])) {
+        archiveOperations.push({ operation: args[0], projectId: String((args[1] as Record<string, unknown>)?.projectId ?? (args[2]?.scope as Record<string, unknown>)?.projectId ?? 'global'), outcome: String(receipt.status) });
+      }
+      return receipt;
+    }, openSession, readonlyDatabase,
     repoFacts: () => ({ head: git(['rev-parse', 'HEAD'], repoDir).trim(), refs: git(['show-ref'], repoDir).trim() }),
     close: async () => {
+      observeP07Entry(sandbox.path, join(sandbox.path, 'core.sqlite'), { repo: repoDir,
+        ...(archiveOperations.length ? { archive: { operations: [...archiveOperations], recordsRetained: true } } : {}) });
       await app.workExecution.close();
       await app.close();
     },

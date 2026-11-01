@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { observeP07Product } from '../../helpers/p07-5/entry-observation.ts';
 import { connectToHost } from '../../../packages/host/src/index.ts';
 import { openDrillFixture, DRILL_CHILD, type DrillCleanupFacts, type DrillFixture } from '../../helpers/p07-5/drill-fixture.ts';
 import { waitFor } from '../../helpers/p07-1/fault-barrier-host.ts';
@@ -233,6 +234,7 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 / F-010 recovery drill rep
       JSON.parse(envelopeText);
       writeFileSync(join(source, 'products', 'feature.json'), `${envelopeText}\n`, { flag: 'wx', mode: 0o600 });
 
+      observeP07Product(JSON.parse(envelopeText));
       child.send({ kind: 'close' });
       const exit = await child.exited;
       expect(exit.code).toBe(0);

@@ -6,6 +6,7 @@
  * WAL、公开 Host/CLI、升级前停止核验/迁移回滚及完整纵向事实由索引中的
  * P07-3 回归共同覆盖。
  */
+import { observeP07Entry } from '../../helpers/p07-5/entry-observation.ts';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,6 +57,7 @@ async function withFixture<T>(action: (root: string) => Promise<T>): Promise<T> 
     }
     return await action(box.path);
   } finally {
+    observeP07Entry(box.path, join(box.path, 'core.sqlite'));
     box.cleanup();
   }
 }

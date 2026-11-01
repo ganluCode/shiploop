@@ -27,6 +27,7 @@
  *   fail-closed；普通事实输出不含真实凭据、真实用户目录或开发机绝对路径。
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { observeP07Entry, p07CaptureActive } from './entry-observation.ts';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -1172,6 +1173,10 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         failures.push(`事实导出失败:${error instanceof Error ? error.message : String(error)}`);
       }
 
+      if (p07CaptureActive()) {
+        const snapshot = await collectDrillEvidence('entry-final', 'after');
+        observeP07Entry(box!.root, box!.dbPath, { drill: snapshot });
+      }
       let sqliteClosed = true;
       try { harness!.close(); } catch { /* box.cleanup closes remainder */ }
       try { await app!.close(); } catch (error) {

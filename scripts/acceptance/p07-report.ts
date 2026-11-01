@@ -29,6 +29,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
+import { P07_PHYSICAL_STEPS } from './p07-plan.ts';
 import { validateAppQueryResponse } from '../../packages/host/src/client/app-wire.ts';
 import { validateP05ProductCapture } from './p05-product-evidence.ts';
 import {
@@ -106,6 +107,7 @@ export type P07AcceptanceReport = {
   readonly checks: readonly P07ReportCheck[];
   readonly counts: { readonly pass: number; readonly fail: number; readonly not_run: number };
   readonly offlineConclusion: 'pass' | 'fail';
+  readonly executionScope: { readonly mode: 'phase' | 'full'; readonly selectedFileCount: number; readonly fullHistoryStatus: P07ReportStatus; readonly fullHistoryStepId: string | null } | null;
   readonly conclusion: 'pass' | 'fail';
   readonly exitCode: 0 | 1;
   readonly blockingIssues: readonly string[];
@@ -245,10 +247,29 @@ function readEntryCapture(directory: string, ref: { readonly path: string }, exp
   keys(ref, ['path']);
   if (!/^entry\/[\w-]+\.json$/.test(ref.path)) fail('invalid_entry_path');
   const raw = parse(directory, ref.path) as Record<string, any>;
-  keys(raw, ['schemaVersion', 'runId', 'testedCommit', 'inputDigest', 'steps', 'cleanup', 'sourceDrift', 'elapsedMs', 'overallTimeoutMs', 'selectedFiles']);
-  if (raw.schemaVersion !== 1 || !matchesIdentity({ runId: raw.runId, testedCommit: raw.testedCommit, inputDigest: raw.inputDigest }, expected)
+  keys(raw, ['schemaVersion', 'runId', 'testedCommit', 'inputDigest', 'steps', 'cleanup', 'sourceDrift', 'elapsedMs', 'overallTimeoutMs', 'selectedFiles', ...(raw.schemaVersion === 2 ? ['bindings', 'scope', 'fullHistory'] : [])]);
+  if (![1, 2].includes(raw.schemaVersion) || !matchesIdentity({ runId: raw.runId, testedCommit: raw.testedCommit, inputDigest: raw.inputDigest }, expected)
     || !Array.isArray(raw.steps) || raw.steps.length < 1 || raw.steps.length > P07_ENTRY_STEP_ORDER.length) fail('invalid_entry_identity');
-  const expectedOrder = [...P07_ENTRY_STEP_ORDER];
+  const expectedOrder = raw.schemaVersion === 2
+    ? P07_PHYSICAL_STEPS.filter(id => id !== 'p07-recovery-scenarios' || raw.steps.some((step: EntryStep) => step.id === id))
+    : [...P07_ENTRY_STEP_ORDER];
+  if (raw.schemaVersion === 2) {
+    if (raw.steps.length !== expectedOrder.length || !Array.isArray(raw.bindings) || raw.bindings.length !== expectedOrder.length
+      || !raw.scope || !Array.isArray(raw.scope.selected) || !Array.isArray(raw.scope.deferred)) fail('invalid_entry_scope');
+    const bound: string[] = [];
+    raw.bindings.forEach((binding: { id: string; tests: string[] }, index: number) => {
+      keys(binding, ['id', 'tests']);
+      if (binding.id !== expectedOrder[index] || !Array.isArray(binding.tests)) fail('invalid_entry_scope');
+      bound.push(...binding.tests);
+    });
+    if (new Set(bound).size !== bound.length || !same([...bound].sort(), [...raw.selectedFiles].sort())
+      || raw.scope.selected.some((file: string) => !bound.includes(file))) fail('invalid_entry_scope');
+    const full = raw.scope.policy === 'full-trusted-union';
+    if (!full && raw.scope.policy !== 'p07-impact-and-required-regressions') fail('invalid_entry_scope');
+    keys(raw.fullHistory, ['status', 'stepId']);
+    const testStep = raw.steps.find((step: EntryStep) => step.id === 'p07-trusted-scope');
+    if (!testStep || raw.fullHistory.status !== (full ? testStep.status : 'not_run') || raw.fullHistory.stepId !== (full ? testStep.id : null)) fail('invalid_full_history_binding');
+  }
   const steps: EntryStep[] = raw.steps;
   steps.forEach((step, index) => {
     keys(step, ['id', 'argv', 'status', 'exitCode', 'timedOut', 'stoppedVerified', 'durationMs']);
@@ -268,6 +289,8 @@ function readEntryCapture(directory: string, ref: { readonly path: string }, exp
     || raw.selectedFiles.some((file: unknown) => typeof file !== 'string' || !/^test\/modules\/(?:[\w.-]+\/)*[\w.-]+\.test\.(ts|js)$/.test(file))) fail('invalid_entry_facts');
   return {
     steps,
+    executionScope: raw.schemaVersion === 2 ? { mode: raw.scope.policy === 'full-trusted-union' ? 'full' as const : 'phase' as const,
+      selectedFileCount: raw.selectedFiles.length, fullHistoryStatus: raw.fullHistory.status as P07ReportStatus, fullHistoryStepId: raw.fullHistory.stepId as string | null } : null,
     failed: steps.some(step => step.status !== 'pass') || !raw.cleanup.processesGone || !raw.cleanup.resourcesRemoved || raw.sourceDrift || raw.elapsedMs > raw.overallTimeoutMs,
   };
 }
@@ -373,6 +396,7 @@ export function buildP07AcceptanceReport(sourceDirectory: string, input: P07Repo
       }
       if (records.length) evidence.push({ category: 'sha', path: 'report.json#identity' });
       for (const product of productReports) evidence.push({ category: 'report', path: product.path });
+      const missingScene = item.group !== 'fr' && input.scenarios.some(record => record.checkId === item.id && record.status === 'not_run');
       const failed = records.find(record => record.status === 'fail');
       if (prerequisites.status === 'blocked') {
         status = 'not_run';
@@ -383,9 +407,9 @@ export function buildP07AcceptanceReport(sourceDirectory: string, input: P07Repo
       } else if (failed || status === 'fail') {
         status = 'fail';
         reason = failed?.reason ?? reason ?? 'check_failed';
-      } else if (status === 'not_run' || records.length === 0) {
+      } else if (missingScene || status === 'not_run' || records.length === 0) {
         status = 'not_run';
-        reason = records.length === 0 ? `missing_scenarios:${item.id}` : reason ?? 'not_run';
+        reason = missingScene ? 'required_scenarios_not_run' : records.length === 0 ? `missing_scenarios:${item.id}` : reason ?? 'not_run';
       } else {
         status = 'pass';
         reason = null;
@@ -428,6 +452,7 @@ export function buildP07AcceptanceReport(sourceDirectory: string, input: P07Repo
     checks,
     counts,
     offlineConclusion,
+    executionScope: entry?.executionScope ?? null,
     conclusion,
     exitCode: conclusion === 'pass' ? 0 : 1,
     blockingIssues,
@@ -456,7 +481,7 @@ export function renderP07Summary(report: P07AcceptanceReport): string {
   const cell = (value: string) => value.replace(/[|\r\n]/g, ' ');
   const prerequisiteLines = report.request.prerequisites.map(input => `- ${input.feature}: ${input.commit} ${report.prerequisites.status === 'satisfied' ? 'satisfied' : 'blocked'}`);
   const commandLines = report.commands.map(command => `- ${cell(command.scenarioId)} a${command.attempt}: exit=${command.exitCode ?? 'null'} ${command.durationMs}ms argv=${cell(JSON.stringify(command.argv))}`);
-  return `# P07 acceptance\n\nRun: ${report.identity.runId}\nCommit: ${report.identity.testedCommit}\nInput: ${report.identity.inputDigest}\nChecklist: ${report.checklistDigest}\n\nPrerequisites: ${report.prerequisites.status}\n${prerequisiteLines.join('\n')}\n\nToolchain: ${cell(JSON.stringify(report.request.toolchain))}\nOffline: ${report.offlineConclusion}; phase: ${report.conclusion}\nPass: ${report.counts.pass}; fail: ${report.counts.fail}; not_run: ${report.counts.not_run}\n\n| Check | Execution | Status | Reason |\n| --- | --- | --- | --- |\n${report.checks.map(check => `| ${check.checkId} | ${check.execution} | ${check.status} | ${cell(check.reason ?? '')} |`).join('\n')}\n\nScenario assertions (positive / expected rejections / execution errors):\n${report.checks.flatMap(check => check.scenarios.map(scenario => `- ${cell(`${check.checkId} a${scenario.attempt}`)}: ${scenario.status}; +${scenario.positiveAssertions.length} reject=${scenario.expectedRejections.join(',')} errors=${scenario.executionErrors.join(',')}`)).join('\n')}\n\nCommands:\n${commandLines.join('\n')}\n\nProduct reports: ${report.productReports.map(product => `${product.featureId}@${product.path}`).join(', ') || 'none'}\n\nBaseline candidate: ${report.baseline.candidateCommit} (phaseAccepted=${report.baseline.phaseAccepted}, ownerSignature=${report.baseline.ownerSignature})\n${report.baseline.note}\n\nBlocking issues:\n${report.blockingIssues.map(issue => `- ${cell(issue)}`).join('\n')}\n\nKnown gaps:\n${report.knownGaps.map(gap => `- ${cell(gap)}`).join('\n')}\n`;
+  return `# P07 acceptance\n\nRun: ${report.identity.runId}\nCommit: ${report.identity.testedCommit}\nInput: ${report.identity.inputDigest}\nChecklist: ${report.checklistDigest}\n\nPrerequisites: ${report.prerequisites.status}\n${prerequisiteLines.join('\n')}\n\nToolchain: ${cell(JSON.stringify(report.request.toolchain))}\nOffline: ${report.offlineConclusion}; phase: ${report.conclusion}\nScope: ${report.executionScope?.mode ?? 'unspecified'}; full history: ${report.executionScope?.fullHistoryStatus ?? 'not_run'}\nPass: ${report.counts.pass}; fail: ${report.counts.fail}; not_run: ${report.counts.not_run}\n\n| Check | Execution | Status | Reason |\n| --- | --- | --- | --- |\n${report.checks.map(check => `| ${check.checkId} | ${check.execution} | ${check.status} | ${cell(check.reason ?? '')} |`).join('\n')}\n\nScenario assertions (positive / expected rejections / execution errors):\n${report.checks.flatMap(check => check.scenarios.map(scenario => `- ${cell(`${check.checkId} a${scenario.attempt}`)}: ${scenario.status}; +${scenario.positiveAssertions.length} reject=${scenario.expectedRejections.join(',')} errors=${scenario.executionErrors.join(',')}`)).join('\n')}\n\nCommands:\n${commandLines.join('\n')}\n\nProduct reports: ${report.productReports.map(product => `${product.featureId}@${product.path}`).join(', ') || 'none'}\n\nBaseline candidate: ${report.baseline.candidateCommit} (phaseAccepted=${report.baseline.phaseAccepted}, ownerSignature=${report.baseline.ownerSignature})\n${report.baseline.note}\n\nBlocking issues:\n${report.blockingIssues.map(issue => `- ${cell(issue)}`).join('\n')}\n\nKnown gaps:\n${report.knownGaps.map(gap => `- ${cell(gap)}`).join('\n')}\n`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -482,7 +507,7 @@ export function verifyP07ReportDirectory(directory: string, expected: P07Evidenc
   }
 }
 
-export function writeP07AcceptanceReport(options: { reportRoot: string; sourceDirectory: string; input: P07ReportInput }) {
+export function writeP07AcceptanceReport(options: { reportRoot: string; sourceDirectory: string; input: P07ReportInput; checklist?: P07Checklist }) {
   // 先预留运行目录；EEXIST 保留整个旧运行不被触碰。
   assertP07Identity(options.input.identity);
   noLinks(options.reportRoot);
@@ -491,7 +516,7 @@ export function writeP07AcceptanceReport(options: { reportRoot: string; sourceDi
   mkdirSync(directory, { mode: 0o700 });
   let report: P07AcceptanceReport | null = null;
   try {
-    report = buildP07AcceptanceReport(options.sourceDirectory, options.input);
+    report = buildP07AcceptanceReport(options.sourceDirectory, options.input, options.checklist);
     for (const ref of report.files) {
       const target = join(directory, ref.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });

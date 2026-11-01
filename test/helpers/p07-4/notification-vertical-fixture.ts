@@ -29,6 +29,7 @@ import { createFakeRuntime, fakeRuntimeCorrelationToken } from '../../../package
 import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
+import { observeP07Entry } from '../p07-5/entry-observation.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs/workspace-inspector.ts';
@@ -619,6 +620,7 @@ export async function openNotificationVerticalFixture(
           host = undefined;
         }
       } finally {
+        observeP07Entry(binding.box.root, binding.box.dbPath);
         probe?.close();
         probe = undefined;
         /* binding.session 已提前关闭（只为让位给 Host 写者）；这里只回收临时资源。 */

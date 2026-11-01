@@ -13,6 +13,7 @@
  *    永不复用（新尝试必须使用新目录）。
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { observeP07Native } from '../../../helpers/p07-5/entry-observation.ts';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,7 +29,7 @@ const REGISTER = fileURLToPath(new URL('../../../helpers/node-ts-loader/register
 const CHILD = fileURLToPath(new URL('../../../helpers/runtime-recovery/native-writer-child.ts', import.meta.url));
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) { observeP07Native(root); await rm(root, { recursive: true, force: true }); } });
 
 interface HeldWriter {
   readonly dir: string;
