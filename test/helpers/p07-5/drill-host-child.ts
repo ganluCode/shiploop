@@ -137,6 +137,16 @@ if (recordingMaxOutputBytes !== undefined && (!Number.isSafeInteger(recordingMax
   || recordingMaxOutputBytes < 1 || recordingMaxOutputBytes > 8_388_608)) {
   throw new Error('drill-host-child: recording.limits.maxOutputBytes 必须是收窄正整数');
 }
+/* P07-5 / F-012 通知渠道受控故障点（可信测试装配；生产代码不感知）：
+ * local-results 渠道在 hold 文件存在期间投递立即失败（channel_failed），
+ * hold 移除后恢复健康。只替换受控故障点，默认通知运行时、投影、游标、
+ * delivery 持久化与重试策略全部保持生产装配。 */
+const notificationConfig = config.notification === null || config.notification === undefined
+  ? undefined
+  : config.notification as { readonly failWhileHold: string };
+if (notificationConfig !== undefined && (typeof notificationConfig.failWhileHold !== 'string' || notificationConfig.failWhileHold === '')) {
+  throw new Error('drill-host-child: notification.failWhileHold 必须是非空字符串');
+}
 /* 慢消费者放行钩子：父进程 IPC release_recording_consumer 或溢出时自动释放。 */
 let releaseRecordingConsumerHook: (() => void) | undefined;
 process.on('message', (message: unknown) => {
@@ -227,6 +237,18 @@ const host: RunningHost = await startHost({
   capabilityCatalog,
   env: {},
   ...(recordingConfig?.mode === undefined ? {} : { workRecordingMode: recordingConfig.mode }),
+  ...(notificationConfig === undefined ? {} : {
+    notificationChannels: [(({ failWhileHold }: { readonly failWhileHold: string }) => ({
+      channelId: 'local-results' as const,
+      async send(input: { readonly deliveryId: string; readonly attempt: number }) {
+        if (existsSync(failWhileHold)) {
+          throw new Error('p07-5 demo notification channel down (controlled fault point)');
+        }
+        return { channelId: 'local-results', deliveryId: input.deliveryId, attempt: input.attempt };
+      },
+      async cancel() { return true; },
+    }))(notificationConfig)],
+  }),
   workRuntimeFactory(context) {
     const requests = new Map<string, RuntimeExecutionRequest>();
     const fake = createFakeRuntime({

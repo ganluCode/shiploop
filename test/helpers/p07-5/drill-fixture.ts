@@ -59,6 +59,7 @@ const DRILL_BUDGET = {
   },
   run: { maxAttemptsPerRun: 4, runTimeLimitMs: 3_600_000 },
 } as const;
+export { DRILL_BUDGET };
 
 /** Runtime 写入并交由真实 Verifier 校验的目标（worktree 相对路径）。 */
 export const DRILL_RUNTIME_TARGET = { path: 'src/p07-drill-marker.ts', content: 'export const p07DrillMarker = 1;\n' } as const;
@@ -254,6 +255,11 @@ export interface DrillSpawnOptions {
     readonly channel?: { readonly slowConsumer?: boolean };
     readonly limits?: { readonly maxOutputBytes?: number };
   };
+  /** F-012：通知渠道受控故障（hold 文件存在期间 local-results 投递失败）。 */
+  readonly notificationFault?: boolean;
+  /** 有界子进程生命周期（默认 150s/300s；演示闭环需要更长时显式放宽，上限 600s）。 */
+  readonly closeTimeoutMs?: number;
+  readonly watchdogMs?: number;
 }
 
 export interface DrillFixtureOptions {
@@ -293,6 +299,18 @@ export interface DrillFixture {
   releaseGate(child: ManagedChild, name: string): void;
   /** F-005：放行慢消费者屏障（recording.channel.slowConsumer）。 */
   releaseRecordingConsumer(child: ManagedChild): void;
+  /** F-012：受控通知故障点——hold 存在期间 local-results 投递失败，移除后恢复。 */
+  plantNotificationFault(): void;
+  releaseNotificationFault(): void;
+  /** F-012：只读通知事实（deliveries/results，按 event_sequence 排序）。 */
+  notificationFacts(): {
+    readonly deliveries: ReadonlyArray<{ readonly id: string; readonly eventId: string; readonly channelId: string;
+      readonly status: string; readonly attemptCount: number; readonly nextAttemptAt: number | null }>;
+    readonly results: ReadonlyArray<{ readonly deliveryId: string; readonly attempt: number; readonly outcome: string }>;
+  };
+  /** F-012：受控时间推进——仅把指定 delivery 的 next_attempt_at 提前为 created_at
+   * （p07-4 notification-vertical-fixture 同一模式）；不修改业务状态或投递结果。 */
+  forceDeliveriesDue(ids: readonly string[]): void;
   /** F-005：真实有界通道事实（上限/峰值/溢出，来自 marker JSONL）。 */
   recordingChannelFacts(): Array<Record<string, unknown>>;
   /** 植入条件 post-commit 钩子（可信测试故障点：commit 落盘后阻塞回执事务）。 */
@@ -536,6 +554,7 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
     mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
     const verifierMarkerPath = join(markerDir, 'verifier-started.json');
     const verifierHoldPath = join(markerDir, 'verifier-hold');
+    const notificationHoldPath = join(markerDir, 'notification-hold');
     writeFileSync(join(secretsDir, 'sentinel.env'),
       `# Synthetic fixture secret; must never appear in evidence text.\nP07_DRILL_SENTINEL=${sensitiveSentinelValue}\nHTTP_AUTHORIZATION=${bearerSentinelValue}\n`, 'utf8');
     const gitBarrierPaths: Record<'a' | 'b', { readonly marker: string; readonly hold: string }> = {
@@ -607,6 +626,18 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
     };
 
     const buildChildConfig = (spawnOptions: DrillSpawnOptions): Record<string, unknown> => {
+      if (spawnOptions.closeTimeoutMs !== undefined && (!Number.isSafeInteger(spawnOptions.closeTimeoutMs)
+        || spawnOptions.closeTimeoutMs < 1_000 || spawnOptions.closeTimeoutMs > 600_000)) {
+        throw new Error('drill 夹具：closeTimeoutMs 必须在 1_000..600_000 内');
+      }
+      if (spawnOptions.watchdogMs !== undefined && (!Number.isSafeInteger(spawnOptions.watchdogMs)
+        || spawnOptions.watchdogMs < 1_000 || spawnOptions.watchdogMs > 600_000)) {
+        throw new Error('drill 夹具：watchdogMs 必须在 1_000..600_000 内');
+      }
+      if (spawnOptions.closeTimeoutMs !== undefined && spawnOptions.watchdogMs !== undefined
+        && spawnOptions.watchdogMs <= spawnOptions.closeTimeoutMs) {
+        throw new Error('drill 夹具：watchdogMs 必须大于 closeTimeoutMs');
+      }
       const result = { terminal: 'completed', reason: null, exitCode: 0, signal: null, durationMs: 1, usage: null };
       const steps: Array<Record<string, unknown>> = [];
       if (spawnOptions.pauseWrite === true) steps.push({ op: 'await_gate', name: 'pause_write' });
@@ -620,8 +651,8 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         fixtureRoot: box!.root,
         stopGraceMs: 200,
         stopConfirmMs: 1_000,
-        closeTimeoutMs: 150_000,
-        watchdogMs: 300_000,
+        closeTimeoutMs: spawnOptions.closeTimeoutMs ?? 150_000,
+        watchdogMs: spawnOptions.watchdogMs ?? 300_000,
         gates: spawnOptions.pauseWrite === true ? ['pause_write'] : [],
         script: spawnOptions.script ?? { schemaVersion: 1, steps, result },
         recording: spawnOptions.recording,
@@ -643,6 +674,7 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         },
         barriers: spawnOptions.barriers ?? {},
         verifierIdentityOverride: spawnOptions.verifierIdentityOverride,
+        ...(spawnOptions.notificationFault === true ? { notification: { failWhileHold: notificationHoldPath } } : {}),
       };
     };
 
@@ -696,6 +728,32 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
 
     const releaseRecordingConsumer = (child: ManagedChild): void => {
       child.send({ kind: 'release_recording_consumer' });
+    };
+
+    const plantNotificationFault = (): void => {
+      writeFileSync(notificationHoldPath, 'hold\n', 'utf8');
+    };
+
+    const releaseNotificationFault = (): void => {
+      rmSync(notificationHoldPath, { force: true });
+    };
+
+    const notificationFacts = () => {
+      const deliveries = (probe.database.prepare(
+        'SELECT id, event_id, channel_id, status, attempt_count, next_attempt_at FROM notification_deliveries ORDER BY event_sequence, id',
+      ).all() as Array<{ id: string; event_id: string; channel_id: string; status: string; attempt_count: number; next_attempt_at: number | null }>)
+        .map(row => ({ id: row.id, eventId: row.event_id, channelId: row.channel_id,
+          status: row.status, attemptCount: row.attempt_count, nextAttemptAt: row.next_attempt_at }));
+      const results = (probe.database.prepare(
+        'SELECT delivery_id, attempt, outcome FROM notification_delivery_results ORDER BY created_at, id',
+      ).all() as Array<{ delivery_id: string; attempt: number; outcome: string }>)
+        .map(row => ({ deliveryId: row.delivery_id, attempt: row.attempt, outcome: row.outcome }));
+      return { deliveries, results };
+    };
+
+    const forceDeliveriesDue = (ids: readonly string[]): void => {
+      const statement = probe.database.prepare('UPDATE notification_deliveries SET next_attempt_at = created_at WHERE id = ?');
+      for (const id of ids) statement.run(id);
     };
 
     const recordingChannelFacts = (): Array<Record<string, unknown>> => {
@@ -1269,6 +1327,10 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
       releaseGate,
       releaseRecordingConsumer,
       recordingChannelFacts,
+      plantNotificationFault,
+      releaseNotificationFault,
+      notificationFacts,
+      forceDeliveriesDue,
       plantCommitBoundary,
       runCommand,
       spawnCommand,

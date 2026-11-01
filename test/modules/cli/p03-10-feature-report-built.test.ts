@@ -122,6 +122,24 @@ test('[case:built-report-errors] built CLI emits structured authorization, versi
   expect(reportDatabaseSnapshot(f)).toEqual(before);
 });
 
+test('[case:built-report-resumed-session-attribution] P03-9 恢复续接的跨 Attempt 会话链归因各自 Attempt，报告仍满足线协议', async () => {
+  const f = await fixture();
+  const run = (await f.start()).runId!;
+  const first = reportAttempt(f, { id: 'a-interrupted-root', runId: run, status: 'interrupted' });
+  const resumed = reportAttempt(f, { id: 'a-resumed-new', runId: run, number: 2, status: 'succeeded', parentSessionId: first.sessionId });
+  reportSettlement(f, first);
+  const h = await host(f);
+  const before = reportDatabaseSnapshot(f);
+  const report = await h.client.getFeatureReport(f.projectId, f.featureId);
+  const attempts = report.tasks[0].attempts;
+  expect(attempts.map(a => a.status)).toEqual(['interrupted', 'succeeded']);
+  expect(attempts[0].sessionIds).toEqual([first.sessionId]);
+  expect(attempts[1].sessionIds).toEqual([resumed.sessionId]);
+  expect(attempts[1].sessionId).toBe(resumed.sessionId);
+  expect(report.sessions.find(s => s.id === resumed.sessionId)).toMatchObject({ parentSessionId: first.sessionId });
+  expect(reportDatabaseSnapshot(f)).toEqual(before);
+});
+
 test('[case:built-usage-diagnostics-history] 用量诊断跨失败取消返工、Host和构建CLI保留历史且查询只读', async () => {
   const f = await fixture();
   const run1 = (await f.start()).runId!;

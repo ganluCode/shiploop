@@ -60,8 +60,10 @@ export function reportSecondRun(f: BudgetFixture, runId: string) {
 export function reportAttempt(f: BudgetFixture, options: {
   id: string; runId: string; taskId?: string; number?: number; status?: AttemptStatus;
   session?: boolean; start?: number; end?: number | null; previousAttemptId?: string; failureEvidenceId?: string;
+  parentSessionId?: string | null;
 }) {
-  const { id, runId, taskId = 't-1', number = 1, status = 'failed', session = true, start = NOW, end = NOW + 100 } = options;
+  const { id, runId, taskId = 't-1', number = 1, status = 'failed', session = true, start = NOW, end = NOW + 100,
+    parentSessionId = null } = options;
   const snapshot = reportArtifact(f, `${id}-input`);
   const manifest = reportArtifact(f, `${id}-manifest`);
   const prompt = reportArtifact(f, `${id}-prompt`);
@@ -85,9 +87,9 @@ export function reportAttempt(f: BudgetFixture, options: {
     .run(id, NOW, NOW, f.projectId, f.featureId, runId, taskId, number, number, NOW + 1000, JSON.stringify(input), HASH,
       snapshot.artifactId, status, session ? start : null, session ? end : null, session && end !== null ? end - start : null, session ? 1 : null, sessionId);
   if (session) f.session.database.prepare(`INSERT INTO sessions (id, created_at, updated_at, project_id, attempt_id,
-    kind, purpose, runtime, adapter_version, status, execution_stage, input_ref, last_activity_at, started_at, ended_at)
-    VALUES (?, ?, ?, ?, ?, 'work', 'coding', 'fake', '1', ?, 'runtime', ?, ?, ?, ?)` )
-    .run(sessionId, NOW, NOW, f.projectId, id, end === null ? 'started' : 'ended', snapshot.artifactId, end ?? start, start, end);
+    kind, purpose, runtime, adapter_version, status, execution_stage, input_ref, last_activity_at, started_at, ended_at, parent_session_id)
+    VALUES (?, ?, ?, ?, ?, 'work', 'coding', 'fake', '1', ?, 'runtime', ?, ?, ?, ?, ?)` )
+    .run(sessionId, NOW, NOW, f.projectId, id, end === null ? 'started' : 'ended', snapshot.artifactId, end ?? start, start, end, parentSessionId);
   return { id, runId, taskId, sessionId, snapshot };
 }
 export function reportSettlement(f: BudgetFixture, attempt: ReturnType<typeof reportAttempt>, overrides: Record<string, unknown> = {}) {

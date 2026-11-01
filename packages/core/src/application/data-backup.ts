@@ -73,13 +73,24 @@ function stableId(value: unknown, operation: string, field: string): string {
   }
 }
 
+/** 回执内嵌结果必须进 RECEIPT_RESULT_MAX_BYTES（16 KiB）：逐文件 file-content
+ * 通过项只聚合为按名计数，非 available 检查与原因有界保留；大型包不再把
+ * 回执发布变成 internal 命令失败。 */
 function verificationReportResult(report: BackupVerificationReport): Record<string, unknown> {
+  const problems = report.checks.filter(item => item.status !== 'available');
+  const availableCounts: Record<string, number> = {};
+  for (const item of report.checks) {
+    if (item.status === 'available') availableCounts[item.name] = (availableCounts[item.name] ?? 0) + 1;
+  }
   return {
     status: report.status,
     backupId: report.backupId,
     manifestDigest: report.manifestDigest,
-    checks: report.checks.map(check => ({ name: check.name, status: check.status, ...(check.details === undefined ? {} : { details: check.details }) })),
-    reasons: report.reasons,
+    checks: problems.slice(0, 64).map(check => ({ name: check.name, status: check.status, ...(check.details === undefined ? {} : { details: check.details }) })),
+    checksTruncated: problems.length > 64,
+    availableChecks: availableCounts,
+    reasons: report.reasons.slice(0, 128),
+    reasonsTruncated: report.reasons.length > 128,
     scannedFiles: report.scannedFiles,
     verifiedFiles: report.verifiedFiles,
     totalBytes: report.totalBytes,

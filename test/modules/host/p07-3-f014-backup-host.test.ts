@@ -12,12 +12,13 @@
  * - data.backup.restore 不经 HTTP（501 unsupported；实际恢复只在独立受锁维护
  *   入口执行，见 CLI 离线用例）。
  */
-import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { randomUUID, createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Server } from 'node:http';
 import { describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
 import {
   connectToHost,
   createHostLifecycleServer,
@@ -245,6 +246,49 @@ describe('P07-3 F-014 backup default wiring (real loopback Host + HostClient)', 
       await f.dispose();
     }
   });
+
+  it('[case:verify-receipt-bounded-for-large-packages] 大型包（数百制品文件）verify 回执聚合计数并保持在线回执限制内', async () => {
+    const f = await openFixture();
+    try {
+      const project = await f.host.core.stateStore.createProject({ displayName: 'F-014 bulk artifacts' });
+      const body = Buffer.from('f014 bulk artifact body\n', 'utf8');
+      const hash = createHash('sha256').update(body).digest('hex');
+      const db = new Database(join(f.root, 'core.sqlite'));
+      try {
+        const insert = db.prepare(`INSERT INTO artifacts (id, created_at, revision, updated_at, project_id, kind, status, media_type,
+          expected_hash, content_hash, size_bytes, version, storage_locator, failure_reason)
+          VALUES (?, ?, 1, ?, ?, 'document', 'ready', 'text/plain', ?, ?, ?, 1, ?, NULL)`);
+        const now = Date.now();
+        for (let index = 0; index < 220; index += 1) {
+          const id = `bulk-${String(index).padStart(4, '0')}`;
+          insert.run(id, now, now, project.id, hash, hash, body.byteLength, `documents/${id}`);
+          const content = join(f.root, 'projects', project.id, 'artifacts', id, 'content');
+          mkdirSync(dirname(content), { recursive: true, mode: 0o700 });
+          writeFileSync(content, body, { mode: 0o600 });
+        }
+      } finally {
+        db.close();
+      }
+      const created = await f.client.submitDataBackupCreate({ backupId: 'backup-f014-bulk' });
+      expect(created.status).toBe('accepted');
+      const operation = await waitForOperation(f.client, (created as { operationId: string }).operationId);
+      expect(operation.status).toBe('completed');
+      const verified = await f.client.submitDataBackupVerify({ backupId: 'backup-f014-bulk', manifestDigest: operation.manifestDigest as string });
+      expect(verified.status).toBe('completed');
+      if (verified.status === 'completed') {
+        const result = verified.result as { status: string; availableChecks: Record<string, number>;
+          checks: readonly unknown[]; scannedFiles: number; verifiedFiles: number };
+        expect(result.status).toBe('complete');
+        /* 逐文件 file-content 通过项聚合为计数，不再逐项进入回执。 */
+        expect(result.availableChecks['file-content']).toBe(220);
+        expect(result.verifiedFiles).toBeGreaterThanOrEqual(221);
+        expect(result.checks).toEqual([]);
+        expect(JSON.stringify(verified.result).length).toBeLessThan(16_384);
+      }
+    } finally {
+      await f.dispose();
+    }
+  }, 120_000);
 
   it('[case:unauthorized-and-unsupported] restricted principal cannot export/verify/query and restore is not routed over HTTP', async () => {
     const f = await openFixture();

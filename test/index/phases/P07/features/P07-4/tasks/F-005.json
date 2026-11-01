@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/events/p07-4-f005-result-events.test.ts", "all": true },
+        { "file": "test/modules/events/events-contract.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-attempt-lifecycle.test.ts", "all": true },
+        { "file": "test/modules/execution/budget/p03-3-run-outcome-settlement.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-8-f007-feature-finalization.test.ts", "all": true },
+        { "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p04-7-f004-settlement-gate.test.ts", "all": true }
+      ]
+    }
+  ]
+}

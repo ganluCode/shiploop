@@ -1,5 +1,6 @@
 /** Physical execution plan and scene bindings, shared by entry and its test-only evidence setup. */
 export const P07_SCENE_CHECKS: Readonly<Record<string, string>> = {
+  'test/modules/acceptance/p07-5-f012-closed-loop-demo.test.ts': 'P07-FR1-RECOVERY-CLOSURE',
   'test/modules/acceptance/p07-5-f003-verifier-crash.test.ts': 'P07-T06-VERIFIER-CRASH-RECOVERY',
   'test/modules/delivery/p07-5-f004-git-recovery-boundary.test.ts': 'P07-T08-COMMIT-RECEIPT-RECOVERY',
   'test/modules/acceptance/p07-5-f005-recording-faults.test.ts': 'P07-T11-RECORDER-BACKPRESSURE',

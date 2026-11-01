@@ -27,3 +27,5 @@ workspace-discard约459秒，controlled-git-commit约391秒，workspace-cleaner�
 不通过增加超时或删除故障断言制造提速。此次仅验证入口定向回归，不重新执行全仓。
 
 P05 默认范围由 `scripts/acceptance/p05-test-scope.ts` 显式列出：保留全部 P05 测试及必要底层回归，其他可信索引历史文件逐项写入 `test-scope.json` 的 deferred 列表，状态为 not_run。清单同时进入报告证据；不删除测试，不将后置项记为通过。默认预算为单步 15 分钟、总计 20 分钟，实际耗时另以执行记录为准。
+
+P07 默认范围由 `scripts/acceptance/p07-test-scope.ts` 显式列出：完整校验 P07-1～P07-5 的 Feature/Task 索引后，P07 文件全部纳入默认范围并逐项登记 recovery、Git 公共元数据锁、Recorder、迁移与结果查询所需底层回归；历史文件逐项 deferred/not_run，`--full-regression` 才执行完整可信并集。恢复场景文件由 `scripts/acceptance/p07-plan.ts` 绑定冻结检查 ID（含 F-012 公开闭环恢复演示对 `P07-FR1-RECOVERY-CLOSURE` 的绑定）；无参数 `npm run verify` 未执行时如实记录 not_run。负责人操作与证据核对见 `docs/acceptance/p07-owner-walkthrough.md`。
