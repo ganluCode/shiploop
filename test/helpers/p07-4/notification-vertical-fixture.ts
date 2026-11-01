@@ -319,7 +319,15 @@ export async function openNotificationVerticalFixture(
     async function verifyNextAttempt(target: RunningHost, expectPass: boolean) {
       const handled = new Set<string>();
       const attempt = await pollVerifyingAttempt(60_000, handled);
-      if (attempt === null) throw new Error('verifyNextAttempt: 等待 verifying Attempt 超时');
+      if (attempt === null) {
+        const diagnostic = {
+          attempts: probe!.database.prepare('SELECT id, task_id, run_id, status, execution_stage, diagnostic_ref, owner_id, host_instance_id FROM attempts ORDER BY number').all(),
+          tasks: probe!.database.prepare('SELECT id, status, execution_version, revision FROM tasks ORDER BY id').all(),
+          runs: probe!.database.prepare('SELECT id, status, reason, revision FROM runs ORDER BY id').all(),
+          batches: probe!.database.prepare('SELECT id, status, attempts_created, runtime_starts, no_progress_runs FROM execution_batches ORDER BY id').all(),
+        };
+        throw new Error(`verifyNextAttempt: 等待 verifying Attempt 超时；state=${JSON.stringify(diagnostic)}`);
+      }
       const workspace = probe!.database.prepare(
         'SELECT repository_binding_id, repository_binding_revision, repo_identity, canonical_path,'
         + ' git_common_dir, branch, base_commit FROM managed_workspaces WHERE feature_id = ?',
