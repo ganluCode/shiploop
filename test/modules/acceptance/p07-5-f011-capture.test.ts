@@ -3,9 +3,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { collectP07Scenario, hashP07Bytes, hashP07Input, verifyP07Scenario } from '../../../scripts/acceptance/p07-evidence.ts';
-import { observeP07Entry, observeP07Native, observeP07Product, publishP07EntryCapture, setP07ActiveCapture, type P07ActiveCapture } from '../../helpers/p07-5/entry-observation.ts';
+import { observeP07Entry, observeP07Memory, observeP07Native, observeP07Product, publishP07EntryCapture, setP07ActiveCapture, type P07ActiveCapture } from '../../helpers/p07-5/entry-observation.ts';
 import { openBudgetFixture, BUDGET } from '../../helpers/p03-3/budget-fixture.ts';
 import { openReportHost } from '../../helpers/p03-10/report-host.ts';
+
+it('[case:p07-entry-memory-capture] records explicitly resource-free observations without claiming SQLite or process facts', () => {
+  const output = mkdtempSync(join(tmpdir(), 'p07-memory-capture-'));
+  const capture: P07ActiveCapture = { file: 'test/modules/runtime/recovery/p07-5-f006-native-archive-boundary.test.ts', title: 'memory only', observations: [], products: [] };
+  try {
+    vi.stubEnv('SHIPLOOP_P07_ENTRY_SOURCE', output); setP07ActiveCapture(capture);
+    observeP07Memory({});
+    const saved = JSON.parse(readFileSync(publishP07EntryCapture(output, { runId: 'memory-only' }, capture, { passed: true, assertions: 1 }), 'utf8'));
+    expect(saved.observations).toEqual([{ facts: {}, removed: true }]);
+    expect(capture.observations[0].root).toBeNull();
+    expect(saved.observations[0].facts.sqlite).toBeUndefined();
+    expect(saved.observations[0].facts.process).toBeUndefined();
+  } finally { setP07ActiveCapture(undefined); vi.unstubAllEnvs(); rmSync(output, { recursive: true, force: true }); }
+});
 
 it('[case:p07-entry-real-capture] preserves readonly SQLite/Git/artifact snapshots and a real product response after fixture cleanup', async () => {
   const output = mkdtempSync(join(tmpdir(), 'p07-capture-local-'));

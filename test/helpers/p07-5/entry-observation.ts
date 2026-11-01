@@ -7,7 +7,7 @@ import { P07_SCENE_CHECKS } from '../../../scripts/acceptance/p07-plan.ts';
 import Database from 'better-sqlite3';
 import { hashP07Bytes, hashP07Input, safeP07Json, redactP07EvidenceText, type P07DrillEvidenceLike, type P07OverrideFacts } from '../../../scripts/acceptance/p07-evidence.ts';
 
-export type P07Observation = { root: string; facts: P07OverrideFacts; drill?: P07DrillEvidenceLike };
+export type P07Observation = { root: string | null; facts: P07OverrideFacts; drill?: P07DrillEvidenceLike };
 export type P07ActiveCapture = { file: string; title: string; observations: P07Observation[]; products: unknown[] };
 const key = Symbol.for('shiploop.p07.entry.capture');
 const state = globalThis as typeof globalThis & { [key]?: P07ActiveCapture };
@@ -18,9 +18,13 @@ export function publishP07EntryCapture(source: string, identity: unknown, captur
   const directory = join(source, 'captures'); mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = join(directory, `${slot}.json`);
   writeFileSync(file, safeP07Json({ schemaVersion: 1, identity, file: capture.file, title: capture.title, checkId: P07_SCENE_CHECKS[capture.file],
-    ...result, observations: capture.observations.map(({ root, ...observation }) => ({ ...observation, removed: !existsSync(root) })), products: capture.products }),
+    ...result, observations: capture.observations.map(({ root, ...observation }) => ({ ...observation, removed: root === null || !existsSync(root) })), products: capture.products }),
     { flag: 'wx', mode: 0o600 });
   return file;
+}
+/** Only for pure in-memory fixtures: no process, database or filesystem ownership is claimed. */
+export function observeP07Memory(facts: P07OverrideFacts): void {
+  if (p07CaptureActive()) state[key]!.observations.push({ root: null, facts });
 }
 export function observeP07Native(root: string): void {
   if (!p07CaptureActive()) return;
@@ -66,6 +70,11 @@ export function observeP07Entry(root: string, dbPath: string, options: { drill?:
     const artifacts = rows('artifacts').filter(row => row.content_hash && row.size_bytes > 0).map(row => ({
       projectId: row.project_id, artifactId: row.id, kind: row.kind, contentHash: row.content_hash, sizeBytes: row.size_bytes,
     }));
+    for (const row of rows('git_operations')) {
+      const bytes = Buffer.from(JSON.stringify(row));
+      artifacts.push({ projectId: 'git-operation-observation', artifactId: row.id, kind: 'observed-git-operation-snapshot',
+        contentHash: hashP07Bytes(bytes), sizeBytes: bytes.length });
+    }
     const deliveries = rows('notification_deliveries');
     const facts: { -readonly [K in keyof P07OverrideFacts]: P07OverrideFacts[K] } = {
       sqlite: { source: 'readonly-scene-database-before-cleanup', tables },

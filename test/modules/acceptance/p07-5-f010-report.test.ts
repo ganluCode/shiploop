@@ -318,6 +318,7 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 / F-010 recovery drill rep
       expect(failed.report).toBeNull();
       expect(failed.verification.ok).toBe(false);
       expect(JSON.parse(readFileSync(join(failed.directory, 'diagnostic.json'), 'utf8')).exitCode).toBe(1);
+      expect(JSON.parse(readFileSync(join(failed.directory, 'diagnostic.json'), 'utf8')).stage).toBe('build');
       expect(verifyP07ReportDirectory(result.directory, identity).ok).toBe(true);
     } finally {
       if (fixture !== undefined) await fixture.forceDispose();

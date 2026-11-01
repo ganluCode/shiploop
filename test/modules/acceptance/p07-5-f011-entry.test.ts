@@ -116,6 +116,7 @@ it('[case:p07-entry-success-report] publishes verified offline success with real
     const result = await runP07Acceptance(options(root, 'success', executor(product)));
     expect(result.report, JSON.stringify(result.report?.blockingIssues)).toMatchObject({ offlineConclusion: 'pass', conclusion: 'fail' });
     expect(result).toMatchObject({ exitCode: 1, phaseAccepted: false, reportVerified: true, cleanup: { processesGone: true, resourcesRemoved: true } });
+    expect(JSON.parse(readFileSync(join(result.workDir, 'report-request.json'), 'utf8')).identity).toEqual(result.identity);
     expect(result.report?.checks.find(check => check.execution === 'manual')).toMatchObject({ status: 'not_run', reason: 'owner_pending' });
     expect(result.report?.checks.find(check => check.group === 'deferred')).toMatchObject({ status: 'not_run' });
     expect(result.report?.knownGaps).toContain('full_history_not_run');

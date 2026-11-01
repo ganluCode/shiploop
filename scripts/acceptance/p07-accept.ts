@@ -205,13 +205,15 @@ export async function runP07Acceptance(options: P07AcceptanceOptions) {
       bindings: steps.map(step => ({ id: step.id, tests: step.tests })), scope,
       fullHistory: { status: options.fullRegression ? steps.find(step => step.id === 'p07-trusted-scope')!.status : 'not_run', stepId: options.fullRegression ? 'p07-trusted-scope' : null } });
     const tools = await loadReport();
-    const published = (options.testing?.publish ?? tools.writeP07AcceptanceReport)({ reportRoot: join(reports, 'reports'), sourceDirectory: source, checklist,
+    const publication: Parameters<typeof tools.writeP07AcceptanceReport>[0] = { reportRoot: join(reports, 'reports'), sourceDirectory: source, checklist,
       input: { identity, toolchain: { node: config.toolchain.node, npm: config.toolchain.npm, platform: config.toolchain.platform }, prerequisites,
         checks: checklist.items.map(item => ({ checkId: item.id, executionMode: item.execution === 'offline' ? 'fake' : item.execution === 'manual' ? 'manual' : 'postponed',
           status: item.execution === 'offline' ? 'pass' : 'not_run', reason: item.execution === 'manual' ? 'owner_pending' : null })),
         scenarios: scenes, products: existsSync(join(source, 'products/feature.json')) ? [{ path: 'products/feature.json' }] : [],
         gates, entry: { path: 'entry/run.json' }, knownGaps: ['trusted_project_mode_is_not_an_OS_sandbox', 'no_arg_verify_not_run',
-          ...(options.fullRegression ? ['full_history_included_in_single_test_step'] : ['full_history_not_run'])] } });
+          ...(options.fullRegression ? ['full_history_included_in_single_test_step'] : ['full_history_not_run'])] } };
+    save(join(workDir, 'report-request.json'), publication.input);
+    const published = (options.testing?.publish ?? tools.writeP07AcceptanceReport)(publication);
     const lateInputDrift = drift();
     const expired = Date.now() - started > budget.overallMs;
     const exitCode = published.exitCode === 0 && !expired && !lateInputDrift ? 0 : 1;

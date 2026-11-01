@@ -520,8 +520,10 @@ export function writeP07AcceptanceReport(options: { reportRoot: string; sourceDi
   const directory = join(options.reportRoot, options.input.identity.runId);
   mkdirSync(directory, { mode: 0o700 });
   let report: P07AcceptanceReport | null = null;
+  let stage: 'build' | 'copy' | 'serialize' | 'readback' = 'build';
   try {
     report = buildP07AcceptanceReport(options.sourceDirectory, options.input, options.checklist);
+    stage = 'copy';
     for (const ref of report.files) {
       const target = join(directory, ref.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
@@ -529,15 +531,17 @@ export function writeP07AcceptanceReport(options: { reportRoot: string; sourceDi
       if (hashP07Bytes(bytes) !== ref.sha256 || bytes.length !== ref.sizeBytes) fail('source_changed');
       writeFileSync(target, bytes, { flag: 'wx', mode: 0o600 });
     }
+    stage = 'serialize';
     writeFileSync(join(directory, 'report.json'), safeP07Json(report), { flag: 'wx', mode: 0o600 });
     writeFileSync(join(directory, 'summary.md'), safeP07Text(renderP07Summary(report)), { flag: 'wx', mode: 0o600 });
+    stage = 'readback';
     const verification = verifyP07ReportDirectory(directory, options.input.identity);
     if (!verification.ok) fail('report_readback_failed');
     return { directory, report, verification, exitCode: report.exitCode };
   } catch {
     const verification = { ok: false, exitCode: 1 as const, problems: ['p07_report_publication_failed'] };
     // 诊断不含调用方文本、扫描命中或文件系统错误信息。
-    writeFileSync(join(directory, 'diagnostic.json'), JSON.stringify(verification, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(directory, 'diagnostic.json'), JSON.stringify({ ...verification, stage }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     return { directory, report: null, verification, exitCode: 1 as const };
   }
 }

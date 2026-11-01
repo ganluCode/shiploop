@@ -18,7 +18,7 @@
  * 8. [case:p07-f006-evidence-separation] 公开恢复闭环与 adapter 本地验证分开
  *    留证：Core 水位与原生水位分字段绑定，历史用量排除，live 续聊 not_run。
  */
-import { observeP07Native } from '../../../helpers/p07-5/entry-observation.ts';
+import { observeP07Memory, observeP07Native } from '../../../helpers/p07-5/entry-observation.ts';
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -198,7 +198,10 @@ function publicService() {
       return { ...record, projectId, artifactId: id, content: contents.get(id)! };
     } } as never,
   });
-  return { service, readCurrentCalls: () => readCurrentCalls, setArchive: (bytes: Uint8Array) => {
+  const observe = () => observeP07Memory({ artifact: { artifacts: [...contents].map(([id, bytes]) => ({
+    projectId: 'project-1', artifactId: id, kind: records.get(id)!.kind, contentHash: digest(bytes), sizeBytes: bytes.length,
+  })) } });
+  return { service, observe, readCurrentCalls: () => readCurrentCalls, setArchive: (bytes: Uint8Array) => {
     records.delete('archive-old'); contents.delete('archive-old');
     archiveEntry = put('archive-old', bytes, 'runtime-native-archive', 'application/x-ndjson');
     add(archiveEntry, bytes);
@@ -324,6 +327,7 @@ describe('P07-5 F-006 standard Pi native archive boundary', () => {
     f.useForeignEvidence();
     await expect(f.service.evaluate(recoveryServiceRequest(recoverySource(Buffer.from('{"native":"placeholder"}'), 'native:session/1'))))
       .rejects.toMatchObject({ details: expect.objectContaining({ reason: 'source_project_mismatch', field: 'ref.projectId' }) });
+    f.observe();
   });
 
   it('[case:p07-f006-declared-mode-matrix] auto/new/required 声明行为：降级如实、unsupported 不冒充', async () => {
@@ -363,6 +367,7 @@ describe('P07-5 F-006 standard Pi native archive boundary', () => {
     const recorded = recoveryRecordingForRequest(executionRequest(conversation, 'auto'), downgrade)!;
     expect(recorded.decision).toEqual(downgrade.decision);
     expect(recorded.coverage).toBe('partial');
+    f.observe();
     expect(recorded.gaps).toContain('source_watermark_unknown');
     expect(recorded.historicalUsage).toBe('excluded_unknown_scope');
   });
