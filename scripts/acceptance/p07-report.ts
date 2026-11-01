@@ -29,7 +29,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { P07_PHYSICAL_STEPS } from './p07-plan.ts';
+import { buildP07ExecutionPlan, P07_PHYSICAL_STEPS } from './p07-plan.ts';
 import { validateAppQueryResponse } from '../../packages/host/src/client/app-wire.ts';
 import { validateP05ProductCapture } from './p05-product-evidence.ts';
 import {
@@ -249,17 +249,22 @@ function readEntryCapture(directory: string, ref: { readonly path: string }, exp
   const raw = parse(directory, ref.path) as Record<string, any>;
   keys(raw, ['schemaVersion', 'runId', 'testedCommit', 'inputDigest', 'steps', 'cleanup', 'sourceDrift', 'elapsedMs', 'overallTimeoutMs', 'selectedFiles', ...(raw.schemaVersion === 2 ? ['bindings', 'scope', 'fullHistory'] : [])]);
   if (![1, 2].includes(raw.schemaVersion) || !matchesIdentity({ runId: raw.runId, testedCommit: raw.testedCommit, inputDigest: raw.inputDigest }, expected)
-    || !Array.isArray(raw.steps) || raw.steps.length < 1 || raw.steps.length > P07_ENTRY_STEP_ORDER.length) fail('invalid_entry_identity');
+    || !Array.isArray(raw.steps) || raw.steps.length < 1 || raw.steps.length > (raw.schemaVersion === 2 ? 1024 : P07_ENTRY_STEP_ORDER.length)) fail('invalid_entry_identity');
+  const batched = raw.schemaVersion === 2 && raw.steps.some((step: EntryStep) => step.id.startsWith('p07-trusted-scope-batch-'));
+  if (batched && (!Array.isArray(raw.selectedFiles) || raw.selectedFiles.some((file: unknown) => typeof file !== 'string'))) fail('invalid_entry_scope');
+  const batchPlan = batched ? buildP07ExecutionPlan(raw.selectedFiles, false) : null;
   const expectedOrder = raw.schemaVersion === 2
-    ? P07_PHYSICAL_STEPS.filter(id => id !== 'p07-recovery-scenarios' || raw.steps.some((step: EntryStep) => step.id === id))
+    ? batchPlan ? batchPlan.map(step => step.id) : P07_PHYSICAL_STEPS.filter(id => id !== 'p07-recovery-scenarios' || raw.steps.some((step: EntryStep) => step.id === id))
     : [...P07_ENTRY_STEP_ORDER];
   if (raw.schemaVersion === 2) {
+    if (batched && raw.scope?.policy !== 'p07-impact-and-required-regressions') fail('invalid_entry_scope');
     if (raw.steps.length !== expectedOrder.length || !Array.isArray(raw.bindings) || raw.bindings.length !== expectedOrder.length
       || !raw.scope || !Array.isArray(raw.scope.selected) || !Array.isArray(raw.scope.deferred)) fail('invalid_entry_scope');
     const bound: string[] = [];
     raw.bindings.forEach((binding: { id: string; tests: string[] }, index: number) => {
       keys(binding, ['id', 'tests']);
       if (binding.id !== expectedOrder[index] || !Array.isArray(binding.tests)) fail('invalid_entry_scope');
+      if (batchPlan && !same(binding.tests, batchPlan[index].tests)) fail('invalid_entry_scope');
       bound.push(...binding.tests);
     });
     if (new Set(bound).size !== bound.length || !same([...bound].sort(), [...raw.selectedFiles].sort())

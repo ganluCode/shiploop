@@ -26,6 +26,20 @@ it('[case:p07-entry-partition] executes each selected file once and retains full
   expect(full.some(step => step.id === 'p07-recovery-scenarios')).toBe(false);
 });
 
+it('[case:p07-entry-bounded-batches] partitions a large scope deterministically without dropping or repeating files', () => {
+  const files = Array.from({ length: 105 }, (_, i) => `test/modules/recovery/example-${i}.test.ts`);
+  const scene = Object.keys(P07_SCENE_CHECKS)[0];
+  const plan = buildP07ExecutionPlan([...files, scene], false);
+  const batches = plan.filter(step => step.id.startsWith('p07-trusted-scope'));
+  expect(batches).toHaveLength(7);
+  expect(batches.every(step => step.tests.length <= 16)).toBe(true);
+  expect(batches.flatMap(step => step.tests)).toEqual(files);
+  expect(new Set(plan.flatMap(step => step.tests)).size).toBe(106);
+  expect(plan).toEqual(buildP07ExecutionPlan([...files, scene], false));
+  expect(plan.at(-2)?.id).toBe('p07-boundaries');
+  expect(buildP07ExecutionPlan([...files, scene], true).filter(step => step.tests.length)).toHaveLength(1);
+});
+
 it('[case:p07-entry-zero-tests] rejects zero tests, skipped selected files, wrong paths and failed assertions despite exit zero', () => {
   const file = 'test/modules/acceptance/example.test.ts';
   const receipt = { numTotalTests: 1, numPassedTests: 1, success: true, testResults: [
@@ -72,8 +86,7 @@ function executor(product?: unknown, mutate?: (step: string) => Partial<typeof o
     const step = receipt?.split('/').at(-1)?.replace('-tests.json', '') ?? (args[0] === 'scripts/build-host-lock.ts' ? 'p07-prerequisites' : 'engineering');
     if (receipt) {
       const material = JSON.parse(readFileSync(join(receipt, '../inputs.json'), 'utf8')).material;
-      const tests = step === 'p07-recovery-scenarios' ? material.executed.filter((file: string) => P07_SCENE_CHECKS[file])
-        : material.fullRegression ? material.executed : material.executed.filter((file: string) => !P07_SCENE_CHECKS[file]);
+      const tests = buildP07ExecutionPlan(material.executed, material.fullRegression).find(item => item.id === step)!.tests;
       save(receipt, { numTotalTests: tests.length, numPassedTests: tests.length, success: true,
         testResults: tests.map((file: string) => ({ name: join(process.cwd(), file), status: 'passed', assertionResults: [{ title: file.endsWith('p07-5-f010-report.test.ts') ? '[case:p07-f010-real-drill-report]' : 'controller assertion', status: 'passed' }] })) });
       for (const [file, checkId] of Object.entries(P07_SCENE_CHECKS)) if (tests.includes(file)) {
@@ -121,7 +134,7 @@ it('[case:p07-entry-success-report] publishes verified offline success with real
   } finally { await host?.close(); fixture.close(); rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
-it.each(['p07-prerequisites', 'p07-recovery-scenarios'])('[case:p07-entry-failure-%s] halts required later steps on preparation or scenario exit failure', async failedStep => {
+it.each(['p07-prerequisites', 'p07-trusted-scope-batch-2', 'p07-recovery-scenarios'])('[case:p07-entry-failure-%s] halts required later steps on preparation or scenario exit failure', async failedStep => {
   const root = mkdtempSync(join(tmpdir(), 'p07-entry-failure-'));
   try {
     const result = await runP07Acceptance(options(root, 'failure', executor(undefined, step => step === failedStep ? { exitCode: 7 } : {})));

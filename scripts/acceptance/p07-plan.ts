@@ -16,13 +16,19 @@ export const P07_SCENE_CHECKS: Readonly<Record<string, string>> = {
 };
 export const P07_PHYSICAL_STEPS = ['p07-prerequisites', 'p07-trusted-scope', 'p07-recovery-scenarios', 'p07-boundaries', 'p07-engineering'] as const;
 export type P07PlannedStep = { id: string; command: string; args: string[]; tests: string[] };
+export const P07_SCOPE_BATCH_SIZE = 16;
 export function buildP07ExecutionPlan(selected: readonly string[], full: boolean): P07PlannedStep[] {
   if (!selected.length || new Set(selected).size !== selected.length) throw new Error('accept:p07:empty_or_duplicate_scope');
   const scenes = selected.filter(file => P07_SCENE_CHECKS[file]);
   const normal = selected.filter(file => !P07_SCENE_CHECKS[file]);
+  const batches = Array.from({ length: Math.ceil(normal.length / P07_SCOPE_BATCH_SIZE) }, (_, index) => {
+    const tests = normal.slice(index * P07_SCOPE_BATCH_SIZE, (index + 1) * P07_SCOPE_BATCH_SIZE);
+    return { id: index === 0 ? 'p07-trusted-scope' : `p07-trusted-scope-batch-${index + 1}`,
+      command: process.execPath, args: ['scripts/run-tests.ts', ...tests], tests };
+  });
   return [
     { id: 'p07-prerequisites', command: process.execPath, args: ['scripts/build-host-lock.ts'], tests: [] },
-    { id: 'p07-trusted-scope', command: full ? 'npm' : process.execPath, args: full ? ['test', '--'] : ['scripts/run-tests.ts', ...normal], tests: full ? [...selected] : normal },
+    ...(full ? [{ id: 'p07-trusted-scope', command: 'npm', args: ['test', '--'], tests: [...selected] }] : batches),
     ...(!full && scenes.length ? [{ id: 'p07-recovery-scenarios', command: process.execPath, args: ['scripts/run-tests.ts', ...scenes], tests: scenes }] : []),
     { id: 'p07-boundaries', command: 'npm', args: ['run', 'check:boundaries'], tests: [] },
     { id: 'p07-engineering', command: process.execPath, args: ['scripts/verify.ts', '--checks-only'], tests: [] },
