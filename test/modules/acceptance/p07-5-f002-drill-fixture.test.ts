@@ -300,6 +300,9 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 / F-002 drill fixture', ()
     const facts = fixture.commandFacts();
     expect(facts.some(fact => fact.label === 'hang' && fact.timedOut)).toBe(true);
     expect(facts.some(fact => fact.label === 'cancel-target' && fact.signal === 'SIGKILL')).toBe(true);
+    const cancelFact = facts.find(fact => fact.label === 'cancel-target')!;
+    expect(Number.isSafeInteger(cancelFact.durationMs)).toBe(true);
+    expect(cancelFact.durationMs).toBeGreaterThanOrEqual(0);
   }, 60_000);
 
   it('[case:p07-f002-cleanup-unconfirmed] retains the scene and blocks acceptance when stop confirmation fails', async () => {

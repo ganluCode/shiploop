@@ -32,6 +32,17 @@ JSON 测量记录：/private/tmp/p07-inspector-optimized-20261101.json。
 
 ## 重验要求
 
+005 同样完成全部测试、边界和工程检查，失败点精确定位为报告 build 阶段：
+P07-T06 的 unrelated-writer 场景记录中，异步命令沿用了 durationMs=-1 占位值，
+被 command-exit 非负整数规则拒绝，导致场景 result.json 未发布。这是验收夹具
+计时错误，不是 Runtime 代码失败。修正为 performance.now() 测量启动到退出的耗时，
+不修改校验规则。新增取消命令回归先复现 -1 失败，再验证通过。
+
+唯一问题场景以隔离 HOME/白名单环境定向重验通过；其实际捕获经 collectP07Scenario
+及 verifyP07Scenario 完整往返通过。诊断证据位于
+/private/tmp/p07-command-duration-fix-2，原 005 不覆盖，不冒充当前提交的全阶段结果。
+未再次启动整轮验收，负责人门禁仍 pending。
+
 004 已完成全部 118 文件、899 项测试以及边界和工程检查，步骤累计约 29 分钟，
 未超时且清理已确认。最终报告发布失败；从落盘证据另行重建的诊断报告可校验，
 但仍有两个内存场景缺少清理观察、Git 回执缺少 artifact 证据及 owner_pending。

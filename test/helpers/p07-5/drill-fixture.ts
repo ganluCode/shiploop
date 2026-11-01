@@ -773,6 +773,7 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
     };
 
     const spawnTrackedCommand = (label: string, argv: readonly string[], cwd?: string, autoRecord = false): SampleProcess => {
+      const startedAt = performance.now();
       const child = spawnSampleProcess({
         argv: [...argv],
         cwd: cwd ?? box!.root,
@@ -786,7 +787,7 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         commandRecords.push({
           label, argv: [...argv], exitCode: exit.code, signal: exit.signal,
           timedOut: false, cancelled: cancelledPids.has(child.pid),
-          durationMs: -1, escalated: exit.escalated, stopConfirmed: true,
+          durationMs: Math.round(performance.now() - startedAt), escalated: exit.escalated, stopConfirmed: true,
         });
       }).catch(() => undefined);
       return child;
