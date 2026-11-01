@@ -436,7 +436,7 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007', 'F-008']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
   expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
@@ -530,4 +530,21 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
     'test/modules/storage/sqlite/p07-3-f007-startup-upgrade.test.ts',
   ]));
   for (const file of f007Files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  expect(manifest.tasks[7].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-008.json');
+  const f008Index = json(join(ROOT, manifest.tasks[7].index));
+  expect(f008Index).toMatchObject({ schema_version: 2, task_id: 'F-008' });
+  const f008Files = f008Index.projects[0].tests.map((test: any) => test.file);
+  expect(f008Files).toEqual(expect.arrayContaining([
+    'test/modules/lifecycle/p07-5-f008-data-boundary.test.ts',
+    'test/modules/lifecycle/p07-3-f016-lifecycle-fault-races.test.ts',
+    'test/modules/commands/p07-3-f008-project-lifecycle.test.ts',
+    'test/modules/commands/p07-3-f009-project-delete-preview.test.ts',
+    'test/modules/commands/p07-3-f010-project-delete.test.ts',
+    'test/modules/workspace/p07-3-f011-project-delete-executor.test.ts',
+    'test/modules/retention/p07-3-f013-evidence-retention.test.ts',
+    'test/modules/retention/p07-3-f015-retention-cleanup-command.test.ts',
+    'test/modules/host/p07-3-f015-public-lifecycle-host.test.ts',
+  ]));
+  for (const file of f008Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });
