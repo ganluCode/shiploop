@@ -140,7 +140,7 @@ export interface NotificationVerticalFixture {
   /** 驱动失败工作流：检查持续失败直至代码额度耗尽 Task failed。 */
   driveFailure(host: RunningHost): Promise<void>;
   /** 公开命令创建第二个 Feature 并在启动前人工阻塞其 Task（task.approval.block）。 */
-  createBlockedWorkflow(host: RunningHost): Promise<{ featureId: string; runId: string; taskId: string }>;
+  createBlockedWorkflow(host: RunningHost, options?: BlockedWorkflowOptions): Promise<{ featureId: string; runId: string; taskId: string }>;
   submitCommand(host: RunningHost, operation: string, payload: Record<string, unknown>, extra?: Record<string, unknown>): Promise<Record<string, unknown>>;
   businessFacts(): BusinessFacts;
   notificationFacts(): NotificationFacts;
@@ -157,6 +157,16 @@ export interface NotificationVerticalFixture {
 
 export interface VerticalFixtureOptions {
   readonly prefix?: string;
+  /** P07-5 / F-009：计划追加 t-2（dependsOn t-1），用于同一 Run 内制造失败结果。 */
+  readonly secondTaskChain?: boolean;
+}
+
+/** P07-5 / F-009：阻塞工作流参数化（默认值与 P07-4 F-010 行为一致）。 */
+export interface BlockedWorkflowOptions {
+  readonly phaseId?: string;
+  readonly taskId?: string;
+  readonly title?: string;
+  readonly description?: string;
 }
 
 /** 有界等待（固定间隔轮询持久事实；不用 sleep 假装竞争）。 */
@@ -183,6 +193,7 @@ export async function openNotificationVerticalFixture(
       commitMode: 'task_and_feature',
       gitIdentity: { name: 'P07-4 F-010 Owner', email: 'p07-4-f010@example.test', confirmed: true },
     },
+    ...(options.secondTaskChain === true ? { secondTask: true, secondTaskDependsOnFirst: true } : {}),
   });
   try {
     /* P06 起 Task 认领要求已确认项目 Profile：经公开 Core 装配入口建立。 */
@@ -475,19 +486,21 @@ export async function openNotificationVerticalFixture(
       return receipt as unknown as Record<string, unknown>;
     }
 
-    async function createBlockedWorkflow(target: RunningHost) {
+    async function createBlockedWorkflow(target: RunningHost, workflowOptions: BlockedWorkflowOptions = {}) {
+      const phaseId = workflowOptions.phaseId ?? 'phase-2';
+      const taskId = workflowOptions.taskId ?? 't-b';
       const scope = { kind: 'project' as const, projectId: binding.projectId };
       /* 新阶段避免与成功工作流的活动 Batch 冲突（active_batch_in_phase）。 */
       await submitCommand(target, 'phase.create', {
-        id: 'phase-2', title: 'F-010 阻塞工作流阶段', description: null, labels: [],
+        id: phaseId, title: `阻塞工作流阶段 ${phaseId}`, description: null, labels: [],
       }, { scope });
       const imported = await submitCommand(target, 'feature.plan.import', {
-        phaseId: 'phase-2',
+        phaseId,
         plan: {
           schemaVersion: 1,
-          feature: { title: 'F-010 blocked workflow', description: null, labels: ['p07-4'], sourceRefs: [] },
+          feature: { title: workflowOptions.title ?? 'F-010 blocked workflow', description: null, labels: ['p07-4'], sourceRefs: [] },
           tasks: [{
-            id: 't-b', title: '人工阻塞任务', acceptance: { criteria: ['blocked workflow notification'] },
+            id: taskId, title: '人工阻塞任务', acceptance: { criteria: ['blocked workflow notification'] },
             requirementsRefs: [{ artifactId: binding.requirementArtifactId }],
           }],
         },
@@ -499,7 +512,7 @@ export async function openNotificationVerticalFixture(
         featureId, planDigest: featureRow.plan_digest, decision: 'approve', reason: 'F-010 blocked workflow',
       }, { scope, expectedRevision: featureRow.revision });
       await submitCommand(target, 'execution.input.prepare', {
-        featureId, taskId: 't-b',
+        featureId, taskId,
         items: [{ purpose: 'requirements', source: { kind: 'artifact', artifactId: binding.requirementArtifactId } }],
       }, { scope });
       const preview = await target.core.executionPreview.previewExecution(binding.projectId, {
@@ -533,12 +546,12 @@ export async function openNotificationVerticalFixture(
       }
       const runId = (started as { runId?: string }).runId ?? '';
       if (runId === '') throw new Error('createBlockedWorkflow: execution.start 未返回 runId');
-      const taskRevision2 = (q('SELECT revision FROM tasks WHERE id = ?', 't-b') as { revision: number }).revision;
+      const taskRevision2 = (q('SELECT revision FROM tasks WHERE id = ?', taskId) as { revision: number }).revision;
       await submitCommand(target, 'task.approval.block', {
-        taskId: 't-b', planDigest: featureRow.plan_digest,
-        description: 'F-010 manual block', responsibleParty: 'project-owner',
+        taskId, planDigest: featureRow.plan_digest,
+        description: workflowOptions.description ?? 'F-010 manual block', responsibleParty: 'project-owner',
       }, { scope, expectedRevision: taskRevision2 });
-      return { featureId, runId, taskId: 't-b' };
+      return { featureId, runId, taskId };
     }
 
     function businessFacts(): BusinessFacts {

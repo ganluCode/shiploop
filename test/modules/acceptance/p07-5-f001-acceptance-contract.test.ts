@@ -436,7 +436,7 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007', 'F-008']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007', 'F-008', 'F-009']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
   expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
@@ -547,4 +547,23 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
     'test/modules/host/p07-3-f015-public-lifecycle-host.test.ts',
   ]));
   for (const file of f008Files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  expect(manifest.tasks[8].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-009.json');
+  const f009Index = json(join(ROOT, manifest.tasks[8].index));
+  expect(f009Index).toMatchObject({ schema_version: 2, task_id: 'F-009' });
+  const f009Files = f009Index.projects[0].tests.map((test: any) => test.file);
+  expect(f009Files).toEqual(expect.arrayContaining([
+    'test/modules/acceptance/p07-5-f009-result-query-independence.test.ts',
+    'test/modules/acceptance/p07-5-f009-notification-fault-restart.test.ts',
+    'test/modules/notifications/p07-4-f007-notification-worker.test.ts',
+    'test/modules/notifications/p07-4-f008-notification-runtime.test.ts',
+    'test/modules/notifications/p07-4-f009-notification-query.test.ts',
+    'test/modules/notifications/p07-4-f010-notification-restart.test.ts',
+    'test/modules/notifications/p07-4-f010-vertical-loop.test.ts',
+    'test/modules/host/p07-4-f008-notification-host.test.ts',
+    'test/modules/cli/p07-4-f009-notification-cli.test.ts',
+    'test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts',
+    'test/modules/delivery/p07-4-f002-result-evidence-integrity.test.ts',
+  ]));
+  for (const file of f009Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });

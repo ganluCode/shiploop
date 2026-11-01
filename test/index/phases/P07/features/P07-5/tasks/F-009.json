@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/acceptance/p07-5-f009-result-query-independence.test.ts", "all": true },
+        { "file": "test/modules/acceptance/p07-5-f009-notification-fault-restart.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f007-notification-worker.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f008-notification-runtime.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f009-notification-query.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f010-notification-restart.test.ts", "all": true },
+        { "file": "test/modules/notifications/p07-4-f010-vertical-loop.test.ts", "all": true },
+        { "file": "test/modules/host/p07-4-f008-notification-host.test.ts", "all": true },
+        { "file": "test/modules/cli/p07-4-f009-notification-cli.test.ts", "all": true },
+        { "file": "test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts", "all": true },
+        { "file": "test/modules/delivery/p07-4-f002-result-evidence-integrity.test.ts", "all": true },
+        { "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts", "all": true }
+      ]
+    }
+  ]
+}
