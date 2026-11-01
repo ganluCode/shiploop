@@ -134,6 +134,7 @@ const SCHEMA_TABLES = [
   ['project_delete_steps', schema.projectDeleteSteps],
   ['project_delete_receipts', schema.projectDeleteReceipts],
   ['schema_migrations', schema.schemaMigrations],
+  ['feature_closeouts', schema.featureCloseouts],
 ] as const;
 
 const EXPECTED_TABLE_NAMES = [
@@ -574,6 +575,9 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
       // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键
       // 与 P02-3 / F-007 基线四表的同项目复合外键/制品引用外键。
       const expectedFks = new Set([
+        'feature_closeouts:(project_id)->projects.(id)',
+        'feature_closeouts:(project_id,run_id)->runs.(project_id,id)',
+        'feature_closeouts:(project_id,feature_id)->features.(project_id,id)',
         'project_delete_steps:(operation_id)->project_delete_operations.(id)',
         'verification_processes:(batch_id)->verification_batches.(id)',
         'projects:(repository_binding_id)->repository_bindings.(id)',

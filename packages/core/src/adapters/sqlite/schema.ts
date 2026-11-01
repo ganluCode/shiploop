@@ -3105,3 +3105,23 @@ export const notificationDeliveryResults = sqliteTable('notification_delivery_re
   check('notification_delivery_results_succeeded_shape_check', sql`${table.outcome} <> 'succeeded' OR (${table.receipt} IS NOT NULL AND ${table.failureReason} IS NULL)`),
   check('notification_delivery_results_failed_shape_check', sql`${table.outcome} <> 'failed' OR (${table.receipt} IS NULL AND ${table.failureReason} IS NOT NULL)`),
 ]);
+
+export const featureCloseouts = sqliteTable('feature_closeouts', {
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+  runId: text('run_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  inputDigest: text('input_digest').notNull(), stage: text('stage').notNull(),
+  revision: integer('revision').notNull(), repairCount: integer('repair_count').notNull(),
+  maxRepairs: integer('max_repairs').notNull(), owner: text('owner').notNull(),
+  evidenceRef: text('evidence_ref'), reason: text('reason'),
+}, table => [
+  primaryKey({ columns: [table.projectId, table.runId] }),
+  foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  check('feature_closeouts_digest_check', sql`length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('feature_closeouts_stage_check', sql`${table.stage} IN ('pending','verifying','verified','repairing','committing','completed','failed','blocked','reconcile_required')`),
+  check('feature_closeouts_revision_check', sql`${table.revision} >= 1`),
+  check('feature_closeouts_repairs_check', sql`${table.repairCount} >= 0`),
+  check('feature_closeouts_limit_check', sql`${table.maxRepairs} BETWEEN 0 AND 3 AND ${table.repairCount} <= ${table.maxRepairs}`),
+  check('feature_closeouts_owner_check', sql`length(${table.owner}) > 0`),
+]);

@@ -15,6 +15,7 @@
  *   本模块只声明内容与身份，不在 import 时打开数据库或产生任何副作用。
  */
 import { createHash } from 'node:crypto';
+import { FEATURE_CLOSEOUT_MIGRATION_SQL } from './feature-closeout-migration.js';
 import { PROJECT_DELETE_MIGRATION_SQL } from './project-delete-migration.js';
 import { PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL } from './project-delete-checkpoint-migration.js';
 import { WORK_RECORDING_V32_JSON_GUARDS_SQL } from './work-recording-constraints.js';
@@ -4541,4 +4542,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 61, sql: MIGRATION_061_SQL, checksum: sha256Hex(MIGRATION_061_SQL) },
   { version: 62, sql: MIGRATION_062_SQL, checksum: sha256Hex(MIGRATION_062_SQL) },
   { version: 63, sql: MIGRATION_063_SQL, checksum: sha256Hex(MIGRATION_063_SQL), foreignKeysOff: true },
+  { version: 64, sql: FEATURE_CLOSEOUT_MIGRATION_SQL, checksum: sha256Hex(FEATURE_CLOSEOUT_MIGRATION_SQL) },
 ];

@@ -68,6 +68,7 @@ const KNOWN_PROJECT_TABLES: Readonly<Record<string, { readonly cursorColumn: str
   execution_slot_claims: { cursorColumn: 'id', disposition: 'delete' },
   execution_stop_operations: { cursorColumn: 'id', disposition: 'delete' },
   feature_dependencies: { cursorColumn: 'id', disposition: 'delete' },
+  feature_closeouts: { cursorColumn: 'run_id', disposition: 'delete' },
   feature_resource_leases: { cursorColumn: 'id', disposition: 'delete' },
   features: { cursorColumn: 'id', disposition: 'delete' },
   git_agent_repair_attempts: { cursorColumn: 'id', disposition: 'delete' },
