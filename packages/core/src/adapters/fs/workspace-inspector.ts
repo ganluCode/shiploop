@@ -184,6 +184,19 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         budget();
         return Buffer.concat(chunks);
       }
+      async function readBatch(commands: readonly (readonly string[])[], detachedIndex = -1): Promise<Buffer[]> {
+        if (commands.length > 3) fail('invalid_input');
+        // Await peer checks before propagating failure; unknown stops take priority.
+        const outcomes = await Promise.allSettled(commands.map((args, index) => run(args, index === detachedIndex)));
+        for (const outcome of outcomes) {
+          if (outcome.status === 'rejected' && (outcome.reason instanceof WorkspaceInspectionError
+              || outcome.reason instanceof CommandProcessError) && outcome.reason.reason === 'stop_unconfirmed') {
+            fail('stop_unconfirmed');
+          }
+        }
+        for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
+        return outcomes.map(outcome => (outcome as PromiseFulfilledResult<Buffer>).value);
+      }
       async function marker(path: string): Promise<string> {
         budget();
         const fd = await open(path, READ_FLAGS);
@@ -236,11 +249,16 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         const gitDir = existingCanonical(meta[2]);
         if (gitDir !== registeredGitDir) fail('registration_damaged');
         if (text(await run(['cat-file', '-t', baseline.baseCommit])) !== 'commit\n') fail('commit_missing');
-        const headCommit = text(await run(['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+        const [headBytes, branchBytes, registrationBytes] = await readBatch([
+          ['rev-parse', '--verify', 'HEAD^{commit}'],
+          ['symbolic-ref', '--quiet', 'HEAD'],
+          ['worktree', 'list', '--porcelain', '-z'],
+        ], 1);
+        const headCommit = text(headBytes!).trim();
         if (!oid(headCommit)) fail('invalid_git_output');
-        const branch = text(await run(['symbolic-ref', '--quiet', 'HEAD'], true)).trim();
+        const branch = text(branchBytes!).trim();
         if (branch !== `refs/heads/${baseline.branch}`) fail('branch_mismatch');
-        const records = nulRecords(await run(['worktree', 'list', '--porcelain', '-z']));
+        const records = nulRecords(registrationBytes!);
         const registrations: Record<string, string>[] = [];
         let row: Record<string, string> = {};
         for (const record of records) {
@@ -254,9 +272,12 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         const matches = registrations.filter(r => r.worktree === baseline.canonicalPath);
         if (matches.length !== 1 || matches[0].HEAD !== headCommit || matches[0].branch !== branch
           || 'prunable' in matches[0] || 'bare' in matches[0] || 'detached' in matches[0]) fail('registration_damaged');
-        const refs = text(await run(['show-ref', '--head']));
+        const [refsBytes, indexBytes, treeBytes] = await readBatch([
+          ['show-ref', '--head'], ['ls-files', '--stage', '-z'], ['ls-tree', '-r', '-z', 'HEAD'],
+        ]);
+        const refs = text(refsBytes!);
         const tracked = new Map<string, { indexObject: string | null; indexMode: string | null }>();
-        for (const record of nulRecords(await run(['ls-files', '--stage', '-z']))) {
+        for (const record of nulRecords(indexBytes!)) {
           const match = record.match(/^(\d{6}) ([0-9a-f]+) (\d)\t([\s\S]+)$/);
           if (!match || !oid(match[2])) fail('invalid_git_output');
           if (match[1] !== '100644' && match[1] !== '100755') fail('special_file');
@@ -266,20 +287,26 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
           tracked.set(path, { indexObject: match[2], indexMode: match[1] });
         }
         // HEAD-only paths retain staged deletion evidence, with no fabricated index object.
-        for (const record of nulRecords(await run(['ls-tree', '-r', '-z', 'HEAD']))) {
+        for (const record of nulRecords(treeBytes!)) {
           const match = record.match(/^(\d{6}) (\w+) ([0-9a-f]+)\t([\s\S]+)$/);
           if (!match || !oid(match[3])) fail('invalid_git_output');
           if (match[2] !== 'blob' || !['100644', '100755'].includes(match[1])) fail('special_file');
           const path = safeRelative(match[4]);
           if (!tracked.has(path)) tracked.set(path, { indexObject: null, indexMode: null });
         }
-        const untracked = new Set(nulRecords(await run(['ls-files', '--others', '--exclude-standard', '-z'])).map(safeRelative));
-        const ignored = new Set(nulRecords(await run(['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])).map(safeRelative));
+        // Index/tree validation must reject gitlinks before status is allowed to run.
+        const [untrackedBytes, ignoredBytes, statusBytes] = await readBatch([
+          ['ls-files', '--others', '--exclude-standard', '-z'],
+          ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'],
+          ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all'],
+        ]);
+        const untracked = new Set(nulRecords(untrackedBytes!).map(safeRelative));
+        const ignored = new Set(nulRecords(ignoredBytes!).map(safeRelative));
         for (const [path, entry] of tracked) {
           if (entry.indexObject !== null) { untracked.delete(path); ignored.delete(path); }
         }
         // Reject gitlinks before status could recurse into a nested repository.
-        const status = (await run(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all'])).toString('base64');
+        const status = statusBytes!.toString('base64');
         const registration = { path: baseline.canonicalPath, headCommit, branch };
         const identity = JSON.stringify({ meta, registrations, refs, status, tracked: [...tracked], untracked: [...untracked], ignored: [...ignored] });
         return { headCommit, branch, registration, refs, status, tracked, untracked, ignored, identity };

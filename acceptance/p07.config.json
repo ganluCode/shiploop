@@ -22,7 +22,7 @@
     "lockfile": "package-lock.json",
     "platform": "darwin",
     "platformLabel": "macOS",
-    "defaultConcurrency": 1
+    "defaultConcurrency": 2
   },
   "timeouts": {
     "stepMs": 900000,

@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
+import phaseVitest from '../../../scripts/acceptance/p07-vitest.config.ts';
 import {
   P07_ACCEPT_CONFIG_PATH,
   P07_CHECKLIST_PATH,
@@ -75,9 +76,9 @@ it('[case:p07-checklist-freezes-scenarios] 清单把 FR-1/FR-2 与 T06/T08/T11/T
     for (const evidence of item.evidence) expect(P07_EVIDENCE_CATEGORIES).toContain(evidence);
     for (const designIndex of item.designIndexes) expect(P07_DESIGN_INDEXES).toContain(designIndex);
   }
-  // 工具链与运行资格：macOS、Node 22.19.0、npm 10.9.3、默认单并发、有限预算写入契约。
-  expect(config.toolchain).toEqual({ ...P07_TOOLCHAIN, platform: 'darwin', platformLabel: 'macOS', defaultConcurrency: 1 });
-  expect(entry.toolchain).toEqual({ node: '22.19.0', npm: '10.9.3', platform: 'darwin', defaultConcurrency: 1 });
+  // 阶段步骤串行；隔离文件 worker 上限与冻结契约一致。
+  expect(config.toolchain).toEqual({ ...P07_TOOLCHAIN, platform: 'darwin', platformLabel: 'macOS', defaultConcurrency: 2 });
+  expect(entry.toolchain).toEqual({ node: '22.19.0', npm: '10.9.3', platform: 'darwin', defaultConcurrency: 2 });
   expect(entry.budget).toEqual({ stepMs: config.timeouts.stepMs, overallMs: config.timeouts.overallMs, bounded: true });
   expect(config.timeouts.stepMs).toBeGreaterThan(0);
   expect(config.timeouts.overallMs).toBeGreaterThanOrEqual(config.timeouts.stepMs);
@@ -599,4 +600,12 @@ it('[case:p07-deferred-integration-covered] Feature 延后的集成测试必须�
     writeFileSync(path, JSON.stringify(registry));
     expect(() => collectP07TrustedTests(synthetic)).toThrow('invalid_integration_index');
   } finally { rmSync(synthetic, { recursive: true, force: true }); }
+});
+
+it('[case:p07-bounded-file-concurrency] 阶段测试文件使用隔离 forks 且实际 worker 上限等于冻结工具链', () => {
+  expect(phaseVitest.test?.pool).toBe('forks');
+  expect(phaseVitest.test?.maxWorkers).toBe(2);
+  expect(phaseVitest.test?.maxWorkers).toBe(P07_TOOLCHAIN.defaultConcurrency);
+  expect(phaseVitest.test?.isolate).toBe(true);
+  expect(phaseVitest.test?.fileParallelism).toBe(true);
 });

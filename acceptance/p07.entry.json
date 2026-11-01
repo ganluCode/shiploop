@@ -114,7 +114,7 @@
     "node": "22.19.0",
     "npm": "10.9.3",
     "platform": "darwin",
-    "defaultConcurrency": 1
+    "defaultConcurrency": 2
   },
   "budget": {
     "stepMs": 900000,

@@ -7,6 +7,7 @@
 - 日期：由负责人填写；分支 `acceptance/p07` 由编排者从 `feat/p07/acceptance` 创建。
 - 受测 commit：入口用 `git rev-parse HEAD` 记录完整 SHA；执行前工作树必须干净（入口 fail-closed）。
 - Node/npm：Node 22.19.0、npm 10.9.3；锁文件 `package-lock.json`（npm，不使用 pnpm/yarn）。
+- 验收步骤仍串行；测试文件在最多 2 个隔离 forks worker 中执行，各场景使用独立临时 Git/SQLite/Host/进程，不是多 Agent。双快照与停止核验保留，单步和总预算不变。
 - 平台：**仅正式支持 macOS（darwin）**。`accept:p07` 在非 darwin 上被入口拒绝；强沙箱、Windows/WSL/Linux 不在本阶段声明范围内。
 - 前序资格：负责人核对 P07-1～P07-4 的分支链、祖先关系与交付证据并保存 `owner-baselines.json`；入口只验证其结构与 commit 祖先关系。
 

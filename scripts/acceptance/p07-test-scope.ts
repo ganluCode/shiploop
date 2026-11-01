@@ -118,6 +118,7 @@ export type P07RequiredRegression = { readonly file: string; readonly category: 
 
 /** 审阅过的 P07 影响边界所需底层回归；每项登记类别与选择理由。 */
 export const P07_REQUIRED_REGRESSIONS: readonly P07RequiredRegression[] = Object.freeze([
+  { file: 'test/modules/workspace/p03-5-workspace-inspector.test.ts', category: 'git-metadata-lock', reason: '只读 Git 核验有界并行后仍须保留双快照、路径/实体身份、全局预算与失败收尾边界' },
   { file: 'test/modules/recovery/p03-9-f005-startup-recovery.test.ts', category: 'recovery', reason: 'Host 启动恢复扫描与旧执行隔离是 T06 崩溃恢复的底层基线' },
   { file: 'test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts', category: 'recovery', reason: '派发崩溃窗口与迟到结果 fencing 是显式恢复场景的底层基线' },
   { file: 'test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts', category: 'recovery', reason: 'Feature 并发派发恢复保证重启后依赖不误解锁' },

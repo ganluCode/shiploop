@@ -61,10 +61,10 @@ export type P07ReportStatus = (typeof P07_REPORT_STATUSES)[number];
 export const P07_COUNT_RULE =
   '必需项全部 pass 才算通过；not_run 和人工 pending 不计入通过；deferred 项不参与通过计数；覆盖按必需断言与可观察事实判定，不按日志成功文本或测试数量判断';
 
-/** 工具链与运行资格：macOS、Node 22.19.0、npm 10.9.3、默认单并发。 */
+/** 工具链与运行资格：步骤串行，隔离测试文件至多两个 worker。 */
 export const P07_TOOLCHAIN = {
   packageManager: 'npm@10.9.3', node: '22.19.0', npm: '10.9.3', lockfile: 'package-lock.json',
-  platform: 'darwin', platformLabel: 'macOS', defaultConcurrency: 1,
+  platform: 'darwin', platformLabel: 'macOS', defaultConcurrency: 2,
 } as const;
 export const P07_FAKE_IDENTITY = {
   provider: 'fake-provider', model: 'fake-model', realModel: false, network: 'denied',

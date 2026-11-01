@@ -149,6 +149,7 @@ export async function runP07Acceptance(options: P07AcceptanceOptions) {
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: temporary, TMP: temporary, TEMP: temporary,
       LANG: 'C.UTF-8', TZ: 'UTC', CI: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
       SHIPLOOP_P07_OFFLINE: '1', SHIPLOOP_P07_ENTRY_SOURCE: source, SHIPLOOP_P07_ENTRY_IDENTITY: JSON.stringify(identity),
+      SHIPLOOP_F008_EVIDENCE_DIR: join(workDir, 'recording-evidence'),
       SHIPLOOP_TEST_RUN_TIMEOUT_MS: String(budget.stepMs) };
     const redact = (text: string) => text.replaceAll(root, '<repo>').replaceAll(resources!, '<owned-temp>').replaceAll(process.execPath, '<node>').replaceAll(homedir(), '<home>');
     const drift = () => probe('git', ['rev-parse', 'HEAD']) !== commit || probe('git', ['status', '--porcelain', '--untracked-files=all']).split('\n').some(line => {

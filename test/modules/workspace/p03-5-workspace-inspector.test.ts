@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
 import type { CommandProcessHandle, CommandProcessIdentity, CommandProcessPort } from '../../../packages/core/src/ports/command-process.ts';
+import { CommandProcessError } from '../../../packages/core/src/ports/command-process.ts';
 import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs/workspace-inspector.ts';
 import { deriveObservedRepoIdentity } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { deriveRepoIdentity } from '../../../packages/core/src/ports/repository-inspector.ts';
@@ -48,6 +49,54 @@ function reader(f: ReturnType<typeof fixture>, options: Partial<Parameters<typeo
   return createWorkspaceInspector({ authorizedRoots: [f.root], confirmProcessIdentity: confirm, ...options });
 }
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+it('[case:bounded-readonly-git-probes] bounds independent read-only probes at three and retains both complete snapshots', async () => {
+  const f = fixture();
+  const real = createCommandProcessAdapter();
+  let active = 0, peak = 0, calls = 0;
+  const processes: CommandProcessPort = { ...real, async start(...args) {
+    active++; peak = Math.max(peak, active); calls++;
+    try {
+      const handle = await real.start(...args);
+      void handle.stopped.then(() => { active--; });
+      return handle;
+    } catch (error) { active--; throw error; }
+  } };
+  const evidence = await reader(f, { processes }).inspect(f.baseline);
+  expect(evidence.complete).toBe(true);
+  expect(peak).toBe(3);
+  expect(active).toBe(0);
+  expect(calls).toBe(22);
+});
+
+it('[case:readonly-probe-failure-drains-peers] a failed probe waits for its already-started peers before rejecting', async () => {
+  const f = fixture();
+  const real = createCommandProcessAdapter();
+  let active = 0;
+  const processes: CommandProcessPort = { ...real, async start(...args) {
+    if (args[0].argv.includes('symbolic-ref')) throw new Error('injected readonly probe failure');
+    active++;
+    try {
+      const handle = await real.start(...args);
+      void handle.stopped.then(() => { active--; });
+      return handle;
+    } catch (error) { active--; throw error; }
+  } };
+  await expect(reader(f, { processes }).inspect(f.baseline)).rejects.toMatchObject({ reason: 'io' });
+  expect(active).toBe(0);
+});
+
+it('[case:readonly-unknown-stop-priority] an uncertain peer stop cannot be hidden by an earlier probe failure', async () => {
+  const f = fixture();
+  const real = createCommandProcessAdapter();
+  const processes: CommandProcessPort = { ...real, async start(...args) {
+    if (args[0].argv.includes('symbolic-ref')) throw new CommandProcessError('handshake_failed');
+    const handle = await real.start(...args);
+    if (!args[0].argv.includes('worktree')) return handle;
+    return { ...handle, result: handle.result.then(result => ({ ...result, stop: { confirmed: false } })) };
+  } };
+  await expect(reader(f, { processes }).inspect(f.baseline)).rejects.toMatchObject({ reason: 'stop_unconfirmed' });
+});
 
 describe('P03-5 F-004 read-only workspace evidence', () => {
   it('verifies actual registration and all content without changing source refs, index or bytes', async () => {

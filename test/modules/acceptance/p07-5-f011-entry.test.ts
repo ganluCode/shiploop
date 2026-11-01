@@ -143,6 +143,19 @@ it('[case:p07-entry-zero-receipt-halts] preserves real exit zero while failing m
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+it('[case:p07-entry-recording-evidence-outside-source] recording regression writes diagnostics under the run, never into tracked source', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'p07-entry-recording-output-'));
+  const paths: unknown[] = [];
+  try {
+    const result = await runP07Acceptance(options(root, 'recording-output', async (_command, _args, opts) => {
+      paths.push(opts.env?.SHIPLOOP_F008_EVIDENCE_DIR);
+      return outcome;
+    }));
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every(path => path === join(result.workDir, 'recording-evidence'))).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 it('[case:p07-entry-missing-case-capture] rejects a missing case capture even when another case for the same check passed', async () => {
   const root = mkdtempSync(join(tmpdir(), 'p07-entry-missing-capture-'));
   try {
