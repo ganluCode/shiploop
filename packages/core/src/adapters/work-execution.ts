@@ -236,6 +236,11 @@ export function assembleWorkExecution(options: {
     const outcome = { renewed: 0, unchanged: 0, quarantined: 0, failed: 0 };
     for (const [attemptId, entry] of [...dispatches]) {
       try {
+        const settled = settleRun(entry.projectId, entry.runId, entry.attempt);
+        if (settled?.decision === 'released' || settled?.decision === 'absent') {
+          dispatches.delete(attemptId);
+          continue;
+        }
         const result = session.transactWrite('WorkExecution.renewDispatch', () => dispatchSettlement.renewInTransaction({
           projectId: entry.projectId, runId: entry.runId,
           expected: { claimId: entry.claimId, claimVersion: entry.claimVersion,
@@ -804,7 +809,8 @@ export function assembleWorkExecution(options: {
           if (result.stopConfirmed && result.persisted && result.error === null) active.delete(attempt.id);
           readers.delete(started.context.request.invocationId);
           routes.delete(attempt.id);
-          dispatches.delete(attempt.id);
+          // Verification and code rework still own the Run after Runtime completion.
+          // Keep renewing until durable settlement confirms release.
           // 完成/失败/取消共用同一结算入口：是否释放由持久事实（活动 Attempt、
           // 停止/保留的占用、Run 状态）决定，不由结果 Promise 结束本身决定。
           settleRun(attempt.projectId, attempt.runId, fence);
