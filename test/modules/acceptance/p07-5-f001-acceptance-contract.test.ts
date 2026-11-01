@@ -436,7 +436,7 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007', 'F-008', 'F-009']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007', 'F-008', 'F-009', 'F-010']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
   expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
@@ -566,4 +566,15 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
     'test/modules/delivery/p07-4-f002-result-evidence-integrity.test.ts',
   ]));
   for (const file of f009Files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  expect(manifest.tasks[9].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-010.json');
+  const f010Index = json(join(ROOT, manifest.tasks[9].index));
+  expect(f010Index).toMatchObject({ schema_version: 2, task_id: 'F-010' });
+  const f010Files = f010Index.projects[0].tests.map((test: any) => test.file);
+  expect(f010Files).toEqual(expect.arrayContaining([
+    'test/modules/acceptance/p07-5-f010-report.test.ts',
+    'test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts',
+    'test/modules/acceptance/p07-5-f002-drill-fixture.test.ts',
+  ]));
+  for (const file of f010Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });
