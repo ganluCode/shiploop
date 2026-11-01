@@ -245,6 +245,14 @@ export interface DrillSpawnOptions {
   readonly verifierIdentityOverride?: { readonly pid: number; readonly processGroupId: number; readonly startTime: string };
   /** 预置 Verifier hold 文件（检查命令启动后挂起，构成可终止的验证边界）。 */
   readonly verifierHold?: boolean;
+  /** F-005：整体替换 FakeRuntime 脚本（含 lifecycle 故障注入与门闩引用）。 */
+  readonly script?: Record<string, unknown>;
+  /** F-005：记录故障演练装配（模式/真实有界通道/请求输出上限收窄）。 */
+  readonly recording?: {
+    readonly mode?: 'required' | 'best_effort';
+    readonly channel?: { readonly slowConsumer?: boolean };
+    readonly limits?: { readonly maxOutputBytes?: number };
+  };
 }
 
 export interface DrillFixtureOptions {
@@ -280,6 +288,12 @@ export interface DrillFixture {
   /** 等待/放行具名 drill 屏障（进入验证、进入提交）。 */
   awaitBarrier(child: ManagedChild, barrier: string, timeoutMs?: number): Promise<Record<string, unknown>>;
   releaseBarrier(child: ManagedChild, barrier: string): void;
+  /** F-005：放行子进程 FakeRuntime 具名门闩（受控生产屏障）。 */
+  releaseGate(child: ManagedChild, name: string): void;
+  /** F-005：放行慢消费者屏障（recording.channel.slowConsumer）。 */
+  releaseRecordingConsumer(child: ManagedChild): void;
+  /** F-005：真实有界通道事实（上限/峰值/溢出，来自 marker JSONL）。 */
+  recordingChannelFacts(): Array<Record<string, unknown>>;
   /** 植入条件 post-commit 钩子（可信测试故障点：commit 落盘后阻塞回执事务）。 */
   plantCommitBoundary(project: 'a' | 'b'): void;
   /** 受控工具命令：有界超时走停止核验升级；记录退出事实。 */
@@ -608,7 +622,8 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
         closeTimeoutMs: 150_000,
         watchdogMs: 300_000,
         gates: spawnOptions.pauseWrite === true ? ['pause_write'] : [],
-        script: { schemaVersion: 1, steps, result },
+        script: spawnOptions.script ?? { schemaVersion: 1, steps, result },
+        recording: spawnOptions.recording,
         toolCommands: { probe: { argv: spawnOptions.progressWrites ? [process.execPath, '-e',
           "const fs = require('node:fs'); const p = 'progress.txt'; const n = fs.existsSync(p) ? Number(fs.readFileSync(p, 'utf8')) + 1 : 1; fs.writeFileSync(p, String(n)); fs.writeFileSync('pending-' + n + '.txt', 'preserved progress ' + n);"
         ] : ['/usr/bin/true'], environment: {}, timeoutMs: 10_000 } },
@@ -672,6 +687,21 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
 
     const releaseBarrier = (child: ManagedChild, barrier: string): void => {
       child.send({ kind: 'release_drill_barrier', barrier });
+    };
+
+    const releaseGate = (child: ManagedChild, name: string): void => {
+      child.send({ kind: 'release_gate', name });
+    };
+
+    const releaseRecordingConsumer = (child: ManagedChild): void => {
+      child.send({ kind: 'release_recording_consumer' });
+    };
+
+    const recordingChannelFacts = (): Array<Record<string, unknown>> => {
+      const path = join(markerDir, 'recording-channel.jsonl');
+      if (!existsSync(path)) return [];
+      return readFileSync(path, 'utf8').trim().split('\n').filter(Boolean)
+        .map(line => JSON.parse(line) as Record<string, unknown>);
     };
 
     const plantCommitBoundary = (project: 'a' | 'b'): void => {
@@ -1231,6 +1261,9 @@ export async function openDrillFixture(options: DrillFixtureOptions = {}): Promi
       spawnDrillHost,
       awaitBarrier,
       releaseBarrier,
+      releaseGate,
+      releaseRecordingConsumer,
+      recordingChannelFacts,
       plantCommitBoundary,
       runCommand,
       spawnCommand,

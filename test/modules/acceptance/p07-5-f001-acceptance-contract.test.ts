@@ -436,7 +436,7 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
   expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
@@ -480,4 +480,19 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
     'test/modules/workspace/p07-3-f011-git-lock-identity.test.ts',
   ]));
   for (const file of f004Files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  expect(manifest.tasks[4].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-005.json');
+  const f005Index = json(join(ROOT, manifest.tasks[4].index));
+  expect(f005Index).toMatchObject({ schema_version: 2, task_id: 'F-005' });
+  const f005Files = f005Index.projects[0].tests.map((test: any) => test.file);
+  expect(f005Files).toEqual(expect.arrayContaining([
+    'test/modules/acceptance/p07-5-f005-recording-faults.test.ts',
+    'test/modules/acceptance/p07-5-f005-recording-recovery.test.ts',
+    'test/modules/runtime/p07-2-f001-recorder-bounds.test.ts',
+    'test/modules/runtime/p07-2-f002-runner-bounds.test.ts',
+    'test/modules/runtime/p04-5-session-recorder.test.ts',
+    'test/modules/storage/sqlite/p04-5-work-recording-store.test.ts',
+    'test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts',
+  ]));
+  for (const file of f005Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });

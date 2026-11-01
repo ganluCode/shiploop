@@ -25,7 +25,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { startHost } from '../../../packages/host/src/index.ts';
 import type { RunningHost } from '../../../packages/host/src/runtime/index.ts';
+import { PI_RUNNER_BUFFER_BYTES, PI_RUNNER_BUFFER_EVENTS, PiRunnerEventChannel } from '../../../packages/host/src/runtime/pi-runner-protocol.ts';
 import { createFakeRuntime, fakeRuntimeCorrelationToken, createFakeRuntimeGate } from '../../../packages/core/src/adapters/fake-runtime.ts';
+import { collectFakeRuntimeGateRefs } from '../../../packages/core/src/ports/fake-runtime-script.ts';
 import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
@@ -37,11 +39,12 @@ import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs
 import { createNodeTaskVerificationExecutor } from '../../../packages/core/src/application/node-task-verification.ts';
 import { verificationCodeIdentity } from '../../../packages/core/src/ports/verification-aggregate.ts';
 import type { WorkspaceBaseline } from '../../../packages/core/src/ports/workspace.ts';
-import type { RuntimeExecutionRequest } from '../../../packages/core/src/ports/runtime-execution.ts';
+import type { RuntimeEvent, RuntimeExecutionRequest } from '../../../packages/core/src/ports/runtime-execution.ts';
 import {
   RUNTIME_RESULT_SCHEMA_VERSION,
   RUNTIME_STOP_EVIDENCE_SCHEMA_VERSION,
 } from '../../../packages/core/src/ports/runtime-execution.ts';
+import type { RuntimeExecutionResult } from '../../../packages/core/src/ports/runtime-execution.ts';
 import { readChildConfig } from '../host/child-runtime.ts';
 
 const send = process.send?.bind(process);
@@ -108,13 +111,54 @@ if (gateRelease !== undefined) {
 
 const markerDir = config.markerDir as string;
 const runtimeStartsPath = join(markerDir, 'runtime-starts.jsonl');
+const recordingChannelPath = join(markerDir, 'recording-channel.jsonl');
 mkdirSync(markerDir, { recursive: true });
+
+/* P07-5 / F-005 记录故障演练配置（可信测试装配；生产代码不感知）：
+ * - recording.mode：显式用户记录策略（startHost workRecordingMode）；
+ * - recording.channel：FakeRuntime 事件经真实 PiRunnerEventChannel（生产
+ *   协议常量 64 事件/64KiB、满即 fail-closed）交付 Recorder；slowConsumer
+ *   以受控消费屏障挂起 Recorder 拉取，制造慢消费者/队列背压；
+ * - recording.limits.maxOutputBytes：经工厂 prepareRequest 收窄请求输出上限
+ *   （可信装配行为；Recorder/发布限制保持生产默认）。 */
+const recordingConfig = config.recording === null || config.recording === undefined
+  ? undefined
+  : config.recording as {
+    readonly mode?: 'required' | 'best_effort';
+    readonly channel?: { readonly slowConsumer?: boolean };
+    readonly limits?: { readonly maxOutputBytes?: number };
+  };
+if (recordingConfig !== undefined && recordingConfig.mode !== undefined
+  && recordingConfig.mode !== 'required' && recordingConfig.mode !== 'best_effort') {
+  throw new Error('drill-host-child: recording.mode 必须是 required 或 best_effort');
+}
+const recordingMaxOutputBytes = recordingConfig?.limits?.maxOutputBytes;
+if (recordingMaxOutputBytes !== undefined && (!Number.isSafeInteger(recordingMaxOutputBytes)
+  || recordingMaxOutputBytes < 1 || recordingMaxOutputBytes > 8_388_608)) {
+  throw new Error('drill-host-child: recording.limits.maxOutputBytes 必须是收窄正整数');
+}
+/* 慢消费者放行钩子：父进程 IPC release_recording_consumer 或溢出时自动释放。 */
+let releaseRecordingConsumerHook: (() => void) | undefined;
+process.on('message', (message: unknown) => {
+  if (typeof message !== 'object' || message === null) return;
+  const kind = (message as { kind?: unknown }).kind;
+  if (kind === 'release_gate' && typeof (message as { name?: unknown }).name === 'string') {
+    gates[(message as { name: string }).name]?.release();
+    return;
+  }
+  if (kind === 'release_recording_consumer') releaseRecordingConsumerHook?.();
+});
 
 const providers = [{ providerId: 'test-provider', models: ['fake-model'] }];
 const capabilityCatalog = createStaticRuntimeCapabilityCatalog([{ runtimeId: 'fake', providers }]);
 const gates = Object.fromEntries((Array.isArray(config.gates) ? config.gates : [])
   .filter((name): name is string => typeof name === 'string')
   .map(name => [name, createFakeRuntimeGate()]));
+/* F-005：脚本引用的门闩（await_gate/生命周期门闩）全部自动装配，可经
+ * release_gate IPC 由父进程在可证明位置放行（受控生产屏障）。 */
+for (const ref of collectFakeRuntimeGateRefs(config.script as never)) {
+  if (!(ref in gates)) gates[ref] = createFakeRuntimeGate();
+}
 const toolCommands = config.toolCommands;
 
 const watchdog = setTimeout(() => {
@@ -182,6 +226,7 @@ const host: RunningHost = await startHost({
   dataRoot: config.dataRoot as string,
   capabilityCatalog,
   env: {},
+  ...(recordingConfig?.mode === undefined ? {} : { workRecordingMode: recordingConfig.mode }),
   workRuntimeFactory(context) {
     const requests = new Map<string, RuntimeExecutionRequest>();
     const fake = createFakeRuntime({
@@ -203,6 +248,78 @@ const host: RunningHost = await startHost({
         },
       }),
     });
+    /* F-005：真实 PiRunnerEventChannel 包裹（生产有界通道与 fail-closed 语义）。
+     * 溢出语义与 pi-adapter 一致：terminal failed + reason event_queue_backpressure
+     * + 取消，已接受前缀保持可交付；队列峰值/上限事实写入 marker JSONL。 */
+    const wrapRecordingChannel = (handle: Awaited<ReturnType<typeof fake.adapter.start>>, request: RuntimeExecutionRequest) => {
+      if (recordingConfig?.channel === undefined) return handle;
+      const channel = new PiRunnerEventChannel(() => { channelFacts.abandoned += 1; });
+      const channelFacts = {
+        schemaVersion: 1 as const, kind: 'p07-5-recording-channel',
+        attemptId: request.identity.purpose === 'work' ? request.identity.attemptId : null,
+        invocationId: request.invocationId, sessionId: request.sessionId,
+        bounds: { events: PI_RUNNER_BUFFER_EVENTS, bytes: PI_RUNNER_BUFFER_BYTES },
+        slowConsumer: recordingConfig.channel.slowConsumer === true,
+        pushed: 0, delivered: 0, highWaterEvents: 0, highWaterBytes: 0,
+        overflow: false, abandoned: 0, lastAcceptedSequence: null as number | null,
+      };
+      let consumerReleased = !recordingConfig.channel.slowConsumer;
+      let releaseConsumer!: () => void;
+      const consumerGate = new Promise<void>(resolve => { releaseConsumer = resolve; });
+      releaseRecordingConsumerHook = () => { consumerReleased = true; releaseConsumer(); };
+      let settleWrapper!: (value: RuntimeExecutionResult) => void;
+      const wrapperResult = new Promise<RuntimeExecutionResult>(resolve => {
+        settleWrapper = value => { consumerReleased = true; releaseConsumer(); resolve(value); };
+      });
+      void handle.result.then(result => {
+        if (!channelFacts.overflow) settleWrapper(result as RuntimeExecutionResult);
+      }, () => { if (!channelFacts.overflow) settleWrapper({
+        schemaVersion: 1, terminal: 'failed', reason: 'internal_error', exitCode: null,
+        signal: null, durationMs: null, usage: null, lastEventSequence: channelFacts.lastAcceptedSequence,
+      }); });
+      const pump = (async () => {
+        try {
+          for await (const event of handle.events as AsyncIterable<RuntimeEvent>) {
+            channelFacts.pushed += 1;
+            const accepted = channel.push(event);
+            const snapshot = channel.snapshot();
+            if (snapshot.events > channelFacts.highWaterEvents) channelFacts.highWaterEvents = snapshot.events;
+            if (snapshot.bytes > channelFacts.highWaterBytes) channelFacts.highWaterBytes = snapshot.bytes;
+            if (!accepted) {
+              channelFacts.overflow = true;
+              settleWrapper({
+                schemaVersion: 1, terminal: 'failed', reason: 'event_queue_backpressure',
+                exitCode: null, signal: null, durationMs: null, usage: null,
+                lastEventSequence: channelFacts.lastAcceptedSequence,
+              });
+              void handle.cancel().catch(() => undefined);
+              break;
+            }
+            channelFacts.lastAcceptedSequence = event.sequence;
+          }
+        } catch { /* 生产适配器同样不以外来流异常阻塞控制通道 */ }
+        channel.close();
+        appendFileSync(recordingChannelPath, `${JSON.stringify(channelFacts)}\n`);
+      })();
+      void pump.catch(() => undefined);
+      const inner = channel[Symbol.asyncIterator]();
+      return {
+        ...handle,
+        events: {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                if (!consumerReleased) await consumerGate;
+                const item = await inner.next();
+                if (!item.done) channelFacts.delivered += 1;
+                return item as IteratorResult<RuntimeEvent>;
+              },
+            };
+          },
+        },
+        result: wrapperResult,
+      };
+    };
     return {
       entries: [{
         descriptor: fake.descriptor,
@@ -217,11 +334,15 @@ const host: RunningHost = await startHost({
               executionVersion: request.executionVersion,
             })}\n`);
             requests.set(request.invocationId, request);
-            return fake.adapter.start(request);
+            return wrapRecordingChannel(await fake.adapter.start(request), request);
           },
         },
       }],
       eventIdentityPrefix: request => `evt.${fakeRuntimeCorrelationToken(request)}.`,
+      ...(recordingMaxOutputBytes === undefined ? {} : {
+        prepareRequest: async (request: RuntimeExecutionRequest) => ({ ...request,
+          limits: { ...request.limits, maxOutputBytes: Math.min(request.limits.maxOutputBytes, recordingMaxOutputBytes) } }),
+      }),
     };
   },
 });
