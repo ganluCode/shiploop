@@ -7,15 +7,18 @@
       "tests": [
         {
           "file": "test/modules/acceptance/p07-5-f010-report.test.ts",
-          "all": true
+          "all": true,
+          "level": "integration"
         },
         {
           "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts",
-          "all": true
+          "all": true,
+          "level": "integration"
         },
         {
           "file": "test/modules/acceptance/p07-5-f002-drill-fixture.test.ts",
-          "all": true
+          "all": true,
+          "level": "integration"
         }
       ]
     }

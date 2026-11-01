@@ -1,21 +1,71 @@
 {
   "schema_version": 2,
   "task_id": "F-006",
-  "projects": [{
-    "id": "shiploop",
-    "tests": [
-      { "file": "test/modules/runtime/recovery/p07-5-f006-native-archive-boundary.test.ts", "all": true },
-      { "file": "test/modules/runtime/recovery/p07-5-f006-native-single-writer.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f006-dual-storage-drift.test.ts", "all": true },
-      { "file": "test/modules/runtime/p04-4-pi-managed-session.test.ts", "all": true },
-      { "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts", "all": true },
-      { "file": "test/modules/runtime/recovery/p04-4-runtime-recovery-access.test.ts", "all": true },
-      { "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts", "all": true },
-      { "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts", "all": true },
-      { "file": "test/modules/runtime/recovery/p03-3a-recovery-driver.test.ts", "all": true },
-      { "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts", "all": true },
-      { "file": "test/modules/recovery/p07-5-f003-recording-prefix.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts", "all": true }
-    ]
-  }]
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/recovery/p07-5-f006-native-archive-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p07-5-f006-native-single-writer.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f006-dual-storage-drift.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-4-pi-managed-session.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p04-4-runtime-recovery-access.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p03-3a-recovery-driver.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p07-5-f003-recording-prefix.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
 }

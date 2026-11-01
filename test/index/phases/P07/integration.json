@@ -1,0 +1,375 @@
+{
+  "schema_version": 2,
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/acceptance-process-cleanup.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p06-7-f008-entry.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f002-drill-fixture.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f003-verifier-crash.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-faults.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f006-dual-storage-drift.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f009-notification-fault-restart.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f009-result-query-independence.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f010-report.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f011-capture.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f011-entry.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f012-closed-loop-demo.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/cli/p03-10-feature-report-built.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/cli/p07-3-f014-backup-cli.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/commands/p07-3-f008-project-lifecycle.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/commands/p07-3-f009-project-delete-preview.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/commands/p07-3-f010-project-delete.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f004-git-commit-reconciliation.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p07-1-f007-git-receipt-faults.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p07-4-f001-result-diagnostics-query.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p07-4-f002-result-evidence-integrity.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p07-5-f004-git-recovery-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/events/p07-4-f005-result-events.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/execution/control/p04-8-control-fault-matrix.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/p07-3-f014-backup-host.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/p07-3-f015-public-lifecycle-host.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/p07-4-f008-notification-host.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/lifecycle/p07-3-f016-backup-restore-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/lifecycle/p07-3-f016-lifecycle-fault-races.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/lifecycle/p07-5-f007-backup-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/lifecycle/p07-5-f008-data-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f007-notification-worker.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f008-notification-runtime.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f009-notification-query.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f010-notification-restart.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f010-vertical-loop.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p05-5-f005-resource-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p07-1-f003-stop-reprobe.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p07-1-f004-sqlite-fencing.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p07-1-f006-verifier-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p07-1-f010-loop-verifier.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/retention/p07-3-f012-retention-evaluation.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/retention/p07-3-f013-evidence-retention.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/retention/p07-3-f015-retention-cleanup-command.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-4-pi-managed-session.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-5-session-recorder.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p06-7-f005-process-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p07-2-f001-recorder-bounds.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p07-2-f002-runner-bounds.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p07-2-f008-recording-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p03-3a-recovery-driver.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p04-4-runtime-recovery-access.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p07-5-f006-native-archive-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p07-5-f006-native-single-writer.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p04-5-work-recording-store.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p07-3-f003-sqlite-backup.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p07-3-f007-startup-upgrade.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/workspace/p07-3-f011-git-lock-identity.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/workspace/p07-3-f011-project-delete-executor.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}

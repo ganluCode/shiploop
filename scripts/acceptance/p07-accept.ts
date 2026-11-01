@@ -132,7 +132,7 @@ export async function runP07Acceptance(options: P07AcceptanceOptions) {
     const prerequisiteResult = evaluateP07Prerequisites(prerequisites);
     save(join(workDir, 'prerequisites.json'), prerequisiteResult);
     if (prerequisiteResult.status !== 'satisfied') fail('prerequisite_not_delivered_or_ancestor');
-    const trusted = collectP07TrustedTests(root), scope = selectP07TestScope(trusted.files, options.fullRegression === true);
+    const trusted = collectP07TrustedTests(root), scope = selectP07TestScope(trusted.files, options.fullRegression === true, trusted.integrationFiles);
     for (const file of Object.keys(P07_SCENE_CHECKS)) if (!scope.selected.includes(file)) fail('required_scene_missing');
     const files = inputs(root);
     const executed = options.fullRegression ? files.filter(file => /^test\/modules\/.*\.test\.(ts|js)$/.test(file)) : [...scope.selected];

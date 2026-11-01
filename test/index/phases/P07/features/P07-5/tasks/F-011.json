@@ -1,26 +1,96 @@
 {
   "schema_version": 2,
   "task_id": "F-011",
-  "projects": [{
-    "id": "shiploop",
-    "tests": [
-      { "file": "test/modules/acceptance/p07-5-f011-entry.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f011-capture.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f010-report.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p06-7-f008-entry.test.ts", "all": true },
-      { "file": "test/modules/acceptance/acceptance-process-cleanup.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f003-verifier-crash.test.ts", "all": true },
-      { "file": "test/modules/delivery/p07-5-f004-git-recovery-boundary.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f005-recording-faults.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts", "all": true },
-      { "file": "test/modules/runtime/recovery/p07-5-f006-native-archive-boundary.test.ts", "all": true },
-      { "file": "test/modules/runtime/recovery/p07-5-f006-native-single-writer.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f006-dual-storage-drift.test.ts", "all": true },
-      { "file": "test/modules/lifecycle/p07-5-f007-backup-recovery.test.ts", "all": true },
-      { "file": "test/modules/lifecycle/p07-5-f008-data-boundary.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f009-result-query-independence.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f009-notification-fault-restart.test.ts", "all": true }
-    ]
-  }]
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p07-5-f011-entry.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f011-capture.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f010-report.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p06-7-f008-entry.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/acceptance-process-cleanup.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f003-verifier-crash.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p07-5-f004-git-recovery-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-faults.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p07-5-f006-native-archive-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/recovery/p07-5-f006-native-single-writer.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f006-dual-storage-drift.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/lifecycle/p07-5-f007-backup-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/lifecycle/p07-5-f008-data-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f009-result-query-independence.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f009-notification-fault-restart.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
 }

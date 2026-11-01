@@ -54,11 +54,12 @@ export const P07_INDEXED_FEATURES: readonly string[] = [...P07_PREREQUISITE_FEAT
  * P07-5 必须提供聚合清单（missing_feature_index fail-closed）。Task 用例在阶段
  * 范围内展开为完整文件执行。
  */
-export function collectP07TrustedTests(root: string): { files: string[]; inputs: string[] } {
+export function collectP07TrustedTests(root: string): { files: string[]; inputs: string[]; integrationFiles: string[] } {
   const base = 'test/index/phases/P07/features';
   const discovered = readdirSync(join(root, base), { withFileTypes: true }).map(e => e.name).sort();
   if (hashP06Input(discovered) !== hashP06Input([...P07_INDEXED_FEATURES].sort())) fail('prerequisite_index_set', `discovered=${discovered.join(',')}`);
   const files = new Set<string>(), inputs: string[] = [];
+  const classifiedIntegration = new Set<string>();
   for (const feature of P07_INDEXED_FEATURES) {
     const manifestFile = `${base}/${feature}/feature.json`;
     noLinks(join(root, base, feature, 'tasks'));
@@ -79,16 +80,33 @@ export function collectP07TrustedTests(root: string): { files: string[]; inputs:
       const project = index.projects[0];
       if (project.id !== 'shiploop' || !Array.isArray(project.tests) || !project.tests.length) fail('empty_test_selection', `${feature}/${task.task_id}`);
       for (const test of project.tests) {
+        if (test.level !== undefined && test.level !== 'unit' && test.level !== 'integration') fail('invalid_test_level', test.file);
         if (typeof test.file !== 'string' || !/^test\/modules\/(?:[\w.-]+\/)*[\w.-]+\.test\.(ts|js)$/.test(test.file) ||
             (test.all !== true && (!Array.isArray(test.cases) || !test.cases.length || test.cases.some((c: unknown) => typeof c !== 'string' || !c))) ||
             (test.all !== undefined && test.cases !== undefined)) fail('invalid_test_selection', `${feature}/${task.task_id}`);
         repoFile(root, test.file); files.add(test.file);
+        if (test.level === 'integration') classifiedIntegration.add(test.file);
       }
     }
     if (new Set(declared).size !== declared.length || hashP06Input(declared.sort()) !== hashP06Input(actual)) fail('task_index_manifest_mismatch', feature);
   }
+  const integrationIndex = 'test/index/phases/P07/integration.json';
+  const integrationFiles = new Set<string>();
+  if (classifiedIntegration.size || existsSync(join(root, integrationIndex))) {
+    const registry = json(repoFile(root, integrationIndex));
+    inputs.push(integrationIndex);
+    if (registry.schema_version !== 2 || !Array.isArray(registry.projects) || registry.projects.length !== 1 ||
+        registry.projects[0].id !== 'shiploop' || !Array.isArray(registry.projects[0].tests) || !registry.projects[0].tests.length) fail('invalid_integration_index');
+    for (const test of registry.projects[0].tests) {
+      if (test.level !== 'integration' || test.all !== true || test.cases !== undefined ||
+          typeof test.file !== 'string' || !/^test\/modules\/(?:[\w.-]+\/)*[\w.-]+\.test\.(ts|js)$/.test(test.file) ||
+          integrationFiles.has(test.file)) fail('invalid_integration_index');
+      repoFile(root, test.file); files.add(test.file); integrationFiles.add(test.file);
+    }
+    for (const file of classifiedIntegration) if (!integrationFiles.has(file)) fail('integration_coverage_missing', file);
+  }
   if (!files.size) fail('empty_test_selection');
-  return { files: [...files].sort(), inputs: inputs.sort() };
+  return { files: [...files].sort(), inputs: inputs.sort(), integrationFiles: [...integrationFiles].sort() };
 }
 
 /* ------------------------------------------------------------------ *
@@ -128,13 +146,17 @@ const TEST_FILE_PATTERN = /^test\/modules\/(?:[\w.-]+\/)*[\w.-]+\.test\.(ts|js)$
  * 从完整校验过的可信并集生成去重执行范围：P07 文件全部纳入，必需底层回归逐项
  * 纳入；未选历史测试逐项登记 deferred/not_run。必需回归缺失于并集即拒绝。
  */
-export function selectP07TestScope(trustedUnion: readonly string[], fullRegression = false): P07TestScope {
+export function selectP07TestScope(trustedUnion: readonly string[], fullRegression = false, integrationFiles: readonly string[] = []): P07TestScope {
   const all = [...new Set(trustedUnion)].sort();
   if (!all.length) fail('empty_test_selection');
   for (const file of all) if (!TEST_FILE_PATTERN.test(file)) fail('invalid_trusted_union_entry', file);
   const missing = P07_REQUIRED_REGRESSIONS.filter(reg => !all.includes(reg.file));
   if (missing.length) fail('required_regression_missing', missing.map(m => `${m.file}(${m.category})`).join(','));
   const requiredFiles = new Set(P07_REQUIRED_REGRESSIONS.map(reg => reg.file));
+  for (const file of integrationFiles) {
+    if (!all.includes(file)) fail('integration_coverage_missing', file);
+    requiredFiles.add(file);
+  }
   const selected = fullRegression ? all : all.filter(file => file.includes('p07-') || requiredFiles.has(file));
   const selectedSet = new Set(selected);
   const deferred = all.filter(file => !selectedSet.has(file)).map(file => ({

@@ -578,3 +578,25 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
   ]));
   for (const file of f010Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });
+
+it('[case:p07-deferred-integration-covered] Feature 延后的集成测试必须被 Phase 默认范围承接且纳入输入摘要', () => {
+  const trusted = collectP07TrustedTests(ROOT);
+  expect(trusted.inputs).toContain('test/index/phases/P07/integration.json');
+  expect(trusted.integrationFiles.length).toBeGreaterThan(0);
+  const scope = selectP07TestScope(trusted.files, false, trusted.integrationFiles);
+  for (const file of trusted.integrationFiles) expect(scope.selected).toContain(file);
+  expect(() => selectP07TestScope(trusted.files, false, ['test/modules/unknown.test.ts'])).toThrow('integration_coverage_missing');
+  const synthetic = mkdtempSync(join(tmpdir(), 'p07-levels-root-'));
+  try {
+    cpSync(join(ROOT, 'test/index/phases/P07'), join(synthetic, 'test/index/phases/P07'), { recursive: true });
+    for (const file of trusted.files) {
+      mkdirSync(dirname(join(synthetic, file)), { recursive: true });
+      writeFileSync(join(synthetic, file), '');
+    }
+    const path = join(synthetic, 'test/index/phases/P07/integration.json');
+    const registry = json(path);
+    registry.projects[0].tests = [];
+    writeFileSync(path, JSON.stringify(registry));
+    expect(() => collectP07TrustedTests(synthetic)).toThrow('invalid_integration_index');
+  } finally { rmSync(synthetic, { recursive: true, force: true }); }
+});

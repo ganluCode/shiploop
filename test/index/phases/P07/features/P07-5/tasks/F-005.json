@@ -1,20 +1,66 @@
 {
   "schema_version": 2,
   "task_id": "F-005",
-  "projects": [{
-    "id": "shiploop",
-    "tests": [
-      { "file": "test/modules/acceptance/p07-5-f005-recording-faults.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts", "all": true },
-      { "file": "test/modules/runtime/p07-2-f001-recorder-bounds.test.ts", "all": true },
-      { "file": "test/modules/runtime/p07-2-f002-runner-bounds.test.ts", "all": true },
-      { "file": "test/modules/runtime/p07-2-f008-recording-integration.test.ts", "all": true },
-      { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
-      { "file": "test/modules/storage/sqlite/p04-5-work-recording-store.test.ts", "all": true },
-      { "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts", "all": true },
-      { "file": "test/modules/recovery/p07-5-f003-recording-prefix.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f002-drill-fixture.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts", "all": true }
-    ]
-  }]
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-faults.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f005-recording-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p07-2-f001-recorder-bounds.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p07-2-f002-runner-bounds.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p07-2-f008-recording-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-5-session-recorder.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p04-5-work-recording-store.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-8-recovery-recording-fault-matrix.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/recovery/p07-5-f003-recording-prefix.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f002-drill-fixture.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p07-5-f001-acceptance-contract.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
 }
