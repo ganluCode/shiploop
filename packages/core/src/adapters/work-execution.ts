@@ -167,7 +167,7 @@ export function assembleWorkExecution(options: {
   const settlementNotes = new Map<string, { readonly decision: string; readonly reason: string | null;
     readonly atUtcMs: number }>();
   const runKey = (projectId: string, runId: string) => `${projectId}\u0000${runId}`;
-  const DISPATCH_LEASE_MS = 60_000;
+  const DISPATCH_LEASE_MS = 180_000;
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 20_000;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -729,7 +729,7 @@ export function assembleWorkExecution(options: {
           ? prior[prior.length - 1]!.sessionId : null };
       return { claimKey, projectId, runId: candidate.run.id, taskId, owner, hostInstanceId,
         expectedRevision: task.revision, executionVersion: fact.executionVersion,
-        workspace, leaseUntilUtcMs: Math.min(now() + 60_000, view.batch.deadlineAtUtcMs), inputSnapshot,
+        workspace, leaseUntilUtcMs: Math.min(now() + DISPATCH_LEASE_MS, view.batch.deadlineAtUtcMs), inputSnapshot,
         launch,
         ...(attemptId === undefined ? {} : { attemptId }) };
     },
