@@ -436,7 +436,7 @@ it('[case:p07-checklist-digest-stable] 清单变更产生稳定摘要并可在�
 it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_version=2 局部测试索引真实登记', () => {
   const manifest = json(join(ROOT, 'test/index/phases/P07/features/P07-5/feature.json'));
   expect(manifest).toMatchObject({ schema_version: 1, kind: 'feature', phase: 'P07', feature: 'P07-5' });
-  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006']);
+  expect(manifest.tasks.map((task: any) => task.task_id)).toEqual(['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007']);
   expect(manifest.tasks[0].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-001.json');
   expect(manifest.tasks[1].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-002.json');
 
@@ -515,4 +515,19 @@ it('[case:p07-self-index-registered] P07-5 聚合清单与本 Task 的 schema_ve
     'test/modules/acceptance/p07-5-f005-recording-recovery.test.ts',
   ]));
   for (const file of f006Files) expect(existsSync(join(ROOT, file))).toBe(true);
+
+  expect(manifest.tasks[6].index).toBe('test/index/phases/P07/features/P07-5/tasks/F-007.json');
+  const f007Index = json(join(ROOT, manifest.tasks[6].index));
+  expect(f007Index).toMatchObject({ schema_version: 2, task_id: 'F-007' });
+  const f007Files = f007Index.projects[0].tests.map((test: any) => test.file);
+  expect(f007Files).toEqual(expect.arrayContaining([
+    'test/modules/lifecycle/p07-5-f007-backup-recovery.test.ts',
+    'test/modules/lifecycle/p07-3-f016-backup-restore-integration.test.ts',
+    'test/modules/host/p07-3-f014-backup-host.test.ts',
+    'test/modules/cli/p07-3-f014-backup-cli.test.ts',
+    'test/modules/storage/sqlite/p07-3-f003-sqlite-backup.test.ts',
+    'test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts',
+    'test/modules/storage/sqlite/p07-3-f007-startup-upgrade.test.ts',
+  ]));
+  for (const file of f007Files) expect(existsSync(join(ROOT, file))).toBe(true);
 });

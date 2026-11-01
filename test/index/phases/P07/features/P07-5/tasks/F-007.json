@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/lifecycle/p07-5-f007-backup-recovery.test.ts", "all": true },
+      { "file": "test/modules/lifecycle/p07-3-f016-backup-restore-integration.test.ts", "all": true },
+      { "file": "test/modules/host/p07-3-f014-backup-host.test.ts", "all": true },
+      { "file": "test/modules/cli/p07-3-f014-backup-cli.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f003-sqlite-backup.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f004-backup-package.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p07-3-f007-startup-upgrade.test.ts", "all": true }
+    ]
+  }]
+}
