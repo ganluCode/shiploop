@@ -325,6 +325,8 @@ export async function openNotificationVerticalFixture(
           tasks: probe!.database.prepare('SELECT id, status, execution_version, revision FROM tasks ORDER BY id').all(),
           runs: probe!.database.prepare('SELECT id, status, reason, revision FROM runs ORDER BY id').all(),
           batches: probe!.database.prepare('SELECT id, status, attempts_created, runtime_starts, no_progress_runs FROM execution_batches ORDER BY id').all(),
+          dispatchClaims: probe!.database.prepare('SELECT project_id, feature_id, run_id, state, owner_id, host_instance_id, lease_until, claim_version, reason FROM run_dispatch_claims ORDER BY claim_version').all(),
+          executionSlots: probe!.database.prepare('SELECT project_id, feature_id, run_id, claim_id, state, owner_id, host_instance_id, lease_until, claim_version, reason FROM execution_slot_claims ORDER BY claim_version').all(),
         };
         throw new Error(`verifyNextAttempt: 等待 verifying Attempt 超时；state=${JSON.stringify(diagnostic)}`);
       }
