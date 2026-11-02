@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p08-2-f005-todo-live-negatives.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p08-2-f001-todo-requirements.test.ts",
+          "all": true,
+          "level": "unit"
+        }
+      ]
+    }
+  ]
+}

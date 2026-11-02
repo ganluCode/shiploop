@@ -292,3 +292,9 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   unit 覆盖真实 Pi 模式门禁、依赖 Task 串行解锁、局部验证失败传播、commit/tree 身份
   与证据保存失败；Runtime completed 不替代验证或本地提交。真实授权、真实 Pi、临时仓库
   和跨层 Host/SQLite/进程组合仍由 live/Phase 集成独立执行。
+
+- `index/phases/P08/features/P08-2/tasks/F-005.json`：Todo live 确定性负例夹具。
+  unit 使用真实 `mkdtemp` 临时根核对缺认证/未授权在认领前停止、依赖失败与预算耗尽传播、
+  取消保留代码/Attempt/预算/证据，以及未确认停止时保持占用且不重启。状态文件、证据文件
+  和实际部分 worktree 由 `auditTodoLiveNegative` 交叉核对；不调用模型，不把 fake 结果当作正常
+  live 通过。真实 Host/SQLite/Git/进程组合和 Phase/live 入口保持 not_run。
