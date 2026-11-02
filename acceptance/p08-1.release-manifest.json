@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "kind": "shiploop.p08.release-manifest",
+  "phase": "P08",
+  "feature": "P08-1",
+  "distributionMode": "local-pack-only",
+  "published": false,
+  "identity": {
+    "gitCommit": "2271bcd0a211cda9f85fba449adee802b2784b2a",
+    "branch": "feat/2026-11-02-14-56-22_p08-1",
+    "gitCommitScope": "F-001～F-006 的功能/测试/文档交付提交（HEAD）；F-007 只新增发布文档、清单、索引与交付报告，不改变运行时行为。P08-4 必须重新解析当前 HEAD。",
+    "codeBaseSubject": "F-006: 补齐安装/规划/执行/停止/备份/排障操作 Skills 并同步 CLI 命令面"
+  },
+  "packages": [
+    { "name": "shiploop-core", "version": "0.0.0", "private": true },
+    { "name": "shiploop-host", "version": "0.0.0", "private": true },
+    { "name": "shiploop-cli", "version": "0.0.0", "private": true }
+  ],
+  "toolchain": {
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "platform": "darwin",
+    "packageManager": "npm@10.9.3"
+  },
+  "compatibility": {
+    "hostProtocol": {
+      "wireProtocolVersions": [1],
+      "wireSchemaVersion": 6,
+      "legacyHandshakeSchemaVersionsAccepted": [5],
+      "discoverySchemaVersions": [1],
+      "unknownVersionPolicy": "reject"
+    },
+    "databaseSchema": {
+      "engine": "sqlite",
+      "readableAppliedVersions": { "min": 1, "max": 64 },
+      "writableTargetVersion": 64,
+      "higherVersionPolicy": "reject"
+    }
+  },
+  "artifacts": {
+    "status": "not_run",
+    "reason": "本 Task 禁止发包；未在 F-007 提交上重新执行 pack，不能把 artifacts/local-pack 中 F-003 旧产物的摘要冒充当前提交制品。",
+    "items": [
+      { "name": "shiploop-core", "version": "0.0.0", "filename": "shiploop-core-0.0.0.tgz", "sha256": null },
+      { "name": "shiploop-host", "version": "0.0.0", "filename": "shiploop-host-0.0.0.tgz", "sha256": null },
+      { "name": "shiploop-cli", "version": "0.0.0", "filename": "shiploop-cli-0.0.0.tgz", "sha256": null }
+    ]
+  },
+  "checks": [
+    {
+      "id": "f007-docs-manifest-local",
+      "layer": "task-local-unit",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/engineering/p08-1-f007-release-manifest-docs.test.ts"
+      ],
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": "verifications/F-007/runtime-logs/test-ykxqyhll.log",
+      "reason": null
+    },
+    {
+      "id": "f007-typecheck",
+      "layer": "task-local-static",
+      "command": ["npm", "run", "typecheck"],
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": "verifications/F-007/runtime-logs/test-5not7ord.log",
+      "reason": null
+    },
+    {
+      "id": "artifact-verification",
+      "layer": "task-local-check",
+      "command": ["npm", "run", "verify:artifacts"],
+      "status": "not_run",
+      "exitCode": null,
+      "evidence": "artifacts/local-pack/artifact-verification.json",
+      "reason": "现有制品的 gitCommit 为 F-003 提交，与当前代码基线不一致；本 Task 禁止发包，未重新生成，故不重跑制品检查。"
+    },
+    {
+      "id": "feature-gate",
+      "layer": "feature",
+      "command": null,
+      "status": "not_run",
+      "exitCode": null,
+      "evidence": null,
+      "reason": "由 Nezha 在最终代码上独立执行去重 Task 索引；本 Task 不运行全量或 Feature 门禁。"
+    },
+    {
+      "id": "p08-phase-integration",
+      "layer": "phase",
+      "command": null,
+      "status": "not_run",
+      "exitCode": null,
+      "evidence": null,
+      "reason": "真实安装、Host/CLI、协议矩阵、进程清理与演示由 P08 阶段验收/P08-4 执行；本清单不代签。"
+    }
+  ],
+  "layers": {
+    "codeDelivery": "delivered",
+    "taskLocalChecks": "passed",
+    "featureGate": "not_run",
+    "phaseIntegration": "not_run"
+  },
+  "phaseIntegration": {
+    "status": "not_run",
+    "items": [
+      { "id": "real-three-package-install", "status": "not_run" },
+      { "id": "host-cli-run", "status": "not_run" },
+      { "id": "protocol-compatible", "status": "not_run" },
+      { "id": "protocol-incompatible", "status": "not_run" },
+      { "id": "process-cleanup", "status": "not_run" },
+      { "id": "todo-demo", "status": "not_run" },
+      { "id": "existing-repo-demo", "status": "not_run" }
+    ]
+  },
+  "releaseBlockers": [
+    {
+      "id": "license",
+      "status": "pending",
+      "note": "候选许可证尚未由负责人确认；仓库根 LICENSE 只是开发占位。"
+    },
+    {
+      "id": "npmScope",
+      "status": "pending",
+      "note": "npm scope 尚未确定，不能据此发布。"
+    },
+    {
+      "id": "publicPackageNames",
+      "status": "pending",
+      "note": "shiploop-core/host/cli 是工作区私有名称，正式公开包名未确定。"
+    },
+    {
+      "id": "publishIdentity",
+      "status": "pending",
+      "note": "公开发布身份、registry 策略与发布凭据管理未确认；本阶段仅本地 pack。"
+    }
+  ],
+  "knownGaps": [
+    "真实三包在独立干净目录安装并运行、原生模块加载与打包 Host 启动均为 not_run。",
+    "已有 Host 的协议兼容/不兼容矩阵、未知/高版本拒绝的真实进程证据为 not_run。",
+    "停止后的原生进程与临时资源清理证据为 not_run。",
+    "Todo 演示与存量仓库增量变更演示为 not_run。",
+    "当前提交未重新生成 tarball；制品摘要字段为 null，不能引用 F-003 旧制品冒充。",
+    "Feature 门禁、P08 Phase 集成、负责人确认与 live 授权均未完成；交付报告不替代 P08-4。"
+  ]
+}

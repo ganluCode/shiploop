@@ -95,6 +95,11 @@ docs/p03-3-handoff.md  P03-3 集成验收与 P03-4/6/9 接口交接（F-014：�
 docs/p03-3-cli-execution-operations.md  P03-3 执行授权 CLI 操作说明（F-012：execution preview/start/budget/revise 命令面、完整有限预算参数映射与有效并发把关、previewDigest 明确确认、四态结构化输出与 accepted 仅提交成功语义、失败退出码与同请求恢复）
 docs/p03-5-handoff.md  P03-5 → P03-6/8/9 及 P03-10 接口交接（F-013 真实资源集成回归：准备/恢复/保留/清理/丢弃公共面、负例矩阵复核、T08/T29/T36 映射、恢复边界与验证记录）
 docs/p08-1-user-guide.md  P08-1 新用户安装与操作指南（F-005：本地 pack 安装、数据根隔离、Host/CLI 启动与协议检查、认证准备、project init、规划批准、执行、停止、备份恢复、排障与安全清理；脱敏示例与支持边界）
+docs/p08-1-support-matrix.md  P08-1 发布支持矩阵（F-007：macOS/Node/npm、Host 协议、数据库 Schema、分层状态与 Phase 集成 not_run）
+docs/p08-1-artifact-verification.md  P08-1 制品检查说明（F-007：pack:local/verify:artifacts、摘要、状态与真实安装缺口）
+CHANGELOG.md  P08-1 变更说明（0.0.0 本地 pack，未发布；按 Task 记录范围与兼容边界）
+docs/acceptance/p08-1-release-manifest.md  P08-1 发布清单模板（F-007：Git SHA、包版本、协议/Schema、工具链、制品摘要、检查退出码、证据与已知缺口）
+docs/acceptance/p08-1-delivery-report.md  P08-1 交付报告（F-007：代码提交、局部检查、Feature/Phase not_run 与发布身份缺口；供 P08-4 读取，不代签）
 ```
 
 ### 确定性测试约定（F-003）
@@ -401,6 +406,29 @@ npm run accept:p04:live -- --approval /absolute/private/owner-approved-live.json
 ```
 
 离线命令全绿、SDK 探针完成或 Task completed 均不等于 P04 阶段通过。完整工程/集成、真实 Core Work/live 证据和负责人签署尚待独立核验；当前 P04 未放行。
+
+## P08-1 安装与发布文档导航
+
+P08-1 只交付本地 pack 候选与操作文档，`published: false`；以下文档不签署阶段通过，真实安装、Host/CLI 运行、协议兼容/不兼容、进程清理和 Todo/存量演示保持 `not_run`，由 P08 Phase 集成/P08-4 独立执行。
+
+| 文档 | 用途 |
+|---|---|
+| [新用户安装与操作指南](docs/p08-1-user-guide.md) | 从本地 pack、独立安装、Host/CLI、认证到规划/执行/停止/备份/排障的完整操作步骤 |
+| [发布支持矩阵](docs/p08-1-support-matrix.md) | macOS、Node/npm、Host 协议、数据库 Schema、已交付层次与未运行项 |
+| [变更说明](CHANGELOG.md) | 0.0.0 未发布变更、兼容范围与未验证边界 |
+| [制品检查说明](docs/p08-1-artifact-verification.md) | `pack:local` / `verify:artifacts` 入口、输出、状态词汇与证据 |
+| [发布清单模板](docs/acceptance/p08-1-release-manifest.md) / [P08-1 清单](acceptance/p08-1.release-manifest.json) | 可复用字段说明与实际机器可读清单（含 not_run 和发布身份缺口） |
+| [P08-1 交付报告](docs/acceptance/p08-1-delivery-report.md) | 实现范围、代码提交、工具版本、局部检查与 Phase 集成待运行项；供 P08-4 读取，不替代集成/人工/live |
+| [project init Skill](docs/skills/project-init.md) | 项目静态预览、确认注册与独立基线授权 |
+| [project overview Skill](docs/skills/project-overview.md) | 注册/配置/健康分列只读查看 |
+| [host lifecycle Skill](docs/skills/host-lifecycle.md) | 安装自检、本地 pack 与 Host start/status/stop |
+| [planning approval Skill](docs/skills/planning-approval.md) | 建 Phase、导入草稿、一次性规划与候选审批 |
+| [execution observe Skill](docs/skills/execution-observe.md) | 执行预览、显式启动与只读观察 |
+| [stop control Skill](docs/skills/stop-control.md) | 显式取消、暂停/继续与 Host 停止 |
+| [backup restore Skill](docs/skills/backup-restore.md) | 受管备份与隔离恢复 |
+| [troubleshooting Skill](docs/skills/troubleshooting.md) | 失败诊断、回执/控制/恢复查询与后置能力边界 |
+
+机器可读权威兼容声明为 [`distribution-compatibility.json`](distribution-compatibility.json)。本导航与相关文档由 `test/modules/engineering/p08-1-f007-release-manifest-docs.test.ts` 守护链接目标、清单 schema、脱敏与版本身份；测试通过不等于 P08 阶段验收通过。
 
 ## 常用命令
 
