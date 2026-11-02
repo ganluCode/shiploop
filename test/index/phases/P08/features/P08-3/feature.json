@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P08",
+  "feature": "P08-3",
+  "scope": "P08-3 existing non-Nezha demo task indexes; not full/Phase/live acceptance",
+  "tasks": [
+    { "task_id": "F-001", "index": "test/index/phases/P08/features/P08-3/tasks/F-001.json" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p08-3-f001-baseline-snapshot.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p08-3-f001-existing-demo-fixture.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}
