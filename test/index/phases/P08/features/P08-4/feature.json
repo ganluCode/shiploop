@@ -16,6 +16,10 @@
     {
       "task_id": "F-003",
       "index": "test/index/phases/P08/features/P08-4/tasks/F-003.json"
+    },
+    {
+      "task_id": "F-004",
+      "index": "test/index/phases/P08/features/P08-4/tasks/F-004.json"
     }
   ]
 }

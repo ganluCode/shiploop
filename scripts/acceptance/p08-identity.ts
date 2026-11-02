@@ -28,7 +28,7 @@
  * 非 Vitest 环境按仓库既有 loader 钩子延迟加载）。
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { register } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -196,6 +196,26 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 function sha256Text(text: string): string { return createHash('sha256').update(text, 'utf8').digest('hex'); }
+
+const MAX_EXTERNAL_EVIDENCE_BYTES = 2 * 1024 * 1024;
+const SENSITIVE_TEXT = /(?:bearer\s+[A-Za-z0-9._~+/=-]{8,}|(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9]|api[_-]?key\s*[:=]|access[_-]?token\s*[:=]|-----BEGIN\s[A-Z ]*PRIVATE KEY-----)/i;
+
+function assertExternalEvidenceRedacted(value: unknown, label: string): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertExternalEvidenceRedacted(entry, `${label}[${index}]`));
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (CREDENTIAL_KEY.test(key)) fail('p08_external_evidence_structure_invalid', 'external-evidence', `${label}.${key} 含凭据字段`);
+      assertExternalEvidenceRedacted(entry, `${label}.${key}`);
+    }
+    return;
+  }
+  if (typeof value === 'string' && (ABSOLUTE_PATH_PATTERN.test(value) || SENSITIVE_TEXT.test(value))) {
+    fail('p08_external_evidence_structure_invalid', 'external-evidence', `${label} 含未脱敏路径或凭据内容`);
+  }
+}
 
 /** 符号链接防护（与 p07-accept 相同语义；macOS /tmp 软链先按真实前缀解析）。 */
 function noLinks(path: string, code: P08IdentityFailureCode, stage: P08IdentityFailureStage): void {
@@ -759,11 +779,15 @@ export async function importP08ExternalEvidence(options: P08ExternalEvidenceImpo
   const path = join(options.evidenceRoot, checked.path);
   noLinks(path, 'p08_external_evidence_missing', stage);
   if (!existsSync(path) || !lstatSync(path).isFile()) fail('p08_external_evidence_missing', stage, `证据文件缺失：${checked.path}`);
+  let size: number;
+  try { size = statSync(path).size; } catch { fail('p08_external_evidence_missing', stage, `证据文件不可读取：${checked.path}`); }
+  if (size > MAX_EXTERNAL_EVIDENCE_BYTES) fail('p08_external_evidence_structure_invalid', stage, '外部证据超过受控大小上限');
   const content = readFileSync(path, 'utf8');
   if (sha256Text(content) !== checked.digest) fail('p08_external_evidence_digest_mismatch', stage, `证据内容摘要不匹配：${checked.path}`);
   let parsed: unknown;
   try { parsed = JSON.parse(content); } catch (error) { fail('p08_external_evidence_corrupt_json', stage, `证据不是有效 JSON：${checked.path}（${String(error)}）`); }
   const record = object(parsed, 'p08_external_evidence_structure_invalid', stage, '外部证据');
+  assertExternalEvidenceRedacted(record, '外部证据');
   const expectedKind = P08_EXTERNAL_EVIDENCE_REPORT_KINDS[checked.kind];
   if (record.kind !== expectedKind) fail('p08_external_evidence_kind_mismatch', stage, `证据来源不匹配：期望 ${expectedKind}，实际 ${String(record.kind)}`);
   const expectedSchema = P08_EXTERNAL_EVIDENCE_SCHEMA_VERSIONS[checked.kind];
@@ -800,12 +824,21 @@ async function summarizeByKind(reference: P08ExternalEvidenceReference, record: 
     const tools = await loadBrownfieldTools();
     let envelope: ReturnType<typeof tools.validateBrownfieldEvidenceEnvelope>;
     try { envelope = tools.validateBrownfieldEvidenceEnvelope(record); } catch { fail('p08_external_evidence_structure_invalid', stage, '存量 live 证据封套结构校验失败'); }
-    return { ...base, status: 'recorded',
+    const status = envelope.workingTreePreservation.status === 'changed'
+      || envelope.summary.newFailure > 0 || envelope.summary.incomparable > 0
+      ? 'failed'
+      : envelope.summary.notRun > 0 || envelope.phaseIntegration.length > 0
+        ? 'not_run'
+        : 'passed';
+    return { ...base, status,
       commits: [envelope.testCommit, envelope.currentCodeIdentity.headCommit].filter((commit): commit is string => commit !== null),
       runIds: [envelope.projectId],
       detail: { projectId: envelope.projectId, checks: envelope.summary.checks, newFailure: envelope.summary.newFailure,
-        fixed: envelope.summary.fixed, notRun: envelope.summary.notRun, workingTree: envelope.workingTreePreservation.status,
-        phaseScopes: envelope.phaseIntegration.length } };
+        existingFailure: envelope.summary.existingFailure, fixed: envelope.summary.fixed, notRun: envelope.summary.notRun,
+        incomparable: envelope.summary.incomparable, workingTree: envelope.workingTreePreservation.status,
+        baselineDirtyFiles: envelope.workingTreePreservation.baselineDirtyFiles.length,
+        currentDirtyFiles: envelope.workingTreePreservation.currentDirtyFiles.length,
+        phaseScopes: envelope.phaseIntegration.length, remainingGaps: envelope.remainingGaps.map(gap => gap.id) } };
   }
   if (reference.kind === 'install-manifest') {
     const manifest = validateP08InstallManifest(record);
