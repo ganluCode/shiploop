@@ -441,6 +441,32 @@ P08-1 只交付本地 pack 候选与操作文档，`published: false`；以下�
 
 机器可读权威兼容声明为 [`distribution-compatibility.json`](distribution-compatibility.json)。本导航与相关文档由 `test/modules/engineering/p08-1-f007-release-manifest-docs.test.ts` 守护链接目标、清单 schema、脱敏与版本身份；测试通过不等于 P08 阶段验收通过。
 
+## P08 一期总验收文档导航
+
+P08-4 总验收把安装、确定性回归、Todo 新项目与存量仓库两类证据、live 和人工门禁分层核对。以下文档与报告入口只记录事实和待核对项；默认 `accept:p08` 不调用真实模型，`not_run`/`deferred` 不折算通过，文档和测试不能代替负责人签署。
+
+| 文档 | 用途 |
+|---|---|
+| [一期能力矩阵](docs/p08-capability-matrix.md) | Core/Host/CLI/Pi Work 能力、macOS/Node/npm 矩阵、协议/Schema 范围、安装产物摘要字段与不支持能力 |
+| [P08 总验收契约](docs/p08-acceptance.md) | 六层验证、三态、运行身份、前置输入与 Nezha 边界 |
+| [验收配置](acceptance/p08.config.json) / [检查清单](acceptance/p08.checklist.json) / [入口契约](acceptance/p08.entry.json) | 机器可读的冻结配置、检查 ID 与固定步骤顺序 |
+| [正式验收入口](scripts/acceptance/p08-accept.ts) | `npm run accept:p08` 的步骤、预算、身份、证据与报告发布实现 |
+| [负责人 walkthrough](docs/acceptance/p08-owner-walkthrough.md) | 从干净安装目录启动打包 CLI、Todo 与存量演示核对点，以及脏文件/已有失败/清理/停止未确认/Live 缺失处理 |
+| [交付报告模板](docs/acceptance/p08-delivery-report-template.md) | commit、工具版本、实际命令与退出码、范围与预算、证据路径、计数、人工状态与遗留问题 |
+| [P08-1 交付报告](docs/acceptance/p08-1-delivery-report.md) / [发布清单](acceptance/p08-1.release-manifest.json) | 安装产物、局部检查与 Phase 集成待运行项 |
+| [P08-2 live 入口](docs/p08-2-live-acceptance-entry.md) | Todo 新项目真实模型入口、预算与人工 pending |
+| [P08-3 存量运行手册](docs/acceptance/p08-3-existing-demo-runbook.md) / [演示报告模板](docs/acceptance/p08-3-demo-report-template.md) | 非 Nezha 存量仓库增量演示与结果记录 |
+
+```sh
+npm run accept:p08 -- --help
+# 默认阶段范围：P08 可信索引 + 必需底层回归 + 安装检查 + live import-only + 工程检查
+npm run accept:p08 -- --run-id "p08-owner-<timestamp>" --expected-commit <完整受测SHA> --prerequisites <owner-baselines.json>
+# 显式全仓历史回归（仅负责人主动启用）
+npm run accept:p08 -- --full-regression --run-id "p08-owner-<timestamp>-full" --expected-commit <完整受测SHA> --prerequisites <owner-baselines.json>
+```
+
+运行输出位于 `artifacts/acceptance/p08/runs/<runId>/`，正式报告位于 `artifacts/acceptance/p08/reports/<runId>/report.json` 与 `summary.md`；运行目录 create-once，旧运行不被覆盖。离线命令全绿、Task completed 或报告存在均不等于 P08 阶段通过，负责人签署仍是独立门槛。本导航由 `test/modules/acceptance/p08-4-f008-docs.test.ts` 守护链接目标、矩阵字段、示例脱敏与报告 schema。
+
 ## 常用命令
 
 ```bash

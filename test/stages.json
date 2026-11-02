@@ -21,6 +21,7 @@
     "test/modules/acceptance/p08-2-f007-todo-install-smoke.test.ts",
     "test/modules/acceptance/p08-4-f001-acceptance-contract.test.ts",
     "test/modules/acceptance/p08-4-f002-identity-validation.test.ts",
+    "test/modules/acceptance/p08-4-f008-docs.test.ts",
     "test/modules/authorization/p04-2-authentication-preflight.test.ts",
     "test/modules/cli/app-cli-args.test.ts",
     "test/modules/cli/control/p03-9-f015-cli-control.test.ts",
