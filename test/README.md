@@ -231,3 +231,9 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   路径/凭据样式/Nezha 依赖和发布阻塞（license、npm scope、正式包名、发布身份）保持
   pending 的边界。真实安装/原生模块加载/Host 启动/已有 Host 兼容矩阵登记为 Phase 集成
   not_run；本 Task 仅本地 pack 元数据冻结，不公开发布。
+
+- `index/phases/P08/features/P08-1/tasks/F-002.json`：可重复的本地 Core/Host/CLI pack 构建。
+  覆盖锁定 Node/npm 与 package-lock 预检、Core→Host→CLI staging 和 tarball 文件清单、
+  产物摘要/commit/协议/Schema/平台清单绑定，以及 workspace/file/绝对路径、开发目录、
+  缺入口、不可执行 bin、疑似凭据和摘要身份不匹配的 fail-closed 负例。真实独立目录
+  npm 安装、原生模块加载、Host 启动与三包运行保持 Phase 集成 not_run。

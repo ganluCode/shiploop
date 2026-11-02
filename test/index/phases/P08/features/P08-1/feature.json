@@ -5,6 +5,7 @@
   "feature": "P08-1",
   "scope": "P08-1 packaging/distribution metadata task indexes; not full/Phase/live acceptance",
   "tasks": [
-    { "task_id": "F-001", "index": "test/index/phases/P08/features/P08-1/tasks/F-001.json" }
+    { "task_id": "F-001", "index": "test/index/phases/P08/features/P08-1/tasks/F-001.json" },
+    { "task_id": "F-002", "index": "test/index/phases/P08/features/P08-1/tasks/F-002.json" }
   ]
 }
