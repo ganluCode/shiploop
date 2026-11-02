@@ -215,13 +215,12 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 F-012 公开闭环恢复�
     expect(finalBudget.deadline_at).toBe(before.deadline_at);
     expect(finalBudget.budget_snapshot).toEqual(before.budget_snapshot);
     expect(f.runtimeStarts()).toHaveLength(4);
-    /* 默认生产装配的 Feature finalization 是受信消费者端口（能力缺口按设计保留，
-     * 由嵌入应用提供）：Run 停在 running 等待最终核验；本演示不伪造 Feature
-     * 交付完成（与 FR-1 冻结清单一致）。结果查询能力经公开 Host 可达。 */
-    expect(q(f, 'SELECT status FROM runs WHERE id = ?', runId)).toEqual({ status: 'running' });
+    /* 本演示未配置 Feature 检查允许列表；默认收尾入口必须失败关闭并暂停，
+     * 不能把缺少验收范围当作成功交付或继续运行。结果查询能力仍经公开 Host 可达。 */
+    expect(q(f, 'SELECT status FROM runs WHERE id = ?', runId)).toEqual({ status: 'paused' });
     const featureReport = await client2.getFeatureReport(projectId, featureId);
     expect(featureReport.feature).toMatchObject({ featureId });
-    expect(featureReport.runs.find(row => row.id === runId)).toMatchObject({ status: 'running' });
+    expect(featureReport.runs.find(row => row.id === runId)).toMatchObject({ status: 'paused' });
 
     /* ---- 阶段五：通知失败续投（受控渠道恢复健康 + 到期推进），不重跑任务。 ---- */
     const businessBaseline = {
@@ -301,7 +300,7 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 F-012 公开闭环恢复�
     try {
       expect(restored.prepare<[string, string], { n: number }>('SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND status = ?').get(projectId, 'passed'))
         .toEqual({ n: 3 });
-      expect(restored.prepare('SELECT status FROM runs WHERE id = ?').get(runId)).toEqual({ status: 'running' });
+      expect(restored.prepare('SELECT status FROM runs WHERE id = ?').get(runId)).toEqual({ status: 'paused' });
       expect(restored.prepare('SELECT COUNT(*) AS n FROM attempts').get()).toEqual({ n: 4 });
       expect(restored.prepare<[string], { n: number }>('SELECT COUNT(*) AS n FROM notification_deliveries WHERE status = ?').get('delivered'))
         .toEqual({ n: delivered.length });
