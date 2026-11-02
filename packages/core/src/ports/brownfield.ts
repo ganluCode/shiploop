@@ -396,7 +396,8 @@ export function computeBrownfieldCheckCommandDigest(input: BrownfieldCheckDefini
   });
 }
 
-function validateBrownfieldCheckResult(input: unknown, operation: string, field: string): BrownfieldCheckResult {
+/** 校验单条检查结果；P08-3 证据封套复用同一结果语义，不另建平行状态机。 */
+export function validateBrownfieldCheckResult(input: unknown, operation = 'brownfield.check', field = 'result'): BrownfieldCheckResult {
   const value = object(input, operation, field);
   exactKeys(value, ['status', 'reasonCode', 'exitCode', 'evidenceRefs', 'failureCaseIds'], operation, field);
   const status = value.status;
@@ -415,7 +416,8 @@ function validateBrownfieldCheckResult(input: unknown, operation: string, field:
   return { status: status as BrownfieldCheckStatus, ...(reasonCode === undefined ? {} : { reasonCode: reasonCode as BrownfieldCheckReason }), ...(exitCode === undefined ? {} : { exitCode }), evidenceRefs, ...(failureCaseIds === undefined ? {} : { failureCaseIds }) };
 }
 
-function validateCodeIdentity(input: unknown, operation: string, field: string): BrownfieldCodeIdentity {
+/** 校验仓库代码身份（repoIdentity/HEAD/工作区摘要）。 */
+export function validateBrownfieldCodeIdentity(input: unknown, operation = 'brownfield.code-identity', field = 'codeIdentity'): BrownfieldCodeIdentity {
   const value = object(input, operation, field);
   exactKeys(value, ['repoIdentity', 'headCommit', 'workingTreeDigest', 'hasUncommittedChanges'], operation, field);
   return {
@@ -430,7 +432,8 @@ function validateEvidenceRefs(input: unknown, operation: string, field: string):
   return stringArray(input, operation, field);
 }
 
-function validateCheckSnapshot(input: unknown, operation: string, field: string): BrownfieldCheckSnapshot {
+/** 校验基线/当前检查快照（定义 + commandDigest + 结果）。 */
+export function validateBrownfieldCheckSnapshot(input: unknown, operation = 'brownfield.check', field = 'check'): BrownfieldCheckSnapshot {
   const value = object(input, operation, field);
   exactKeys(value, ['check', 'commandDigest', 'result'], operation, field);
   const check = validateBrownfieldCheckDefinition(required(value, 'check', operation, field), operation, `${field}.check`);
@@ -447,10 +450,10 @@ export function validateBrownfieldBaselineState(input: unknown): BrownfieldBasel
   const projectId = stableId(required(value, 'projectId', operation, 'state'), operation, 'state.projectId');
   const binding = validateBrownfieldBindingRef(required(value, 'binding', operation, 'state'), operation, 'state.binding');
   if (binding.projectId !== projectId) fail(operation, 'state.binding.projectId', '必须与 state.projectId 相同');
-  const codeIdentity = validateCodeIdentity(required(value, 'codeIdentity', operation, 'state'), operation, 'state.codeIdentity');
+  const codeIdentity = validateBrownfieldCodeIdentity(required(value, 'codeIdentity', operation, 'state'), operation, 'state.codeIdentity');
   if (codeIdentity.repoIdentity !== binding.repoIdentity) fail(operation, 'state.codeIdentity.repoIdentity', '必须与绑定 repoIdentity 相同');
   if (!Array.isArray(value.checks) || value.checks.length > MAX_CHECKS) fail(operation, 'state.checks', `必须是最多 ${MAX_CHECKS} 项的数组`);
-  const checks = value.checks.map((entry, index) => validateCheckSnapshot(entry, operation, `state.checks[${index}]`));
+  const checks = value.checks.map((entry, index) => validateBrownfieldCheckSnapshot(entry, operation, `state.checks[${index}]`));
   const seen = new Set<string>();
   for (const [index, entry] of checks.entries()) {
     if (seen.has(entry.check.checkKey)) fail(operation, `state.checks[${index}].check.checkKey`, '同一基线不得重复');
@@ -479,7 +482,11 @@ function comparable(snapshot: BrownfieldCheckSnapshot): BrownfieldComparableResu
   return { ...snapshot.result, commandDigest: snapshot.commandDigest };
 }
 
-function failureComparison(oldResult: BrownfieldComparableResult | null, currentResult: BrownfieldComparableResult | null): BrownfieldFailureComparison {
+/**
+ * 比较两次失败结果是否同一失败：command/cwd/environment 摘要不同即不可比；
+ * failureCaseIds 缺失为 indeterminate。P08-3 证据封套复用同一比较语义。
+ */
+export function compareBrownfieldFailureResults(oldResult: BrownfieldComparableResult | null, currentResult: BrownfieldComparableResult | null): BrownfieldFailureComparison {
   if (oldResult === null || currentResult === null || oldResult.status !== 'failed' || currentResult.status !== 'failed') return 'not_applicable';
   if (oldResult.commandDigest !== currentResult.commandDigest) return 'different_command';
   const oldCases = oldResult.failureCaseIds;
@@ -516,7 +523,7 @@ export function compareBrownfieldBaseline(input: unknown): BrownfieldComparisonR
     const currentEntry = currentByKey.get(checkKey);
     const oldResult = oldEntry === undefined ? null : comparable(oldEntry);
     const currentResult = currentEntry === undefined ? null : comparable(currentEntry);
-    return { checkKey, old: oldResult, current: currentResult, failureComparison: failureComparison(oldResult, currentResult) };
+    return { checkKey, old: oldResult, current: currentResult, failureComparison: compareBrownfieldFailureResults(oldResult, currentResult) };
   });
   return {
     schemaVersion: BROWNFIELD_CONTRACT_SCHEMA_VERSION,
