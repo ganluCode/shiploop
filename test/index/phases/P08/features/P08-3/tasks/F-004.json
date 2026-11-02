@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p08-3-f004-lifecycle-contract.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p08-3-f004-existing-demo-lifecycle.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/onboarding/p06-5-f004-repository-move.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/p06-5-f009-repository-move-host.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/commands/p07-3-f008-project-lifecycle.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/onboarding/baseline-execution.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/onboarding/p06-5-f013-brownfield-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f010-restore-archive.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p08-3-f003-existing-demo-incremental.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}

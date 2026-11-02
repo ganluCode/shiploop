@@ -388,6 +388,11 @@
           "file": "test/modules/acceptance/p08-3-f003-existing-demo-incremental.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p08-3-f004-existing-demo-lifecycle.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }

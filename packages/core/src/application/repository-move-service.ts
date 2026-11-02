@@ -40,6 +40,7 @@ export interface RepositoryMoveConfirmationRequest {
 
 export interface RepositoryMoveConfirmationPlan {
   readonly projectId: string;
+  /** rebind 事务的绑定记录 CAS（repository_bindings.revision），不是项目 revision。 */
   readonly expectedRevision: number;
   readonly expectedBindingRevision: number;
   readonly expectedBindingId: string;
@@ -175,7 +176,11 @@ export function createRepositoryMoveService(deps: RepositoryMoveServiceDeps): Re
       }
       return {
         projectId: project.id,
-        expectedRevision: project.revision,
+        // P08-3 / F-004：rebind 事务的 expectedRevision 是绑定记录自身的 CAS
+        // （repository_bindings.revision）。项目 revision 漂移已由上方
+        // project_changed_after_preview 拒绝；若误传项目 revision，任何一次
+        // 与移动无关的项目元数据编辑都会让新预览的合法确认被误判 revision_mismatch。
+        expectedRevision: binding.revision,
         expectedBindingRevision: binding.bindingRevision,
         expectedBindingId: binding.id,
         canonicalPath: inspection.canonicalPath,

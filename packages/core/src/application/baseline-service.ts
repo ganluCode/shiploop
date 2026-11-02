@@ -15,6 +15,10 @@
  * - 核验三件套：绑定身份（repoIdentity 与持久绑定一致，防同路径换仓）、cwd
  *   realpath 范围（逃逸/缺失拒绝）、环境引用（只解析获准引用，仅变量名，
  *   永不接触环境值/凭据；最小默认环境 = PATH）；
+ * - P08-3 / F-004：项目生命周期门控——非 active（archiving/archived 等）
+ *   项目不得启动新基线；预览与运行准备在事务外结构化拒绝（零副作用），
+ *   baseline.run 提交事务内重核项目状态，准备后归档的竞争窗口以 rejected
+ *   回执固化拒绝，不伪造成功；既有在途基线沿自身路径收尾不受影响；
  * - 授权绑定完整输入摘要：previewDigest = sha256({plan, codeIdentity})，计划
  *   （argv/cwd 引用/环境引用/timeout/required）或代码身份任一实质变化都使旧
  *   授权失效（preview_stale）；用户决定只有 authorize/decline 二值，不存在
@@ -210,6 +214,13 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
     } catch (error) {
       // 未知/不可见统一 forbidden（不泄漏存在性）。
       mapProjectLookupError(error, operation);
+    }
+    // P08-3 / F-004：归档（含 archiving）项目不得启动新基线。预览与运行准备
+    // 在事务外先拒绝（零副作用）；提交事务内另行重核（见 submitBaselineRun）。
+    if (project.status !== 'active') {
+      throw new PublicError('conflict', operation, undefined, {
+        details: { reason: 'project_not_active', entityType: 'project', status: project.status },
+      });
     }
     let binding;
     try {
@@ -499,6 +510,21 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
 
       // 执行前必须重新核验：提交计划与当前代码身份的摘要必须与用户确认的
       // previewDigest 一致（argv/cwd/环境/政策/代码身份任一实质变化 → 失效）。
+      // P08-3 / F-004：项目生命周期在同一事务内重核——准备（事务外）之后、
+      // 提交之前项目进入 archiving/archived 时，运行以 rejected 固化拒绝
+      // （零授权/操作/种子/占用/事件写入），不伪造成功。details 仅使用回执
+      // 白名单键（field/reason/entityType），状态细节由错误操作自身携带。
+      const project = transaction.getProject(prepared.projectId);
+      if (project.status !== 'active') {
+        const receipt = createRejectedReceipt({
+          ...receiptIdentity,
+          error: new PublicError('conflict', operation, undefined, {
+            details: { reason: 'project_not_active', entityType: 'project' },
+          }),
+        });
+        transaction.saveReceipt(receipt);
+        return receipt;
+      }
       const expectedPreviewDigest = computeBaselinePreviewDigest(
         prepared.plan,
         prepared.codeIdentity,
