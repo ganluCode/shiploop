@@ -13,20 +13,17 @@
         {
           "file": "test/modules/onboarding/p06-5-brownfield-contract.test.ts",
           "all": true,
-          "level": "unit",
-          "regression_for": "brownfield.ts 新增导出（检查结果/快照/代码身份/失败比较校验器），本地已随 F-002 定向复验通过"
+          "level": "unit"
         },
         {
           "file": "test/modules/onboarding/p06-5-f006-baseline-identity.test.ts",
           "all": true,
-          "level": "unit",
-          "regression_for": "同上"
+          "level": "unit"
         },
         {
           "file": "test/modules/onboarding/p06-5-f007-baseline-comparison.test.ts",
           "all": true,
-          "level": "unit",
-          "regression_for": "同上"
+          "level": "unit"
         }
       ]
     }
