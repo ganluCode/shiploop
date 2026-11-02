@@ -278,3 +278,12 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   对应 Host/SQLite 的 `p05-1-f014-planning-e2e` 回归标为 integration 并绑定当前分配
   指定的 `index/phases/P07/integration.json`，本 Task 不执行该 Phase 入口。跨层和真实
   模型/live 保持 not_run，操作入口与限制见 [F-002 接线](../docs/p08-2-todo-planning.md)。
+
+- `index/phases/P08/features/P08-2/tasks/F-003.json`：Todo 交付结果局部契约检查器。
+  unit 在真实临时项目（os.tmpdir()+mkdtemp 沙箱）中用真实子进程验证检查器：参考实现
+  九类行为全部通过；空标题/未知 ID/无效命令静默成功、写失败吞掉、读失败折算空列表
+  成功、失败破坏数据、不落盘逐项被抓住；项目测试仅按退出码判定，成功文字不折算
+  通过；目标越界/绝对路径/.. 逃逸/类别缺口 fail-closed；报告不含绝对路径并显式把
+  真实 Host、SQLite 竞争、进程停止与 Git 集成列为阶段集成 outOfScope。检查器本身
+  不运行模型、不接触 Host/SQLite/Git；live 临时项目实际检查与 `accept:p08:live`
+  保持 not_run，入口与限制见 [F-003 检查器](../docs/p08-2-todo-delivery-check.md)。
