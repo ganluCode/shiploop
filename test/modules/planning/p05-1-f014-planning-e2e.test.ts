@@ -317,10 +317,10 @@ describe('P05-1 / F-014 一次性规划生产 Core/Host/CLI 纵向', () => {
     ];
     const approved = await runCli(rig, approveArgs);
     expect(approved.result.exitCode, approved.stdout + approved.stderr).toBe(0);
-    expect(approved.envelope).toMatchObject({ ok: true, command: 'planning.approve' });
+    expect(approved.envelope).toMatchObject({ ok: true, command: 'planning.approve', result: { decisionActor: rig.owner.principalId } });
     const approvedAgain = await runCli(rig, approveArgs);
     expect(approvedAgain.result.exitCode).toBe(0);
-    expect(approvedAgain.envelope.result).toMatchObject({ replayed: true });
+    expect(approvedAgain.envelope.result).toMatchObject({ replayed: true, decisionActor: rig.owner.principalId });
 
     expect(rig.session.database.prepare<[string], { status: string }>('SELECT status FROM planning_contexts WHERE candidate_id = ?').get(candidateId)).toEqual({ status: 'applied' });
     expect(rig.session.database.prepare<[string], { plan_status: string }>('SELECT plan_status FROM features WHERE id = ?').get(seed.featureId)).toEqual({ plan_status: 'approved' });

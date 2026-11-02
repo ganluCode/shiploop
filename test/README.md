@@ -270,3 +270,11 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   Task 的 DAG 判定（validateTodoTaskPlan，含环/重名/悬空/链长负例）、六类证据制品
   身份链，以及契约漂移（版本/类别删减/绝对路径/凭据字段/政策弱化）fail-closed 拒绝。
   真实规划、Todo 实现与 live 验收由后续 Task 交付，当前 not_run。
+
+- `index/phases/P08/features/P08-2/tasks/F-002.json`：Todo 规划/人工批准/预算与单 Feature
+  启动的真实 CLI 接线。unit 覆盖固定输入/路由/预算、候选 DAG 与引用范围、显式批准和
+  启动门禁、快照/预览漂移、失败原因、回执丢失后的原命令重放，以及本地不可变输入、
+  原子记录与保守锁恢复；脚本化传输不构成真实模型通过证明。批准主体来自可信回执，
+  对应 Host/SQLite 的 `p05-1-f014-planning-e2e` 回归标为 integration 并绑定当前分配
+  指定的 `index/phases/P07/integration.json`，本 Task 不执行该 Phase 入口。跨层和真实
+  模型/live 保持 not_run，操作入口与限制见 [F-002 接线](../docs/p08-2-todo-planning.md)。

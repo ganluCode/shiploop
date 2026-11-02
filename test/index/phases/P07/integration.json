@@ -5,6 +5,11 @@
       "id": "shiploop",
       "tests": [
         {
+          "file": "test/modules/planning/p05-1-f014-planning-e2e.test.ts",
+          "cases": ["planning-e2e-single-run-candidate-apply"],
+          "level": "integration"
+        },
+        {
           "file": "test/modules/acceptance/acceptance-process-cleanup.test.ts",
           "all": true,
           "level": "integration"

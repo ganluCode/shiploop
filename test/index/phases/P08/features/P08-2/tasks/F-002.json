@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p08-2-f002-todo-planning.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p08-2-f002-todo-planning-journal.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p08-2-f001-todo-requirements.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/planning/p05-1-f013-planning-cli.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/planning/p05-1-f014-planning-e2e.test.ts",
+          "cases": ["planning-e2e-single-run-candidate-apply"],
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}

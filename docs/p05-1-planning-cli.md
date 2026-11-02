@@ -35,7 +35,9 @@ shiploop planning approve <candidateId> --project <projectId> --digest <sha256> 
 shiploop planning reject <candidateId> --project <projectId> --digest <sha256> --revision <int> --reason <text> [--command-id <uuid>] [--json]
 ```
 
-批准和拒绝都必须显式提供候选身份、`candidateDigest` 和 Feature `revision`。批准只原子应用候选业务计划，不自动开始编码；拒绝保存原因并结束当前规划，不自动重新规划。旧摘要、旧 revision、跨项目或不可见候选由 Core 拒绝。
+批准和拒绝都必须显式提供候选身份、`candidateDigest` 和 Feature `revision`。批准只原子应用候选业务计划，不自动开始编码；拒绝保存原因并结束当前规划，不自动重新规划。
+JSON 决策输出的 `decisionActor` 来自 Host 回执的认证主体 `principalId`，客户端不能传入
+该身份；重复命令读取原回执时保留原决定人。旧摘要、旧 revision、跨项目或不可见候选由 Core 拒绝。
 
 重复提交使用同一个 `--command-id` 时复用原命令回执。响应丢失会先查询该命令的回执，再在有限范围内使用同一信封重试；不会隐式取消、批准或开始新的规划。
 

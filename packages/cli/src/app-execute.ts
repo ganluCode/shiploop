@@ -949,7 +949,7 @@ async function executePlanningCommand(
         io,
         command,
         receipt,
-        (commandId, replayed, result) => buildPlanningDecisionView(commandId, replayed, decision, result),
+        (commandId, replayed, result) => buildPlanningDecisionView(commandId, replayed, decision, result, receipt.principalId),
         formatPlanningDecisionView,
       );
     }

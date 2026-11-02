@@ -200,12 +200,14 @@ export interface PlanningDecisionCliView {
   readonly commandId: string;
   readonly replayed: boolean;
   readonly decision: 'approve' | 'reject';
+  /** Authenticated receipt principal; never accepted from CLI input. */
+  readonly decisionActor: string | null;
   readonly result: Record<string, unknown>;
   readonly execution: ExecutionBoundaryView;
 }
 
-export function buildPlanningDecisionView(commandId: string, replayed: boolean, decision: 'approve' | 'reject', result: unknown): PlanningDecisionCliView {
-  return { commandId, replayed, decision, result: { ...(isObject(result) ? result : {}) }, execution: EXECUTION_BOUNDARY_VIEW };
+export function buildPlanningDecisionView(commandId: string, replayed: boolean, decision: 'approve' | 'reject', result: unknown, decisionActor: string | null = null): PlanningDecisionCliView {
+  return { commandId, replayed, decision, decisionActor, result: { ...(isObject(result) ? result : {}) }, execution: EXECUTION_BOUNDARY_VIEW };
 }
 
 export function formatPlanningStartView(view: PlanningStartCliView): string {

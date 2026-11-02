@@ -12,6 +12,8 @@
     "test/modules/acceptance/p02-4-report-aggregation.test.ts",
     "test/modules/acceptance/p03-10-checklist-config.test.ts",
     "test/modules/acceptance/p08-2-f001-todo-requirements.test.ts",
+    "test/modules/acceptance/p08-2-f002-todo-planning.test.ts",
+    "test/modules/acceptance/p08-2-f002-todo-planning-journal.test.ts",
     "test/modules/authorization/p04-2-authentication-preflight.test.ts",
     "test/modules/cli/app-cli-args.test.ts",
     "test/modules/cli/control/p03-9-f015-cli-control.test.ts",
