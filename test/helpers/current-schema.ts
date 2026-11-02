@@ -16,5 +16,6 @@
 // P07-3 / repair：恢复验证进程不可变删除错误语义（v60）。
 // P07-4 / F-007：notification delivery 的 owner/lease fencing（v62）；
 // P07-4 / integration repair：v63 重建 delivery 表以落实新增认领约束。
-export const currentSchemaVersion = 63;
+// P07 closeout：v64 持久 Feature 自动收尾 ledger。
+export const currentSchemaVersion = 64;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

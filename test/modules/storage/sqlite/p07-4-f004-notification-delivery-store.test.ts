@@ -46,6 +46,7 @@ import { createMaintenanceWriteGate } from '../../../../packages/core/src/ports/
 import { RETENTION_CLEANUP_OBJECT_KINDS } from '../../../../packages/core/src/ports/evidence-retention.ts';
 import { isStorageError } from '../../../../packages/core/src/ports/errors.ts';
 import { createTempSandbox } from '../../../helpers/temp-sandbox.ts';
+import { currentSchemaVersion } from '../../../helpers/current-schema.ts';
 
 const NOW_MS = 1_700_600_000_000;
 const VALID_EVENT_A = randomUUID();
@@ -474,7 +475,7 @@ describe('P07-4 / F-004 notification schema migration v61', () => {
         setup.close();
       }
       // v60 库没有通知表。
-      expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(63);
+      expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(currentSchemaVersion);
 
       const session = openSqliteStorageSession({ path: dbPath });
       try {
@@ -490,7 +491,7 @@ describe('P07-4 / F-004 notification schema migration v61', () => {
           expect(session.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toMatchObject({ n: 0 });
         }
         const rows = session.database.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as Array<{ version: number; checksum: string }>;
-        expect(rows).toHaveLength(63);
+        expect(rows).toHaveLength(currentSchemaVersion);
         for (const row of rows.filter(item => item.version <= 60)) {
           expect(row.checksum).toBe(SQLITE_MIGRATIONS[row.version - 1]?.checksum);
         }
