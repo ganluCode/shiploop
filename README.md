@@ -109,6 +109,8 @@ docs/p08-2-todo-install-smoke.md  P08-2 干净安装目录启动打包 CLI 安�
 docs/p08-2-existing-demo.md  P08-2 非 Nezha 存量仓库增量变更契约（F-008：脏文件/已有测试/已知失败基线、初始化保护、批准范围、增量提交证据；真实跨层集成 not_run）
 docs/p08-2-live-acceptance-entry.md  P08-2 `accept:p08:live` 正式入口（F-009：固定五阶段顺序、退出码/报告、人工 pending 与 Phase not_run 缺口）
 docs/p08-2-todo-requirements.md  P08-2 Todo 演示需求输入与验收契约（F-001：九类行为冻结、临时项目/凭据/清理边界、真实 Pi 与 FakeRuntime 分界、≥3 依赖 Task 规划政策与六类证据身份链）
+docs/acceptance/p08-3-existing-demo-runbook.md  P08-3 非 Nezha 存量演示运行手册（F-005：准备快照/需求范围/获准策略/检查范围/清理责任、代码交付到 Phase 集成与 live 的分层边界、失败处置、归档重开、已核验入口）
+docs/acceptance/p08-3-demo-report-template.md  P08-3 存量演示结果报告模板（F-005：commit/tree、工具版本、命令与退出码、身份与证据、计数、遗留问题、live 授权与禁记凭据）
 ```
 
 ### 确定性测试约定（F-003）
