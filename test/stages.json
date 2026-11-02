@@ -84,6 +84,7 @@
     "test/modules/workspace/p03-5-workspace-cleanup.test.ts"
   ],
   "standard": [
+    "test/modules/acceptance/p08-2-f008-existing-demo.test.ts",
     "test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts",
     "test/modules/acceptance/p01-4-acceptance-controller.test.ts",
     "test/modules/acceptance/p01-4-artifact-negative.test.ts",

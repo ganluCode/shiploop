@@ -319,3 +319,10 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   清单与实例/数据根隔离入报告。真实 registry 安装、原生模块矩阵、Git/SQLite 业务流、
   跨进程组合与 live 交付保持 not_run，入口与限制见
   [F-007 安装冒烟](../docs/p08-2-todo-install-smoke.md)。
+
+- `index/phases/P08/features/P08-2/tasks/F-008.json`：非 Nezha 存量仓库增量变更局部契约。
+  使用真实临时 Git 仓库固定脏跟踪文件、暂存文件、未跟踪文件、已有测试和明确已知失败；
+  初始化核对项目归属、路径授权、HEAD/脏状态保护和禁止自动提交。增量报告分别登记代码、
+  新测试、验证退出码、commit/tree 与未解决基线缺口；已知失败不会被新需求通过自动豁免。
+  测试属于 integration，真实 project init、SQLite、Host、进程、Pi、归档恢复和 Phase 报告
+  保持 not_run，入口与限制见 [F-008 存量演示](../docs/p08-2-existing-demo.md)。
