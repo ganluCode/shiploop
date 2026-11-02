@@ -102,6 +102,7 @@ docs/acceptance/p08-1-release-manifest.md  P08-1 发布清单模板（F-007：Gi
 docs/acceptance/p08-1-delivery-report.md  P08-1 交付报告（F-007：代码提交、局部检查、Feature/Phase not_run 与发布身份缺口；供 P08-4 读取，不代签）
 docs/p08-2-todo-planning.md  P08-2 Todo 规划/人工批准/有限预算与单 Feature 启动接线（F-002：稳定命令 ID、本地记录与恢复、真实 CLI；live not_run）
 docs/p08-2-todo-delivery-check.md  P08-2 Todo 交付局部契约检查器（F-003：九类行为/失败保全/测试产物按退出码判定，真实子进程端口；集成与 live not_run）
+docs/p08-2-todo-live.md  P08-2 Todo 正常 live 交付编排（F-004：真实 Pi、Task 依赖门禁、局部检查和本地提交证据；阶段组合场景后置）
 docs/p08-2-todo-requirements.md  P08-2 Todo 演示需求输入与验收契约（F-001：九类行为冻结、临时项目/凭据/清理边界、真实 Pi 与 FakeRuntime 分界、≥3 依赖 Task 规划政策与六类证据身份链）
 ```
 

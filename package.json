@@ -33,6 +33,7 @@
     "accept:p05": "node scripts/acceptance/p05-accept.ts",
     "accept:p06": "node scripts/acceptance/p06-accept.ts",
     "accept:p07": "node scripts/acceptance/p07-accept.ts",
+    "accept:p08:live": "node scripts/acceptance/p08-todo-live.ts",
     "accept:p04:live": "node scripts/acceptance/p04-live.ts",
     "accept:p03:clean-replay": "node scripts/acceptance/p03-clean-replay.ts"
   },

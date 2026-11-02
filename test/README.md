@@ -287,3 +287,8 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   真实 Host、SQLite 竞争、进程停止与 Git 集成列为阶段集成 outOfScope。检查器本身
   不运行模型、不接触 Host/SQLite/Git；live 临时项目实际检查与 `accept:p08:live`
   保持 not_run，入口与限制见 [F-003 检查器](../docs/p08-2-todo-delivery-check.md)。
+
+- `index/phases/P08/features/P08-2/tasks/F-004.json`：Todo 正常 live 交付编排。
+  unit 覆盖真实 Pi 模式门禁、依赖 Task 串行解锁、局部验证失败传播、commit/tree 身份
+  与证据保存失败；Runtime completed 不替代验证或本地提交。真实授权、真实 Pi、临时仓库
+  和跨层 Host/SQLite/进程组合仍由 live/Phase 集成独立执行。
