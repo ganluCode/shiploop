@@ -63,6 +63,12 @@ docs/p02-3-operations.md  P02-3 项目接入、基线授权与故障处理操作
 docs/p02-3-handoff.md  P02-3 → p02-acceptance 接口交接（F-019）
 docs/skills/project-init.md  F-017 最小操作 Skill：project init（只经 dist CLI；先只读预览，注册与基线授权分别请求用户确认）
 docs/skills/project-overview.md  F-017 最小操作 Skill：project overview（注册/配置/健康分列；不从日志或模型结论推断 passed）
+docs/skills/host-lifecycle.md  P08-1/F-006 操作 Skill：安装自检、本地 pack 与 Host 生命周期（停止只经显式 host stop；永不 npm publish）
+docs/skills/planning-approval.md  P08-1/F-006 操作 Skill：规划与候选审批（预览与显式批准分离；accepted 不等于完成；批准不启动编码）
+docs/skills/execution-observe.md  P08-1/F-006 操作 Skill：执行预览/显式启动与只读观察（缺 --confirm 本地拒绝；观察中断不取消执行）
+docs/skills/stop-control.md  P08-1/F-006 操作 Skill：显式取消、暂停/继续与 Host 停止（停止必须显式发起；stop_unconfirmed 不伪装成功）
+docs/skills/backup-restore.md  P08-1/F-006 操作 Skill：受管备份与隔离恢复（核验在前、确认文档审阅在前；fail-closed 不发布坏包）
+docs/skills/troubleshooting.md  P08-1/F-006 操作 Skill：失败诊断速查（回执 completed 才是成功；后置能力不冒充可用）
 docs/p02-4-acceptance-contract.md  P02-4 阶段验收契约与检查清单（F-001：冻结检查 ID/证据字段/接口映射）
 docs/p02-4-operations.md  P02-4 P02 操作指南与验收复跑说明（F-013：双 CLI 闭环、accept:p02 复跑、诊断与边界）
 docs/acceptance/p02-4-review-checklist.md  P02-4 人工审阅清单（F-013：FR-1/FR-2 逐项核对；人工未审阅=未完成，不自动签字）

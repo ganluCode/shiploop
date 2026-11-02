@@ -100,8 +100,10 @@ describe('F-008 决策/策略/固定输入命令面', () => {
       expect([...APP_CLI_COMMAND_IDS]).toContain(id);
     }
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
+    // 命令面组清单与 test/modules/cli/app-cli-args.test.ts 的权威正则保持一致
+    // （P07 起 backup/restore/retention/notifications 为正式命令组，非 P03 精确清单冻结）。
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events|knowledge|baseline|phase|feature|task|planning|execution|workspace|git|integration)\.[a-z-]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|knowledge|baseline|phase|feature|task|planning|execution|workspace|git|integration|backup|restore|retention|notifications)\.[a-z-]+$/);
     }
   });
 
