@@ -378,6 +378,11 @@
           "file": "test/modules/acceptance/p08-2-f008-existing-demo.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p08-3-f001-existing-demo-fixture.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }
