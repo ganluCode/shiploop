@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "phase": "P08",
+  "stepOrder": [
+    "p08-prerequisites",
+    "p08-source-identity",
+    "p08-deterministic-scope",
+    "p08-installation",
+    "p08-live-import",
+    "p08-report",
+    "p08-manual-gate"
+  ],
+  "trustedIndexRoot": "test/index/phases/P08/features",
+  "requiredFeatures": [
+    "P08-1",
+    "P08-2",
+    "P08-3"
+  ],
+  "prerequisites": {
+    "features": [
+      "P08-1",
+      "P08-2",
+      "P08-3"
+    ],
+    "missingBehavior": "blocked-not-run",
+    "placeholderAllowed": false,
+    "commitAncestryRequired": true,
+    "staleReportBehavior": "not_run",
+    "deliveryInputs": {
+      "P08-1": {
+        "reports": [
+          "docs/acceptance/p08-1-delivery-report.md"
+        ],
+        "machineReadable": [
+          "acceptance/p08-1.release-manifest.json"
+        ],
+        "liveEvidenceKind": null,
+        "producer": "P08-1 本地交付：pack-local、制品检查、发布 CI 配置、用户指南与操作 Skills"
+      },
+      "P08-2": {
+        "reports": [
+          "docs/p08-2-live-acceptance-entry.md"
+        ],
+        "machineReadable": [],
+        "liveEvidenceKind": "shiploop.todo.live-evidence",
+        "producer": "npm run accept:p08:live（scripts/acceptance/p08-todo-live-entry.ts）"
+      },
+      "P08-3": {
+        "reports": [
+          "docs/acceptance/p08-3-demo-report-template.md",
+          "docs/acceptance/p08-3-existing-demo-runbook.md"
+        ],
+        "machineReadable": [],
+        "liveEvidenceKind": "shiploop.brownfield.evidence-envelope",
+        "producer": "存量演示按运行手册执行并填写结果报告（packages/core/src/ports/brownfield-evidence.ts 封套）"
+      }
+    }
+  },
+  "defaultExecution": {
+    "mode": "phase",
+    "network": "denied",
+    "llmCalls": false,
+    "fullRegression": false,
+    "verifyChecksOnly": true,
+    "liveEvidence": "import-only"
+  },
+  "modes": {
+    "default": {
+      "name": "phase",
+      "phaseTrustedTests": true,
+      "priorPhaseDeterministicSuites": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "installationChecks": true,
+      "liveEvidence": "import-only",
+      "fullRepositoryTests": false,
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed",
+        "installation-checks-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed",
+        "full-history-regression-passed",
+        "live-executed-by-default-entry"
+      ]
+    },
+    "full": {
+      "name": "full",
+      "phaseTrustedTests": true,
+      "priorPhaseDeterministicSuites": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "installationChecks": true,
+      "liveEvidence": "import-only",
+      "fullRepositoryTests": true,
+      "fullRegressionCommand": [
+        "npm",
+        "test"
+      ],
+      "optIn": "--full-regression",
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed",
+        "installation-checks-passed",
+        "full-history-regression-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed",
+        "live-executed-by-default-entry"
+      ]
+    }
+  },
+  "verify": {
+    "noArgCommand": [
+      "npm",
+      "run",
+      "verify"
+    ],
+    "noArgSteps": [
+      "typecheck",
+      "test",
+      "build"
+    ],
+    "modifiedByPhaseEntry": false,
+    "noArgRunClaimableByPhaseReport": false,
+    "reason": "无参数 npm run verify 仍执行全仓测试+类型+构建；P08 入口不修改该语义，也不得在报告中声称其已通过"
+  },
+  "explicitOptions": {
+    "fullRegression": "--full-regression",
+    "manualRecord": "--manual-record"
+  },
+  "separateLiveEntry": {
+    "command": "npm run accept:p08:live",
+    "realModel": true,
+    "ownerApprovalRequired": true,
+    "invokedByDefaultEntry": false
+  },
+  "evidence": {
+    "requiredFields": [
+      "scenarioId",
+      "inputDigest",
+      "testedCommit",
+      "command",
+      "exitCode",
+      "status",
+      "evidenceRefs",
+      "usageSource",
+      "cleanup"
+    ],
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "notRunCountsAsPassed": false
+  },
+  "runIdentity": {
+    "requiredFields": [
+      "runId",
+      "testedCommit",
+      "inputsDigest",
+      "toolchain"
+    ],
+    "reportAndEvidenceBindSameIdentity": true,
+    "runDirectoryPolicy": "create-once",
+    "existingRunDirectoryBehavior": "fail-preserve-previous"
+  },
+  "nezhaBoundary": {
+    "role": "development-orchestration-tool-only",
+    "productRuntimeDependency": false,
+    "harnessStateAsPassEvidence": false,
+    "testCountsAsPassEvidence": false,
+    "successLogTextAsPassEvidence": false,
+    "autoNpmPublish": false,
+    "autoPush": false,
+    "autoPhaseStatusChange": false,
+    "releaseRequiresOwnerApproval": true
+  },
+  "toolchain": {
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "platform": "darwin",
+    "defaultConcurrency": 2
+  },
+  "budget": {
+    "stepMs": 900000,
+    "overallMs": 7200000,
+    "bounded": true
+  }
+}

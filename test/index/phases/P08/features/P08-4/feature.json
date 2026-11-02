@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P08",
+  "feature": "P08-4",
+  "scope": "P08-4 total acceptance task indexes; not full/Phase/live acceptance",
+  "tasks": [
+    {
+      "task_id": "F-001",
+      "index": "test/index/phases/P08/features/P08-4/tasks/F-001.json"
+    }
+  ]
+}

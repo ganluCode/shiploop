@@ -1,0 +1,262 @@
+{
+  "configVersion": 1,
+  "checklist": "acceptance/p08.checklist.json",
+  "reportRoot": "artifacts/acceptance/p08",
+  "requiredChecks": [
+    "P08-FR1-PHASE-CLOSURE-RERUN",
+    "P08-FR2-NEGATIVE-EVIDENCE",
+    "P08-FR3-PERIOD-EVIDENCE-AGGREGATE",
+    "P08-PREREQ-DELIVERY-REPORTS",
+    "P08-INSTALL-CLEAN-DIRECTORY",
+    "P08-TODO-NEW-PROJECT-CLOSURE",
+    "P08-EXISTING-INCREMENTAL-CLOSURE",
+    "P08-DETERMINISTIC-PHASE-REGRESSION",
+    "P08-LIVE-TODO-EVIDENCE",
+    "P08-LIVE-EXISTING-EVIDENCE",
+    "P08-TASK-LOCAL-VERIFICATION",
+    "P08-FEATURE-GATE-UNION",
+    "P08-RUN-IDENTITY-INTEGRITY",
+    "P08-HARNESS-BOUNDARY",
+    "P08-MANUAL-OWNER-GATE"
+  ],
+  "toolchain": {
+    "packageManager": "npm@10.9.3",
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "lockfile": "package-lock.json",
+    "platform": "darwin",
+    "platformLabel": "macOS",
+    "defaultConcurrency": 2
+  },
+  "timeouts": {
+    "stepMs": 900000,
+    "overallMs": 7200000
+  },
+  "maxCommandOutputBytes": 262144,
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "tempResources": {
+    "git": "temp",
+    "sqlite": "temp",
+    "dataRoot": "temp",
+    "home": "temp",
+    "processes": "owned-only",
+    "reusePrevious": false
+  },
+  "executionPolicy": {
+    "offline": {
+      "runtime": "fake-or-scripted",
+      "network": "denied",
+      "llmCalls": false
+    },
+    "live": {
+      "realModelRequiresOwnerAuthorization": true,
+      "separateEntry": "npm run accept:p08:live",
+      "defaultEntryLlmCalls": false,
+      "fakeOrDeterministicNotAdmissible": true
+    },
+    "manual": {
+      "ownerConfirmationRequired": true,
+      "machineMaySign": false
+    },
+    "notRun": {
+      "countsAsPassed": false
+    }
+  },
+  "livePolicy": {
+    "requiredGate": true,
+    "separateKinds": [
+      "todo-live",
+      "existing-live"
+    ],
+    "crossSubstitutionAllowed": false,
+    "missingBehavior": "not_run",
+    "ownerUnconfirmedBehavior": "not_run",
+    "realModelRequiresOwnerAuthorization": true,
+    "defaultEntryCallsRealModel": false,
+    "note": "两类真实项目 live 证据分别核对；真实模型缺失、负责人未确认或跨层检查未运行均保持 not_run，不折算通过"
+  },
+  "runIdentity": {
+    "requiredFields": [
+      "runId",
+      "testedCommit",
+      "inputsDigest",
+      "toolchain"
+    ],
+    "reportAndEvidenceBindSameIdentity": true,
+    "runDirectoryPolicy": "create-once",
+    "existingRunDirectoryBehavior": "fail-preserve-previous"
+  },
+  "prerequisites": {
+    "features": [
+      "P08-1",
+      "P08-2",
+      "P08-3"
+    ],
+    "missingBehavior": "blocked-not-run",
+    "placeholderAllowed": false,
+    "commitAncestryRequired": true,
+    "staleReportBehavior": "not_run",
+    "deliveryInputs": {
+      "P08-1": {
+        "reports": [
+          "docs/acceptance/p08-1-delivery-report.md"
+        ],
+        "machineReadable": [
+          "acceptance/p08-1.release-manifest.json"
+        ],
+        "liveEvidenceKind": null,
+        "producer": "P08-1 本地交付：pack-local、制品检查、发布 CI 配置、用户指南与操作 Skills"
+      },
+      "P08-2": {
+        "reports": [
+          "docs/p08-2-live-acceptance-entry.md"
+        ],
+        "machineReadable": [],
+        "liveEvidenceKind": "shiploop.todo.live-evidence",
+        "producer": "npm run accept:p08:live（scripts/acceptance/p08-todo-live-entry.ts）"
+      },
+      "P08-3": {
+        "reports": [
+          "docs/acceptance/p08-3-demo-report-template.md",
+          "docs/acceptance/p08-3-existing-demo-runbook.md"
+        ],
+        "machineReadable": [],
+        "liveEvidenceKind": "shiploop.brownfield.evidence-envelope",
+        "producer": "存量演示按运行手册执行并填写结果报告（packages/core/src/ports/brownfield-evidence.ts 封套）"
+      }
+    }
+  },
+  "reportScope": {
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "includeEvidenceHash": true,
+    "includeManualChecklist": true,
+    "notRunCountsAsPassed": false,
+    "deferredCountsAsPassed": false
+  },
+  "engineeringChecks": {
+    "typecheck": "npm run typecheck",
+    "boundaries": "npm run check:boundaries",
+    "build": "npm run build",
+    "checksOnlyEntry": "node scripts/verify.ts --checks-only",
+    "note": "typecheck/build 复用 verify --checks-only；模块边界检查使用 check:boundaries"
+  },
+  "verifySemantics": {
+    "noArgCommand": [
+      "npm",
+      "run",
+      "verify"
+    ],
+    "noArgSteps": [
+      "typecheck",
+      "test",
+      "build"
+    ],
+    "modifiedByPhaseEntry": false,
+    "noArgRunClaimableByPhaseReport": false,
+    "reason": "无参数 npm run verify 仍执行全仓测试+类型+构建；P08 入口不修改该语义，也不得在报告中声称其已通过"
+  },
+  "modes": {
+    "default": {
+      "name": "phase",
+      "phaseTrustedTests": true,
+      "priorPhaseDeterministicSuites": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "installationChecks": true,
+      "liveEvidence": "import-only",
+      "fullRepositoryTests": false,
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed",
+        "installation-checks-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed",
+        "full-history-regression-passed",
+        "live-executed-by-default-entry"
+      ]
+    },
+    "full": {
+      "name": "full",
+      "phaseTrustedTests": true,
+      "priorPhaseDeterministicSuites": true,
+      "affectedRegressions": true,
+      "engineeringChecks": {
+        "typecheck": "npm run typecheck",
+        "boundaries": "npm run check:boundaries",
+        "build": "npm run build"
+      },
+      "installationChecks": true,
+      "liveEvidence": "import-only",
+      "fullRepositoryTests": true,
+      "fullRegressionCommand": [
+        "npm",
+        "test"
+      ],
+      "optIn": "--full-regression",
+      "mayClaim": [
+        "phase-scope-passed",
+        "engineering-checks-passed",
+        "installation-checks-passed",
+        "full-history-regression-passed"
+      ],
+      "mustNotClaim": [
+        "no-arg-verify-passed",
+        "live-executed-by-default-entry"
+      ]
+    }
+  },
+  "fullRegression": {
+    "defaultEnabled": false,
+    "optInFlag": "--full-regression",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "reason": "全仓历史回归必须由负责人显式启用；默认 P08 总验收只运行适用阶段确定性范围、安装检查与证据导入核对"
+  },
+  "nezhaBoundary": {
+    "role": "development-orchestration-tool-only",
+    "productRuntimeDependency": false,
+    "harnessStateAsPassEvidence": false,
+    "testCountsAsPassEvidence": false,
+    "successLogTextAsPassEvidence": false,
+    "autoNpmPublish": false,
+    "autoPush": false,
+    "autoPhaseStatusChange": false,
+    "releaseRequiresOwnerApproval": true
+  },
+  "publicationPolicy": {
+    "autoPublish": false,
+    "autoPush": false,
+    "modifiesPhaseStatus": false,
+    "npmPublishRequires": "owner-approved-after-acceptance"
+  },
+  "usageSources": [
+    "runtime-usage",
+    "command-output",
+    "manual-record",
+    "not_run"
+  ],
+  "plan": {
+    "phaseId": "2026-11-02-14-56-22_p08-4-p08",
+    "stepId": "p08-acceptance",
+    "title": "P08 一期总验收与交付报告",
+    "scope": "FR-1 阶段闭环复跑、FR-2 负例与证据、FR-3 一期证据汇总；覆盖前序交付、安装产物、Todo 新项目、存量项目、确定性回归、两类 live 与负责人门禁",
+    "version": "0.2",
+    "contractDoc": "docs/p08-acceptance.md"
+  }
+}
