@@ -83,3 +83,26 @@ Harness 状态、测试数量或成功日志文字当作产品通过依据；通
   原报告、产品 SQLite 或 Feature/Phase 元数据；
 - 真实前序报告与 Live 运行是否存在由 Phase 入口核对；本模块不执行 Git/
   SQLite/Host/模型命令，祖先关系由入口经受控 probe 注入。
+
+## 7. 安装产物检查（F-005）
+
+`scripts/acceptance/p08-install-check.ts` 为阶段入口的 `p08-installation` 步骤
+提供干净安装与本地 pack 产物检查（fail-closed）：
+
+- 在独立临时 staging 中读取 P08-1 交付的本地 tarball（复制后只按 staging 字节
+  判定），逐包核对包名、版本、tarball/包内文件 sha256、bin/exports/main/types
+  入口（bin 必须带可执行位与 shebang）、Node/npm 引擎与平台范围、依赖闭包
+  （禁止 workspace/file/link/绝对路径 spec，内部依赖必须在制品集合内解析）与
+  release/distribution manifest 的协议和 Schema 范围；未知/更高版本策略必须是
+  reject；
+- fail-closed 命中：缺少必需产物、摘要不符、未构建入口、本地路径依赖、闭包
+  缺口、协议或 Schema 越界、Nezha 运行时依赖或模块引用、Harness 路径引用、
+  个人绝对路径、疑似凭据、产物目录位于 node_modules 内（开发目录捷径）；
+- 报告记录安装前置、实际工具版本（注入 probe 或实际进程探测）、制品清单、
+  逐项检查结果、inputsDigest 与 staging 清理状态；失败时按调用方目录保留脱敏、
+  create-once 诊断；当前开发目录 node_modules 或源码入口的存在不构成通过依据；
+- 期望范围从仓库 `distribution-compatibility.json` 加载（`loadP08InstallExpectedScope`），
+  结构或策略不满足冻结契约即拒绝，不猜测降级；
+- 真实独立目录 npm 安装、better-sqlite3 原生加载、Host 启动与 CLI 操作登记为
+  phase-integration `not_run` 边界（`P08_INSTALL_CHECK_NOT_RUN`），不折算为通过；
+  本模块不执行 npm publish/install、git push、模型请求、远端写操作或用户仓库清理。

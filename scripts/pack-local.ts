@@ -46,7 +46,7 @@ type PackageManifest = JsonObject & {
   bin?: string | Record<string, string>;
 };
 
-type TarEntry = {
+export type TarEntry = {
   path: string;
   data: Buffer;
   mode: number;
@@ -268,7 +268,8 @@ function parsePaxPath(data: Buffer): string | undefined {
   return undefined;
 }
 
-function parseTarball(buffer: Buffer): TarEntry[] {
+/** 解析本地 pack tarball 的文件条目；P08-4 安装检查等只读消费方复用同一解析实现。 */
+export function parseTarball(buffer: Buffer): TarEntry[] {
   const tar = gunzipSync(buffer);
   const entries: TarEntry[] = [];
   let offset = 0;
