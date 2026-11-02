@@ -247,3 +247,17 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   并携带 commit/工具版本/证据引用的结构化报告与 CLI 退出码；负例含篡改 tarball、
   缺 dist 入口、版本漂移、未知兼容版本和凭据样例。真实安装后跨包运行、原生模块
   加载、打包 Host 启动与已有 Host 兼容矩阵保持 Phase 集成 not_run，不折算为通过。
+
+- `index/phases/P08/features/P08-1/tasks/F-004.json`：最小发布 CI 配置与本地检查器
+  （`.github/workflows/release-ci.yml`、`scripts/verify-ci-config.ts`、
+  `npm run verify:ci-config`，以及 `scripts/ci-summary.ts` 摘要渲染）。
+  覆盖受限 YAML 子集解析（锚点/别名/流式/多行标量拒绝）、触发范围恰为 main 的
+  push/pull_request、显式 contents: read 最小权限、macos-14 runner 与 Node 22.19.0
+  工具链绑定、固定顺序必需步骤（npm ci → verify:ci-config → verify → pack:local →
+  verify:artifacts → ci-summary）且禁止 continue-on-error/if 跳过、run 命令白名单、
+  禁止 npm publish/git push/gh/PR/合并与 ${{ 表达式、secrets/env 凭据注入隔离、
+  Action 引用固定 vX.Y[.Z]/SHA 与白名单、npm 脚本/node 脚本文件接线与制品摘要
+  if-no-files-found: error 上传、缺 package-lock/必需脚本/脚本文件 fail-closed；
+  负例含额外工作流、无法解析 YAML、触发/权限/runner 漂移、乱序、未审命令、第三方
+  Action、凭据注入与 CI 退出码/报告落盘语义。实际 GitHub Actions 运行、CI 环境
+  原生模块加载与独立安装保持 Phase 集成 not_run；CI 不发布、不推送、不建 PR。

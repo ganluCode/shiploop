@@ -19,6 +19,7 @@ artifacts/acceptance/p03/
 artifacts/acceptance/p04/
 artifacts/acceptance/p03-clean-replay/
 artifacts/local-pack/
+artifacts/ci-config/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

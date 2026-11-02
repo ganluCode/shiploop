@@ -100,6 +100,7 @@
     "test/modules/engineering/core-assembly.test.ts",
     "test/modules/engineering/deterministic-test-harness.test.ts",
     "test/modules/engineering/docs-p01-3-operations.test.ts",
+    "test/modules/engineering/p08-1-f004-release-ci.test.ts",
     "test/modules/engineering/test-stages.test.ts",
     "test/modules/execution/budget/p03-3-attempt-budget-reservation.test.ts",
     "test/modules/execution/budget/p03-3-budget-policy-config.test.ts",

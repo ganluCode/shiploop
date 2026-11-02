@@ -1,0 +1,48 @@
+# P08-1 F-004 最小发布 CI：仅确定性检查。
+# 固定顺序：npm ci -> verify:ci-config -> verify -> pack:local -> verify:artifacts -> 摘要与报告上传。
+# 本工作流不执行 npm publish、git push、自动合并、PR 创建、真实模型调用或跨仓操作；
+# 公开发布需要负责人独立批准与身份确认。
+# 配置策略由 scripts/verify-ci-config.ts 与
+# test/modules/engineering/p08-1-f004-release-ci.test.ts 本地核对。
+name: release-ci
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: deterministic-checks
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4.2.2
+      - name: setup-node
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - name: npm-ci
+        run: npm ci
+      - name: verify-ci-config
+        run: npm run verify:ci-config
+      - name: verify
+        run: npm run verify
+      - name: pack-local
+        run: npm run pack:local -- --output artifacts/local-pack
+      - name: verify-artifacts
+        run: npm run verify:artifacts
+      - name: ci-summary
+        run: node scripts/ci-summary.ts
+      - name: upload-ci-reports
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ci-reports
+          path: artifacts/local-pack/artifact-verification.json, artifacts/local-pack/distribution-manifest.json, artifacts/ci-config/ci-config-verification.json
+          if-no-files-found: error
