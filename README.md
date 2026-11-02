@@ -104,6 +104,7 @@ docs/p08-2-todo-planning.md  P08-2 Todo 规划/人工批准/有限预算与单 F
 docs/p08-2-todo-delivery-check.md  P08-2 Todo 交付局部契约检查器（F-003：九类行为/失败保全/测试产物按退出码判定，真实子进程端口；集成与 live not_run）
 docs/p08-2-todo-live.md  P08-2 Todo 正常 live 交付编排（F-004：真实 Pi、Task 依赖门禁、局部检查和本地提交证据；阶段组合场景后置）
 docs/p08-2-todo-live-negatives.md  P08-2 Todo live 确定性负例夹具（F-005：认证、依赖/预算、取消和未确认中断的持久证据与资源边界）
+docs/p08-2-todo-live-report.md  P08-2 Todo live 结构化报告与证据聚合（F-006：需求/运行/代码身份绑定、四态状态语义、凭据与绝对路径脱敏、受控制品完整性复验；入口 not_run 报告）
 docs/p08-2-todo-requirements.md  P08-2 Todo 演示需求输入与验收契约（F-001：九类行为冻结、临时项目/凭据/清理边界、真实 Pi 与 FakeRuntime 分界、≥3 依赖 Task 规划政策与六类证据身份链）
 ```
 

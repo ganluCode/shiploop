@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p08-2-f006-todo-live-report.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/acceptance/p08-2-f004-todo-live.test.ts",
+          "all": true,
+          "level": "unit"
+        }
+      ]
+    }
+  ]
+}

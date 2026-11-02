@@ -12,9 +12,14 @@
 import { createHash } from 'node:crypto';
 import { execFile, execFileSync, type ExecFileOptions } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateTodoTaskPlan } from './p08-todo-requirements.ts';
+import {
+  aggregateTodoLiveNotRunEvidence,
+  todoLiveRequirementsIdentity,
+  type TodoLiveEvidenceReport,
+} from './p08-todo-live-report.ts';
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
@@ -492,15 +497,31 @@ export function createPiTodoLivePorts(options: TodoPiLivePortsOptions): TodoLive
   };
 }
 
+export type TodoLiveNotRunReason = 'explicit_approval_required' | 'live_adapter_configuration_required';
+
+/**
+ * 入口未获授权/未装配真实适配器时的结构化 not_run 证据报告：绑定冻结需求身份
+ * 与人工待确认项，整体保持 not_run。需求契约无法读取时退回紧凑 not_run 输出，
+ * 不伪造结构化报告，也不把缺授权折算为通过。
+ */
+export function todoLiveNotRunEntryReport(reason: TodoLiveNotRunReason): TodoLiveEvidenceReport | { readonly status: 'not_run'; readonly reason: string } {
+  const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  try {
+    return aggregateTodoLiveNotRunEvidence({
+      requirements: todoLiveRequirementsIdentity(repository),
+      reason,
+      manualPending: [{ id: 'owner-live-approval', item: '负责人显式授权真实 Pi live 流程与预算', owner: 'owner' }],
+    });
+  } catch {
+    return { status: 'not_run', reason };
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   // Live execution requires a private approval file and a real Pi adapter. No
   // missing/invalid approval is silently converted into a successful report.
   const approvalPath = process.argv[2];
-  if (!approvalPath) {
-    process.stdout.write(`${JSON.stringify({ status: 'not_run', reason: 'explicit_approval_required' })}\n`);
-    process.exitCode = 2;
-  } else {
-    process.stdout.write(`${JSON.stringify({ status: 'not_run', reason: 'live_adapter_configuration_required' })}\n`);
-    process.exitCode = 2;
-  }
+  const reason: TodoLiveNotRunReason = approvalPath ? 'live_adapter_configuration_required' : 'explicit_approval_required';
+  process.stdout.write(`${JSON.stringify(todoLiveNotRunEntryReport(reason))}\n`);
+  process.exitCode = 2;
 }

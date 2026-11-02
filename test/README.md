@@ -298,3 +298,14 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   取消保留代码/Attempt/预算/证据，以及未确认停止时保持占用且不重启。状态文件、证据文件
   和实际部分 worktree 由 `auditTodoLiveNegative` 交叉核对；不调用模型，不把 fake 结果当作正常
   live 通过。真实 Host/SQLite/Git/进程组合和 Phase/live 入口保持 not_run。
+
+- `index/phases/P08/features/P08-2/tasks/F-006.json`：Todo live 结构化报告与证据聚合。
+  unit 覆盖需求版本/摘要与 Project/Feature/Run/Task/Attempt 身份绑定（含源交付报告 digest
+  交叉核对与篡改拒绝）、四态状态传播（failed/inconclusive/not_run/人工待确认互不折算，
+  声明状态必须等于按内容重推导结果）、敏感边界（凭据键/真实密钥值/绝对路径拒绝，制品仅
+  相对引用加 sha256/字节完整性并可按 artifactRoot 复验）、证据缺失处理（退出码 0 缺制品、
+  缺代码 commit/tree、Task 缺验证/提交证据一律 inconclusive 不产生 passed），以及
+  `accept:p08:live` 未授权入口的结构化 not_run 报告。同时重跑 F-004 交付编排回归
+（本 Task 修改了其入口模块）。跨层报告与真实 Git/SQLite/Host/进程资源一致性由
+  Phase 集成验收负责，入口与限制见
+  [F-006 报告](../docs/p08-2-todo-live-report.md)。
