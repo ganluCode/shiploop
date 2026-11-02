@@ -237,3 +237,13 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   产物摘要/commit/协议/Schema/平台清单绑定，以及 workspace/file/绝对路径、开发目录、
   缺入口、不可执行 bin、疑似凭据和摘要身份不匹配的 fail-closed 负例。真实独立目录
   npm 安装、原生模块加载、Host 启动与三包运行保持 Phase 集成 not_run。
+
+- `index/phases/P08/features/P08-1/tasks/F-003.json`：可审阅的制品完整性与兼容检查器
+  （`scripts/verify-artifacts.ts`，`npm run verify:artifacts`）。
+  覆盖清单头/工具链/commit 漂移、tarball 身份与逐文件摘要、入口/exports/bin 权限、
+  tarball 与工作区版本清单一致性、依赖闭包（悬空 workspace/file 规格、锁外依赖、
+  发行代码未声明开发依赖）、Host 协议范围与数据库 Schema 范围对真实常量/迁移链的
+  绑定（未知/高版本拒绝不降级）、敏感内容脱敏扫描，以及区分 passed/failed/not_run
+  并携带 commit/工具版本/证据引用的结构化报告与 CLI 退出码；负例含篡改 tarball、
+  缺 dist 入口、版本漂移、未知兼容版本和凭据样例。真实安装后跨包运行、原生模块
+  加载、打包 Host 启动与已有 Host 兼容矩阵保持 Phase 集成 not_run，不折算为通过。

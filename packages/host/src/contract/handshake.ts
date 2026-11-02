@@ -107,17 +107,20 @@ export function validateHandshakeRequestShape(input: unknown): HandshakeRequest 
   return { schemaVersion, protocolVersion, hostInstanceId, dataRootIdentity };
 }
 
+/** 与当前 wire schema 并存、仍被接受的旧握手 schema 版本（P06-5 之前的 v5 客户端）。 */
+export const LEGACY_HANDSHAKE_SCHEMA_VERSIONS_ACCEPTED: readonly number[] = Object.freeze([5]);
+
 /** §8 顺序第 4/5 步：schema 未知 → 400；协议不兼容 → 426（details 给支持版本）。 */
 export function ensureHandshakeVersionCompatibility(request: HandshakeRequest): void {
   // v5 is the immediately previous lifecycle schema. It remains accepted for
   // already deployed clients; the response echoes that request version so the
   // client and Host keep the same capability shape during the handshake.
-  if (request.schemaVersion !== CURRENT_SCHEMA_VERSION && request.schemaVersion !== 5) {
+  if (request.schemaVersion !== CURRENT_SCHEMA_VERSION && !(LEGACY_HANDSHAKE_SCHEMA_VERSIONS_ACCEPTED as readonly number[]).includes(request.schemaVersion)) {
     throw new HostProtocolError(
       'unsupported_schema_version',
       'host.handshake',
       '不支持的消息 schema 版本',
-      { details: { supportedSchemaVersions: [CURRENT_SCHEMA_VERSION, 5] } },
+      { details: { supportedSchemaVersions: [CURRENT_SCHEMA_VERSION, ...LEGACY_HANDSHAKE_SCHEMA_VERSIONS_ACCEPTED] } },
     );
   }
   if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly number[]).includes(request.protocolVersion)) {

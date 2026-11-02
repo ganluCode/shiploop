@@ -135,8 +135,26 @@ describe('F-001 契约文档与仓库基线一致', () => {
     const root = readJson('package.json');
     expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     expect(root.packageManager).toBe('npm@10.9.3');
+    // P05～P07 阶段入口、P08-1 pack:local/verify:artifacts 依次加入；清单与根 package.json 保持同步。
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'accept:p02', 'accept:p03', 'accept:p03:clean-replay', 'accept:p04', 'accept:p04:live', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      [
+        'accept:p01',
+        'accept:p02',
+        'accept:p03',
+        'accept:p03:clean-replay',
+        'accept:p04',
+        'accept:p04:live',
+        'accept:p05',
+        'accept:p06',
+        'accept:p07',
+        'build',
+        'check:boundaries',
+        'pack:local',
+        'test',
+        'typecheck',
+        'verify',
+        'verify:artifacts',
+      ].sort(),
     );
     // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
