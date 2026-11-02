@@ -144,6 +144,7 @@ export interface ExecutionLimitsPolicyV2 {
 }
 
 export interface VerificationPolicyV2 {
+  readonly featureChecks?: readonly string[];
   /** 完成前是否必须通过检查（布尔；不含执行编排语义）。 */
   readonly requireChecksBeforeDone?: boolean;
   /** F-001 用户确认的项目内检查定义。 */

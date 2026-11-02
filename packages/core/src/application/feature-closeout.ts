@@ -1,4 +1,5 @@
 import type { FeatureCloseoutKey, FeatureCloseoutRecord, FeatureCloseoutStore } from '../ports/feature-closeout.js';
+import { FeatureCloseoutPreparationError } from '../ports/feature-closeout.js';
 import { validateStableId } from '../ports/validation.js';
 
 export interface FeatureCloseoutConsumers {
@@ -42,7 +43,9 @@ export function createFeatureCloseoutCoordinator(options: {
       row = options.store.transition(row, { stage: 'verifying' });
       let verified: Awaited<ReturnType<FeatureCloseoutConsumers['verify']>>;
       try { verified = await options.consumers.verify(key); }
-      catch { return options.store.transition(row, { stage: 'reconcile_required', reason: 'verification_outcome_unknown' }); }
+      catch (error) { return options.store.transition(row, error instanceof FeatureCloseoutPreparationError
+        ? { stage: 'blocked', reason: error.reason }
+        : { stage: 'reconcile_required', reason: 'verification_outcome_unknown' }); }
       const after = await options.consumers.authorize(key);
       if (!after.allowed) return options.store.transition(row, { stage: 'blocked', reason: after.reason });
       try { validateStableId(verified.evidenceRef, { operation: 'FeatureCloseout' }, 'evidenceRef'); }

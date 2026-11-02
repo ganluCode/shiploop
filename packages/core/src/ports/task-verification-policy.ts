@@ -62,13 +62,15 @@ export interface VerificationFullFallback {
 }
 
 export interface ConfirmedTaskVerificationPolicy {
+  /** Explicit Feature-local checks; never inferred from project fullFallback. */
+  readonly featureChecks?: readonly string[];
   readonly requireChecksBeforeDone?: boolean;
   readonly checkDefinitions?: readonly CheckDefinition[];
   readonly modules?: readonly VerificationModuleDefinition[];
   readonly fullFallback?: VerificationFullFallback;
 }
 
-const POLICY_KEYS = ['requireChecksBeforeDone', 'checkDefinitions', 'modules', 'fullFallback'] as const;
+const POLICY_KEYS = ['requireChecksBeforeDone', 'checkDefinitions', 'modules', 'fullFallback', 'featureChecks'] as const;
 const CHECK_KEYS = [
   'checkKey',
   'scope',
@@ -329,6 +331,7 @@ export function validateConfirmedTaskVerificationPolicy(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, POLICY_KEYS, context, field);
   const result: {
+    featureChecks?: readonly string[];
     requireChecksBeforeDone?: boolean;
     checkDefinitions?: readonly CheckDefinition[];
     modules?: readonly VerificationModuleDefinition[];
@@ -347,6 +350,16 @@ export function validateConfirmedTaskVerificationPolicy(
     ? undefined
     : validateModules(object.modules, context, `${field}.modules`);
   if (checks !== undefined) result.checkDefinitions = checks;
+  if (object.featureChecks !== undefined) {
+    if (!Array.isArray(object.featureChecks) || object.featureChecks.length < 1 || object.featureChecks.length > TASK_CHECK_DEFINITIONS_MAX_COUNT) {
+      throw fieldError(context, `${field}.featureChecks`, 'Feature checks must be a nonempty bounded list');
+    }
+    const refs = object.featureChecks.map((value, index) => validateCheckKey(value, context, `${field}.featureChecks[${index}]`));
+    if (new Set(refs).size !== refs.length || refs.some(ref => !checks?.some(check => check.checkKey === ref && check.scope !== 'project'))) {
+      throw fieldError(context, `${field}.featureChecks`, 'Feature checks must reference unique confirmed non-project checks');
+    }
+    result.featureChecks = refs;
+  }
   if (modules !== undefined) result.modules = modules;
   if (object.fullFallback !== undefined) {
     result.fullFallback = validateFullFallback(

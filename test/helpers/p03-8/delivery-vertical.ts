@@ -78,8 +78,9 @@ export interface DeliveryVertical {
   close(): Promise<void>;
 }
 
-export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean } = {}): Promise<DeliveryVertical> {
+export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean; confirmProjectProfile?: boolean } = {}): Promise<DeliveryVertical> {
   const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true,
+    confirmProjectProfile: options.confirmProjectProfile,
     deliveryPolicy: { commitMode: 'task_and_feature',
       gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true }, deliveryActions: ['commit'] } });
   const db: Database.Database = fixture.session.database;
@@ -128,7 +129,7 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
     let resourceIdentity!: WorkResourceIdentity;
     for (const taskId of ['t-1', 't-2']) {
       const scan = await core.workExecution.scan();
-      expect(scan.runs).toMatchObject([{ claimed: true }]);
+      expect(scan.runs, JSON.stringify(scan)).toMatchObject([{ claimed: true }]);
       await expect.poll(() => core.workExecution.activeAttemptIds(), { timeout: 10_000 }).toEqual([]);
       const attempt = db.prepare('SELECT id, owner_id, host_instance_id, execution_version FROM attempts WHERE task_id = ?').get(taskId) as {
         id: string; owner_id: string; host_instance_id: string; execution_version: number;

@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { openBudgetFixture } from '../../helpers/p03-3/budget-fixture.ts';
 import { createSqliteFeatureCloseoutStore } from '../../../packages/core/src/adapters/sqlite/feature-closeout-store.ts';
 import { createFeatureCloseoutCoordinator, type FeatureCloseoutConsumers } from '../../../packages/core/src/application/feature-closeout.ts';
+import { FeatureCloseoutPreparationError } from '../../../packages/core/src/ports/feature-closeout.ts';
 
 async function fixture() {
   const f = await openBudgetFixture();
@@ -86,5 +87,15 @@ it('does not accept a successful verifier response without a persistent evidence
     const service = createFeatureCloseoutCoordinator({ ...t, owner: 'host-a' });
     expect(await service.execute(t.key)).toMatchObject({ stage: 'failed', reason: 'verification_evidence_missing' });
     expect(t.consumers.complete).not.toHaveBeenCalled();
+  } finally { t.f.close(); }
+});
+
+it('reports prelaunch configuration blocks without attempting a model repair', async () => {
+  const t = await fixture();
+  try {
+    t.consumers.verify = vi.fn(async () => { throw new FeatureCloseoutPreparationError('feature_check_scope_missing'); });
+    const service = createFeatureCloseoutCoordinator({ ...t, owner: 'host-a', maxRepairs: 3 });
+    expect(await service.execute(t.key)).toMatchObject({ stage: 'blocked', reason: 'feature_check_scope_missing', repairCount: 0 });
+    expect(t.consumers.repair).not.toHaveBeenCalled();
   } finally { t.f.close(); }
 });

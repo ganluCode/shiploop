@@ -8,6 +8,8 @@ export const VERIFICATION_PLAN_MODES = ['candidates', 'full_fallback'] as const;
 export type VerificationPlanMode = (typeof VERIFICATION_PLAN_MODES)[number];
 
 export type VerificationPlanReasonCode =
+  | 'feature_scope_configured'
+  | 'feature_scope_unavailable'
   | 'candidate_covered'
   | 'candidate_missing'
   | 'candidate_invalid'
