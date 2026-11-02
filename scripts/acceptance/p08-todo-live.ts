@@ -10,7 +10,7 @@
  * 单项都不能代替另外两项。真实 Host/SQLite/进程/恢复组合场景由 Phase 集成验收。
  */
 import { createHash } from 'node:crypto';
-import { execFile, execFileSync, type ExecFileOptions } from 'node:child_process';
+import { execFile, execFileSync, spawnSync, type ExecFileOptions } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -518,10 +518,7 @@ export function todoLiveNotRunEntryReport(reason: TodoLiveNotRunReason): TodoLiv
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  // Live execution requires a private approval file and a real Pi adapter. No
-  // missing/invalid approval is silently converted into a successful report.
-  const approvalPath = process.argv[2];
-  const reason: TodoLiveNotRunReason = approvalPath ? 'live_adapter_configuration_required' : 'explicit_approval_required';
-  process.stdout.write(`${JSON.stringify(todoLiveNotRunEntryReport(reason))}\n`);
-  process.exitCode = 2;
+  const entry = fileURLToPath(new URL('./p08-todo-live-entry.ts', import.meta.url));
+  const child = spawnSync(process.execPath, [entry, ...process.argv.slice(2)], { stdio: 'inherit', cwd: process.cwd() });
+  process.exitCode = child.status ?? 1;
 }

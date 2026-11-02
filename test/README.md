@@ -326,3 +326,11 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   新测试、验证退出码、commit/tree 与未解决基线缺口；已知失败不会被新需求通过自动豁免。
   测试属于 integration，真实 project init、SQLite、Host、进程、Pi、归档恢复和 Phase 报告
   保持 not_run，入口与限制见 [F-008 存量演示](../docs/p08-2-existing-demo.md)。
+
+- `index/phases/P08/features/P08-2/tasks/F-009.json`：`accept:p08:live` 正式入口编排。
+  unit 覆盖正常 live、负例、报告校验、干净安装和存量仓库五阶段的固定选择顺序，记录实际
+  退出码与相对证据引用，并核对 `passed`/`failed`/`not_run`/`inconclusive` 传播和 0/1/2/3
+  退出码映射。入口报告绑定 commit/tree、Node/npm/platform、预算、人工 pending 和 Phase
+  集成 `not_run` 缺口；真实 Pi、Host/SQLite/进程/恢复和存量产品闭环仍须独立 Phase 验收，
+  不能由局部测试、Feature 门禁或脚本自报完成替代。范围说明见
+  [F-009 live 入口](../docs/p08-2-live-acceptance-entry.md)。
