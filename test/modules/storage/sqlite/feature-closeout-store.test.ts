@@ -2,6 +2,9 @@ import { expect, it } from 'vitest';
 import { openBudgetFixture } from '../../../helpers/p03-3/budget-fixture.ts';
 import { createSqliteFeatureCloseoutStore } from '../../../../packages/core/src/adapters/sqlite/feature-closeout-store.ts';
 import { openSqliteStorageSession } from '../../../../packages/core/src/adapters/sqlite/session.ts';
+import { createSqliteRunDispatchSettlement } from '../../../../packages/core/src/adapters/sqlite/dispatch-settlement.ts';
+import { gitCommitFixture } from '../../../helpers/controlled-git-commit.ts';
+import { git } from '../../../helpers/git-repo.ts';
 
 it('persists closeout admission, fences old receipts and retains repair count after reopen', async () => {
   const f = await openBudgetFixture();
@@ -51,4 +54,29 @@ it('uses the same durable claim across independent connections and rejects unaut
       (project_id,run_id,feature_id,input_digest,stage,revision,repair_count,max_repairs,owner)
       VALUES (?,?,?,?,'pending',1,0,0,'other')`).run(f.projectId, 'foreign-run', f.featureId, key.inputDigest)).toThrow(/ownership/);
   } finally { peer?.close(); f.close(); }
+});
+
+it('retains dispatch resources when a closeout side effect needs reconciliation', async () => {
+  const f = await openBudgetFixture();
+  try {
+    const { runId } = await f.start();
+    const key = { projectId: f.projectId, featureId: f.featureId, runId, inputDigest: 'a'.repeat(64) };
+    const dispatch = createSqliteRunDispatchSettlement(f.session);
+    expect(dispatch.read({ projectId: key.projectId, runId }).stopUncertain).toBe(false);
+    const store = createSqliteFeatureCloseoutStore(f.session);
+    const row = store.transition(store.admit(key, 'host-a', 0), { stage: 'verifying' });
+    store.transition(row, { stage: 'reconcile_required', reason: 'verification_outcome_unknown' });
+    expect(dispatch.read({ projectId: key.projectId, runId }).stopUncertain).toBe(true);
+  } finally { f.close(); }
+});
+
+it('does not treat an owned in-flight Git intent as lease loss, but retains it after Run termination', async () => {
+  const f = await gitCommitFixture();
+  const ref = { projectId: f.box.projectId, runId: f.authorization.intent.runId };
+  f.store.registerGitOperation({ ...f.authorization.intent, candidateTree: git(['write-tree'], f.root).trim() });
+  const dispatch = createSqliteRunDispatchSettlement(f.box.session);
+  expect(dispatch.read(ref).stopUncertain).toBe(false);
+  f.box.session.transactWrite('test.terminalUnknownGit', () =>
+    f.box.session.database.prepare("UPDATE runs SET status='failed',revision=revision+1 WHERE id=?").run(ref.runId));
+  expect(dispatch.read(ref).stopUncertain).toBe(true);
 });

@@ -173,6 +173,7 @@ export function createSqliteRunDispatchSettlement(
   const configuredCapacity = options.capacity === undefined ? undefined : validateApprovedExecutionSlotCapacity(options.capacity);
   const slots = createSqliteExecutionSlotAccess(session, { nowUtcMs: () => clock() });
   const featureResources = createSqliteFeatureResourceAccess(session, { nowUtcMs: () => clock() });
+  const hasCloseoutTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='feature_closeouts'").get() !== undefined;
 
   function write(operation: string): void {
     if (!session.isOpen() || !db.inTransaction) {
@@ -279,6 +280,12 @@ export function createSqliteRunDispatchSettlement(
     const interrupted = db.prepare<[string, string], { count: number }>(
       "SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id = ? AND status = 'interrupted'",
     ).get(projectId, runId)!.count;
+    const closeoutUncertain = hasCloseoutTable && db.prepare(
+      "SELECT run_id FROM feature_closeouts WHERE project_id=? AND run_id=? AND stage='reconcile_required'",
+    ).get(projectId, runId) !== undefined;
+    const gitUncertain = db.prepare(
+      "SELECT id FROM git_operations WHERE project_id=? AND run_id=? AND (status IN ('pending','unknown') OR delivery_status='pending') LIMIT 1",
+    ).get(projectId, runId) !== undefined;
     const occupied = db.prepare<[], { count: number }>(
       "SELECT COUNT(*) AS count FROM execution_slot_claims WHERE state IN ('held', 'quarantined')",
     ).get()!.count;
@@ -295,7 +302,9 @@ export function createSqliteRunDispatchSettlement(
       },
       activeAttemptCount: activeRows.length,
       retainedLeaseCount: retained,
-      stopUncertain: interrupted > 0 || leases.some((row) => row.state === 'quarantined'),
+      stopUncertain: interrupted > 0 || closeoutUncertain
+        || (gitUncertain && ['succeeded', 'failed', 'cancelled', 'paused', 'interrupted'].includes(run.status))
+        || leases.some((row) => row.state === 'quarantined'),
       slotCapacityAvailable: occupied < capacity,
     };
   }

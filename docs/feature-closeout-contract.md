@@ -44,8 +44,26 @@ readApproval 和 ControlledGitCommitService 都必须由默认装配绑定当前
 
 ## 尚未接通
 
+### 已具备的资源桥接组件（默认装配尚未调用）
+
+`createSqliteFeatureCloseoutLease` 保持同一个 Run 派发认领、槽位与 Feature
+资源集合，核验无活动 Attempt、无保留 Task 租约及无未知停止事实，使用同代次
+成功 Attempt 的持久认领回执作为续租围栏。它不重建 Task、不重新获取 Task 租约。
+旧 owner、暂停/终态、缺失资源或过期身份被拒绝；过期按已有机制隔离，不冒充释放。
+
+`createSqliteFeatureCloseoutStopVerifier` 在受信 Run 租约内读取当前已通过 Task 的
+Runtime 停止制品，逐一复核 project/run/task/attempt/session/invocation/version/owner
+及内容完整性。没有停止证据即拒绝；已登记 Verifier 进程按完整身份有界停止核验，
+不是扫描所有 Session 或只看 PID。没有 Task 租约不再等于“无停止证据”。
+
+租约丢失沿 AbortSignal 传到现有 Node 检查进程；资源桥接结束本身不证明停止，
+也不自动释放派发资源。Run 终态仍有未知 Git 结果，或 closeout 为 reconcile_required，
+普通结算会保留/隔离资源。活动 Run 正常的 pending Git 意图不会被误判成租约失效。
+
+### 剩余装配
+
 - 从默认 Host 持久事实计算并集、输入摘要及真实上下文。
-- 从 Task 到 Feature 的资源交接、续租和重启停止核验。
+- 把上述资源/停止组件接进默认 Host，并补重启后的核对与接管路径。
 - 默认 onHandoff 接线、交付后的依赖调度及失败状态结算。
 - 通用 Runtime 自动修复配置与实际消费者。
 

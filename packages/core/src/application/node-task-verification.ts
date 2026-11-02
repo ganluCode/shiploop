@@ -406,6 +406,7 @@ export function createFeatureNodeVerificationExecutor(options: NodeTaskVerificat
     async start(input) {
       const anchor = options.resolveFeatureAttempt(input);
       const result = await taskExecutor.start({
+        signal: input.signal,
         projectId: input.projectId, featureId: input.featureId, runId: input.runId,
         taskId: anchor.taskId, attemptId: anchor.attemptId, executionVersion: input.executionVersion,
         batchId: input.batchId, operation: input.operation, evidenceOperationId: randomUUID(), codeDigest: input.codeIdentity.codeDigest,

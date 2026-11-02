@@ -45,3 +45,13 @@
 
 B 仍未勾选：真实默认装配的资源交接及授权上下文尚未完成，见
 docs/feature-closeout-contract.md。后续不得把显式测试资源预留当成生产实现。
+
+## C 资源组件进展（2026-11-02）
+
+新增 Run 级资源桥接与 Runtime 停止制品核验，复用持久认领/槽位/Feature 资源与
+既有带回执围栏的续租，不复活 Task。真实资源测试覆盖旧 owner/保留 Task 租约拒绝、
+续租代次不变、过期隔离、Runtime 停止制品正向及缺失/身份错误拒绝。
+AbortSignal 已贯通 FeatureCoordinator → Node Verifier，已中止则不启动进程。
+普通派发结算新增未知收尾/Git 终态保护，防止后续补扫误释放尚待核对的资源。
+
+实际默认工厂、onHandoff、状态结算/依赖推进与 Runtime 修复仍未装配，C/D 不勾选。

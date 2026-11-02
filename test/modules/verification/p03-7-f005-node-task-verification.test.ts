@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   validateNodeCheckReport,
   createNodeTaskVerificationExecutor,
+  createFeatureNodeVerificationExecutor,
 } from '../../../packages/core/src/application/node-task-verification.js';
 
 const report = (overrides: Record<string, unknown> = {}) => ({
@@ -14,6 +15,34 @@ const report = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('P03-7 F-005 Node Task verification', () => {
+  it('forwards Feature lease cancellation and does not launch a check after the lease is lost', async () => {
+    let starts = 0;
+    const controller = new AbortController(); controller.abort();
+    const executor = createFeatureNodeVerificationExecutor({
+      processes: { async start() { starts++; throw new Error('must_not_start'); } },
+      artifacts: {} as never, files: {} as never,
+      verification: {
+        createVerificationBatchInTransaction: () => ({ batch: { revision: 1 }, created: true }),
+        getVerificationBatch: () => ({ revision: 1 }),
+        saveCheckResultInTransaction: () => ({ result: { id: 'not-run', status: 'not_run' } }),
+        finalizeVerificationBatchInTransaction: () => ({ status: 'inconclusive' }),
+      } as never,
+      atomic: { transact: (_operation: string, callback: (tx: unknown) => unknown) => callback({}) } as never,
+      resolveCwd: async () => '/tmp/project', resolveEnvironment: () => ({}), confirmProcessIdentity: async () => {},
+      resolveFeatureAttempt: () => ({ taskId: 'task-1', attemptId: 'attempt-1' }),
+    });
+    const check = { checkKey: 'unit', scope: 'module' as const, kind: 'command' as const, argv: ['node', 'check.js'],
+      cwdRef: null, environmentRef: null, timeout: 1000, required: true, requirementRefs: [] };
+    const result = await executor.start({ projectId: 'project-1', featureId: 'feature-1', runId: 'run-1', batchId: 'batch-1',
+      operation: 'FeatureVerification.full', executionVersion: 1, signal: controller.signal,
+      codeIdentity: { headCommit: 'a'.repeat(40), codeDigest: 'b'.repeat(64) },
+      policyDigest: 'c'.repeat(64), environmentSummary: {}, targets: ['unit'],
+      plan: { status: 'ready', mode: 'full_fallback', affectedModules: [], coveredModules: [], selectedChecks: [check],
+        selectedCheckKeys: ['unit'], unselectedCheckKeys: [], reasonCode: 'feature_scope_configured', reason: 'unit', candidateDigest: null, candidateRejection: null },
+    });
+    expect(result.status).toBe('inconclusive');
+    expect(starts).toBe(0);
+  });
   it('accepts only a trusted non-empty report covering the planned targets', () => {
     expect(validateNodeCheckReport(report(), ['test/unit/a.test.ts'])).toMatchObject({
       testCount: 2,
