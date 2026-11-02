@@ -373,6 +373,11 @@
           "file": "test/modules/workspace/p07-3-f011-project-delete-executor.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p08-2-f008-existing-demo.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }
