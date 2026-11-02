@@ -309,3 +309,13 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
 （本 Task 修改了其入口模块）。跨层报告与真实 Git/SQLite/Host/进程资源一致性由
   Phase 集成验收负责，入口与限制见
   [F-006 报告](../docs/p08-2-todo-live-report.md)。
+
+- `index/phases/P08/features/P08-2/tasks/F-007.json`：干净安装目录启动打包 CLI 的
+  Todo 演示安装冒烟。unit 用打包夹具（真实 npm pack 生成三包 tarball 与分发清单）
+  在真实临时沙箱执行真实 `npm install --offline` 与真实子进程：干净安装目录只用
+  打包产物启动 CLI 并访问最小稳定协议（host start/status/host_not_found 拒绝/stop
+  回执）；安装目录符号链接逃逸、分发清单缺失/篡改、兼容声明缺失、打包模式协议漂移、
+  与源码模式协议不一致、token 外泄、输出/报告绝对路径逐项 fail-closed；运行时依赖
+  清单与实例/数据根隔离入报告。真实 registry 安装、原生模块矩阵、Git/SQLite 业务流、
+  跨进程组合与 live 交付保持 not_run，入口与限制见
+  [F-007 安装冒烟](../docs/p08-2-todo-install-smoke.md)。
