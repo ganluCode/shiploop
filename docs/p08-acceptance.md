@@ -56,13 +56,25 @@ Harness 状态、测试数量或成功日志文字当作产品通过依据；通
 状态与可观察事实证据。本 Feature 不自动 npm 发布、不 push、不修改 Phase
 状态；人工批准一期验收后才安排正式发布（后置能力单列，不混入一期验收）。
 
-## 5. 本 Task（F-001）边界
+## 5. 前序 Task（F-001～F-008）边界
 
-本契约与校验只覆盖结构、唯一性与允许值；真实安装、SQLite、Git、Host、受控
-进程与跨层故障事实由 P08-4 后续 Task（身份校验、范围计划、证据导入、安装
-检查、正式入口与 Phase 集成场景）在真实临时资源上交付，缺失时保持 not_run。
+本契约与校验覆盖结构、身份、范围、证据导入、安装检查、正式入口与报告聚合；真实
+SQLite、Git、Host、受控进程与跨层故障事实由 P08-4 F-009 在真实临时资源上交付，
+缺失时保持 not_run。
 
-## 6. 身份校验（F-002）
+## 6. 本 Task（F-009）Phase 集成边界
+
+`p08-phase-integration.ts` 由正式入口在安装产物检查后调用：在独立临时目录解包受测
+P08-1 tarball，启动打包 CLI/Host，创建 Todo 新项目和非 Nezha 存量 Git 仓库，读取
+真实 SQLite、Git HEAD/tree/status、CLI 回执、既有失败传播和 Host 停止状态。脱敏证据
+在临时资源删除后复制进 P08 报告，缺少 SQLite/Git/Host/进程/制品/清理事实或身份
+漂移时 fail-closed。当前 npm registry 缓存不足时，安装证据明确记录锁定依赖闭包与
+本地 tarball 解包边界，不把未运行的 registry/native/live 检查标为通过。
+
+真实 Pi live、人工确认和未授权 Live 仍由独立入口保持 `not_run`，机器报告不签署
+Phase 或修改 Feature/Task 状态。
+
+## 7. 身份校验（F-002）
 
 `scripts/acceptance/p08-identity.ts` 提供统一身份基座（fail-closed）：
 
@@ -84,7 +96,7 @@ Harness 状态、测试数量或成功日志文字当作产品通过依据；通
 - 真实前序报告与 Live 运行是否存在由 Phase 入口核对；本模块不执行 Git/
   SQLite/Host/模型命令，祖先关系由入口经受控 probe 注入。
 
-## 7. 安装产物检查（F-005）
+## 8. 安装产物检查（F-005）
 
 `scripts/acceptance/p08-install-check.ts` 为阶段入口的 `p08-installation` 步骤
 提供干净安装与本地 pack 产物检查（fail-closed）：

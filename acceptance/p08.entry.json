@@ -6,6 +6,7 @@
     "p08-source-identity",
     "p08-deterministic-scope",
     "p08-installation",
+    "p08-phase-integration",
     "p08-live-import",
     "p08-report",
     "p08-manual-gate"

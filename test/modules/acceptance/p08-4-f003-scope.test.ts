@@ -58,7 +58,7 @@ it('[case:p08-f003-plan-order-and-failure-propagation] 文件稳定分批恰好�
   const plan = buildP08ExecutionPlan(files, false);
   expect(plan.map(step => step.id)).toEqual([
     'p08-prerequisites', 'p08-source-identity', 'p08-deterministic-scope',
-    'p08-installation', 'p08-live-import', 'p08-report', 'p08-manual-gate',
+    'p08-installation', 'p08-phase-integration', 'p08-live-import', 'p08-report', 'p08-manual-gate',
   ]);
   expect(plan.flatMap(step => step.tests)).toEqual([...files].sort());
   expect(new Set(plan.flatMap(step => step.tests)).size).toBe(files.length);
@@ -69,7 +69,7 @@ it('[case:p08-f003-plan-order-and-failure-propagation] 文件稳定分批恰好�
     'p08-prerequisites': { status: 'pass', exitCode: 0 },
     'p08-source-identity': { status: 'fail', exitCode: 1, reason: 'identity_mismatch' },
   });
-  expect(result.map(step => step.status)).toEqual(['pass', 'fail', 'not_run', 'not_run', 'not_run', 'not_run', 'not_run']);
+  expect(result.map(step => step.status)).toEqual(['pass', 'fail', 'not_run', 'not_run', 'not_run', 'not_run', 'not_run', 'not_run']);
   expect(result.slice(2).every(step => step.reason === 'halted_by_prior_failure')).toBe(true);
 
   const full = buildP08ExecutionPlan(files, true);

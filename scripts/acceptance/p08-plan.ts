@@ -12,7 +12,7 @@ export const P08_SCENE_CHECKS: Readonly<Record<string, string>> = Object.freeze(
 });
 export const P08_PHYSICAL_STEPS = [
   'p08-prerequisites', 'p08-source-identity', 'p08-deterministic-scope',
-  'p08-installation', 'p08-live-import', 'p08-report', 'p08-manual-gate',
+  'p08-installation', 'p08-phase-integration', 'p08-live-import', 'p08-report', 'p08-manual-gate',
 ] as const;
 export const P08_ENTRY_STEP_ORDER = P08_PHYSICAL_STEPS;
 export type P08PhysicalStep = (typeof P08_PHYSICAL_STEPS)[number];
@@ -57,6 +57,7 @@ export function buildP08ExecutionPlan(selected: readonly string[], full: boolean
     internalStep('p08-source-identity', 'preflight'),
     ...deterministic,
     internalStep('p08-installation', 'evidence-import'),
+    internalStep('p08-phase-integration', 'evidence-import'),
     internalStep('p08-live-import', 'evidence-import'),
     internalStep('p08-report', 'report'),
     internalStep('p08-manual-gate', 'manual'),

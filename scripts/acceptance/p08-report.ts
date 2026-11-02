@@ -66,6 +66,7 @@ export type P08ReportInput = {
   readonly taskLocal: P08ReportSection;
   readonly featureGate: P08ReportSection;
   readonly phaseIntegration: P08ReportSection;
+  readonly deterministic?: P08ReportSection;
   readonly live: P08LiveSections;
   readonly manual: P08ReportSection;
   readonly checks?: readonly P08ReportCheckInput[];
@@ -186,6 +187,7 @@ function sectionFor(item: P08FrozenItem, input: P08ReportInput): P08ReportSectio
   if (item.layer === 'code-delivery') return prerequisiteSection(input.prerequisites);
   if (item.layer === 'task-local') return input.taskLocal;
   if (item.layer === 'feature-gate') return input.featureGate;
+  if (item.layer === 'phase-integration' && item.id === 'P08-DETERMINISTIC-PHASE-REGRESSION') return input.deterministic ?? input.phaseIntegration;
   if (item.layer === 'phase-integration') return input.phaseIntegration;
   if (item.layer === 'manual') return input.manual;
   return input.phaseIntegration;
@@ -199,6 +201,7 @@ function validateInput(input: P08ReportInput, checklist: P08Checklist): void {
   if (!input.testScope || typeof input.testScope !== 'object') fail('invalid_test_scope');
   validateSection(input.installation, input.identity); validateSection(input.taskLocal, input.identity);
   validateSection(input.featureGate, input.identity); validateSection(input.phaseIntegration, input.identity);
+  if (input.deterministic !== undefined) validateSection(input.deterministic, input.identity);
   validateSection(input.live.todo, input.identity); validateSection(input.live.existing, input.identity); validateSection(input.manual, input.identity);
   status(input.prerequisites.status);
   if (!Array.isArray(input.prerequisites.features) || input.prerequisites.features.length !== P08_PREREQUISITE_FEATURES.length) fail('invalid_prerequisites');

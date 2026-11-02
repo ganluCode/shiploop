@@ -167,7 +167,7 @@ export const P08_MODES = {
   },
 } as const;
 export const P08_ENTRY_STEP_ORDER = [
-  'p08-prerequisites', 'p08-source-identity', 'p08-deterministic-scope', 'p08-installation', 'p08-live-import', 'p08-report', 'p08-manual-gate',
+  'p08-prerequisites', 'p08-source-identity', 'p08-deterministic-scope', 'p08-installation', 'p08-phase-integration', 'p08-live-import', 'p08-report', 'p08-manual-gate',
 ] as const;
 export const P08_ENTRY_EVIDENCE_REQUIRED_FIELDS = [
   'scenarioId', 'inputDigest', 'testedCommit', 'command', 'exitCode', 'status', 'evidenceRefs', 'usageSource', 'cleanup',

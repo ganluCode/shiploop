@@ -54,6 +54,11 @@ import {
   type P08InstallCheckRunResult,
 } from './p08-install-check.ts';
 import {
+  runP08PhaseIntegration,
+  validateP08PhaseIntegrationEvidence,
+  type P08PhaseIntegrationEvidence,
+} from './p08-phase-integration.ts';
+import {
   buildP08AcceptanceReport,
   writeP08AcceptanceReport,
   type P08ReportInput,
@@ -307,6 +312,15 @@ export type P08AcceptanceTesting = {
   readonly externalReferences?: readonly unknown[];
   readonly runProcess?: P07ProcessRunner;
   readonly install?: (options: Parameters<typeof runP08InstallProductCheck>[0]) => P08InstallCheckRunResult;
+  readonly phaseIntegration?: (options: {
+    readonly repoRoot: string;
+    readonly artifactDir: string;
+    readonly outputFile: string;
+    readonly runId: string;
+    readonly testedCommit: string;
+    readonly inputsDigest: string;
+    readonly toolchain: { readonly node: string; readonly npm: string; readonly platform: string };
+  }) => P08PhaseIntegrationEvidence;
   readonly publish?: typeof writeP08AcceptanceReport;
 };
 
@@ -391,6 +405,7 @@ function makeClaims(
   prerequisites: P08ReportInput['prerequisites'],
   installation: P08ReportSection,
   phaseStatus: P08ReportStatus,
+  deterministicStatus: P08ReportStatus,
   phaseRefs: readonly string[],
   live: { todo: P08ReportSection; existing: P08ReportSection },
   manual: P08ReportSection,
@@ -404,17 +419,19 @@ function makeClaims(
   const prereqStatus = prerequisites.status;
   add('P08-PREREQ-DELIVERY-REPORTS', prereqStatus, 'fake', ['report', 'manifest', 'sha'], prereqStatus === 'pass' ? undefined : 'prerequisite_not_run');
   add('P08-INSTALL-CLEAN-DIRECTORY', installation.status, 'fake', installation.evidence, installation.reason);
-  add('P08-DETERMINISTIC-PHASE-REGRESSION', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'deterministic_scope_not_run');
+  add('P08-DETERMINISTIC-PHASE-REGRESSION', deterministicStatus, 'fake', ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', ...phaseRefs], deterministicStatus === 'pass' ? undefined : 'deterministic_scope_not_run');
+  add('P08-FR1-PHASE-CLOSURE-RERUN', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'artifact', 'install', 'host', 'sqlite', 'git', 'process', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'phase_integration_not_run');
+  add('P08-FR2-NEGATIVE-EVIDENCE', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'sha', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'phase_integration_not_run');
+  add('P08-TODO-NEW-PROJECT-CLOSURE', phaseStatus, 'fake', ['command-exit', 'sqlite', 'git', 'host', 'process', 'artifact', 'manifest', 'report', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'todo_integration_not_run');
+  add('P08-EXISTING-INCREMENTAL-CLOSURE', phaseStatus, 'fake', ['command-exit', 'sqlite', 'git', 'host', 'process', 'artifact', 'manifest', 'report', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'existing_integration_not_run');
+  for (const id of [
+    'P08-FR3-PERIOD-EVIDENCE-AGGREGATE', 'P08-TASK-LOCAL-VERIFICATION', 'P08-FEATURE-GATE-UNION',
+  ]) add(id, 'not_run', 'fake', ['report', 'usage'], id === 'P08-FR3-PERIOD-EVIDENCE-AGGREGATE' ? 'feature_gate_aggregate_deferred' : 'task_or_feature_gate_owned_by_nezha');
   add('P08-LIVE-TODO-EVIDENCE', live.todo.status, 'live', live.todo.evidence, live.todo.reason);
   add('P08-LIVE-EXISTING-EVIDENCE', live.existing.status, 'live', live.existing.evidence, live.existing.reason);
   add('P08-MANUAL-OWNER-GATE', manual.status, 'manual', manual.evidence, manual.reason);
   add('P08-RUN-IDENTITY-INTEGRITY', 'pass', 'fake', ['report', 'manifest', 'sha', 'cleanup'], 'entry_identity_bound');
   add('P08-HARNESS-BOUNDARY', 'pass', 'fake', ['harness-boundary', 'report', 'manifest'], 'harness_state_not_used_as_product_fact');
-  for (const id of [
-    'P08-FR1-PHASE-CLOSURE-RERUN', 'P08-FR2-NEGATIVE-EVIDENCE', 'P08-FR3-PERIOD-EVIDENCE-AGGREGATE',
-    'P08-TODO-NEW-PROJECT-CLOSURE', 'P08-EXISTING-INCREMENTAL-CLOSURE',
-    'P08-TASK-LOCAL-VERIFICATION', 'P08-FEATURE-GATE-UNION',
-  ]) add(id, 'not_run', 'fake', ['report', 'usage'], 'phase_integration_deferred_to_p08_f009');
   return checks;
 }
 
@@ -543,6 +560,9 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
     let processesGone = true;
     let deterministicStatus: P08ReportStatus = 'not_run';
     let deterministicRefs: string[] = [];
+    let phaseIntegrationEvidence: P08PhaseIntegrationEvidence | null = null;
+    let phaseIntegrationStatus: P08ReportStatus = 'not_run';
+    let phaseIntegrationRefs: string[] = [];
     let installResult: P08InstallCheckRunResult | null = null;
     let publishedResult: ReturnType<typeof writeP08AcceptanceReport> | undefined;
     let publishedReportInput: P08ReportInput | undefined;
@@ -678,6 +698,44 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
         if (!passed) halted = true;
         continue;
       }
+      if (step.id === 'p08-phase-integration') {
+        const output = join(workDir, 'phase-integration.json');
+        const runner = options.testing?.phaseIntegration ?? (options.testing ? undefined : runP08PhaseIntegration);
+        if (runner === undefined) {
+          phaseIntegrationStatus = 'not_run';
+          const record = stepRecord(step, 'not_run', 'phase_integration_not_run');
+          steps.push(record);
+          saveJson(join(workDir, `${step.id}.json`), { identity, ...record });
+          continue;
+        }
+        try {
+          phaseIntegrationEvidence = runner({
+            repoRoot: root,
+            artifactDir: resolve(root, options.artifactDir ?? 'artifacts/local-pack'),
+            outputFile: output,
+            runId: identity.runId,
+            testedCommit: identity.testedCommit,
+            inputsDigest: identity.inputsDigest,
+            toolchain: identity.toolchain,
+          });
+          validateP08PhaseIntegrationEvidence(phaseIntegrationEvidence);
+          copyIntoSource(source, output, 'phase-integration/evidence.json');
+          copyIntoSource(source, output, 'products/p08-phase-integration.json');
+          phaseIntegrationRefs = ['phase-integration/evidence.json'];
+          phaseIntegrationStatus = 'pass';
+          const record = stepRecord(step, 'pass', null, phaseIntegrationEvidence.exitCode, { durationMs: phaseIntegrationEvidence.durationMs });
+          steps.push(record);
+          saveJson(join(workDir, `${step.id}.json`), { identity, ...record });
+        } catch (error) {
+          phaseIntegrationStatus = 'fail';
+          const reason = error instanceof Error ? error.message : 'phase_integration_failed';
+          const record = stepRecord(step, 'fail', reason, 1);
+          steps.push(record);
+          saveJson(join(workDir, `${step.id}.json`), { identity, ...record });
+          halted = true;
+        }
+        continue;
+      }
       if (step.id === 'p08-live-import') {
         const result = await importP08PrerequisiteEvidence({
           evidenceRoot,
@@ -705,16 +763,17 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
       if (step.id === 'p08-report') {
         const driftBeforeReport = observeDrift();
         if (driftBeforeReport.drifted) deterministicStatus = 'not_run';
-        deterministicStatus = deterministicStatus === 'pass' ? 'pass' : 'not_run';
         const entryFile = 'entry/run.json';
         const cleanup = { processesGone, resourcesRemoved: true };
         saveJson(join(workDir, 'cleanup.json'), cleanup);
         saveJson(join(source, 'entry/cleanup.json'), cleanup);
         saveJson(join(source, entryFile), { schemaVersion: 1, identity, steps, cleanup, scope, selected: scope.selected, fullRegression: options.fullRegression === true });
         const prereq = baselineSection;
-        const phaseRefs = [...deterministicRefs, 'entry/run.json'];
-        const phaseSection = section(deterministicStatus, ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', 'cleanup'], deterministicStatus === 'pass' ? 'deterministic_checks_passed' : 'deterministic_checks_not_run', identity, phaseRefs, processesGone);
-        const claims = makeClaims(identity, prereq, installSection, phaseSection.status, phaseRefs, liveSections, manualSection, ['entry/run.json', 'entry/installation.json', 'entry/live-import.json'], processesGone);
+        const phaseStatus: P08ReportStatus = deterministicStatus === 'fail' || phaseIntegrationStatus === 'fail'
+          ? 'fail' : deterministicStatus === 'pass' && phaseIntegrationStatus === 'pass' ? 'pass' : 'not_run';
+        const phaseRefs = [...deterministicRefs, ...phaseIntegrationRefs, 'entry/run.json'];
+        const phaseSection = section(phaseStatus, ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', 'cleanup', ...phaseIntegrationRefs], phaseStatus === 'pass' ? 'phase_integration_passed' : 'phase_integration_not_run', identity, phaseRefs, processesGone);
+        const claims = makeClaims(identity, prereq, installSection, phaseSection.status, deterministicStatus, phaseRefs, liveSections, manualSection, ['entry/run.json', 'entry/installation.json', 'entry/live-import.json', ...phaseIntegrationRefs], processesGone);
         const reportInput: P08ReportInput = {
           identity,
           testScope: scope,
@@ -722,13 +781,19 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
           installation: installSection,
           taskLocal: section('not_run', ['report', 'manifest', 'usage'], 'task_local_owned_by_nezha', identity, ['entry/run.json']),
           featureGate: section('pass', ['report', 'manifest', 'sha', 'cleanup'], 'feature_gate_identity_recorded', identity, ['entry/run.json'], processesGone),
+          deterministic: section(deterministicStatus, ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', ...deterministicRefs], deterministicStatus === 'pass' ? 'deterministic_checks_passed' : 'deterministic_checks_not_run', identity, deterministicRefs, processesGone),
           phaseIntegration: phaseSection,
           live: liveSections,
           manual: manualSection,
           checks: claims,
-          productReports: [],
-          knownGaps: ['phase_integration_deferred_to_p08_f009', 'live_evidence_import_only', 'product_report_not_provided', ...(manualSection.status === 'not_run' ? ['owner_manual_gate_pending'] : [])],
+          productReports: phaseIntegrationEvidence ? [{ featureId: 'P08-phase-integration', path: 'products/p08-phase-integration.json', identity: { runId: identity.runId, testedCommit: identity.testedCommit, inputsDigest: identity.inputsDigest } }] : [],
+          knownGaps: [
+            ...(phaseIntegrationStatus === 'not_run' ? ['phase_integration_not_run'] : []),
+            'live_evidence_import_only',
+            ...(manualSection.status === 'not_run' ? ['owner_manual_gate_pending'] : []),
+          ],
           evidenceFiles: ['entry/run.json', 'entry/cleanup.json', ...receipts,
+            ...(phaseIntegrationEvidence ? ['phase-integration/evidence.json', 'products/p08-phase-integration.json'] : []),
             ...(existsSync(join(source, 'entry/installation.json')) ? ['entry/installation.json'] : []),
             ...(existsSync(join(source, 'entry/live-import.json')) ? ['entry/live-import.json'] : [])],
         };
