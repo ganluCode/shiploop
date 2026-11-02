@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "kind": "shiploop.demo.todo.requirements",
+  "requirementId": "p08-todo-demo",
+  "status": "frozen-input",
+  "source": {
+    "prd": "P08-2 Todo CLI 新项目完整验收 PRD（版本 0.2，2026-10-01）",
+    "fr": ["FR-1", "FR-2"],
+    "acceptanceCriteria": ["AC-1", "AC-2", "AC-3", "AC-4", "AC-5"],
+    "designBasis": "core-design 09-testing-and-implementation.md 的 Demo A：隔离 Node.js Todo CLI 小项目，由 Planner 形成至少三个有依赖的 Task，验证失败后增量返工且不靠 Agent 自报完成"
+  },
+  "product": {
+    "name": "todo",
+    "shape": "命令行待办工具（Node.js 新项目，非 ShipLoop 仓库代码）",
+    "invocation": "todo <子命令> [参数]",
+    "implementationFreedom": "实现语言细节、存储格式与内部结构由 live 规划决定，但必须满足本文件的可观察行为与数据边界"
+  },
+  "behaviors": [
+    {
+      "id": "todo-add",
+      "category": "add",
+      "kind": "normal",
+      "fr": "FR-1",
+      "summary": "新增一条待办，标题为必填输入",
+      "invocation": "todo add <标题>",
+      "observable": [
+        "命令以退出码 0 结束",
+        "新增条目获得项目内唯一且稳定的 ID",
+        "随后的 todo list 输出能看到该标题与未完成状态"
+      ],
+      "exitSemantics": "成功退出码 0；失败非 0 且输出可理解错误"
+    },
+    {
+      "id": "todo-list",
+      "category": "list",
+      "kind": "normal",
+      "fr": "FR-1",
+      "summary": "列出全部待办",
+      "invocation": "todo list",
+      "observable": [
+        "命令以退出码 0 结束",
+        "输出包含每条待办的 ID、标题与完成状态",
+        "无待办时以退出码 0 结束并给出明确的空列表输出，而不是报错"
+      ],
+      "exitSemantics": "成功退出码 0；空列表不是错误"
+    },
+    {
+      "id": "todo-complete",
+      "category": "complete",
+      "kind": "normal",
+      "fr": "FR-1",
+      "summary": "按 ID 把待办标记为完成",
+      "invocation": "todo complete <ID>",
+      "observable": [
+        "命令以退出码 0 结束",
+        "随后的 todo list 显示该 ID 对应条目为已完成",
+        "其余条目保持原状"
+      ],
+      "exitSemantics": "成功退出码 0；重复 complete 已完成条目的行为必须确定且不破坏数据"
+    },
+    {
+      "id": "todo-delete",
+      "category": "delete",
+      "kind": "normal",
+      "fr": "FR-1",
+      "summary": "按 ID 删除待办",
+      "invocation": "todo delete <ID>",
+      "observable": [
+        "命令以退出码 0 结束",
+        "随后的 todo list 不再包含该 ID 对应条目",
+        "其余条目保持原状"
+      ],
+      "exitSemantics": "成功退出码 0；删除后数据文件仍可被后续进程读取"
+    },
+    {
+      "id": "todo-persistence",
+      "category": "persistence",
+      "kind": "normal",
+      "fr": "FR-1",
+      "summary": "跨进程持久化：数据落盘于项目数据目录，进程退出后不丢失",
+      "invocation": "进程 A 新增待办后退出；重新启动进程 B 执行 todo list",
+      "observable": [
+        "进程 B 的 todo list 以退出码 0 结束，并完整读取进程 A 写入的待办（ID、标题、完成状态一致）",
+        "持久化数据全部位于临时项目数据目录内，不在临时根之外写入业务数据",
+        "存储格式由实现决定，但必须是文件形式且可被后续进程读取"
+      ],
+      "exitSemantics": "读取已有数据的 list 命令以退出码 0 结束"
+    },
+    {
+      "id": "todo-add-empty-title",
+      "category": "empty-title",
+      "kind": "failure",
+      "fr": "FR-1",
+      "summary": "空标题被拒绝",
+      "invocation": "todo add \"\"（或仅空白字符的标题）",
+      "observable": [
+        "退出码非 0",
+        "输出可理解错误，指明标题不能为空",
+        "已有数据不被修改"
+      ],
+      "exitSemantics": "校验失败退出码非 0",
+      "dataPreserved": true
+    },
+    {
+      "id": "todo-unknown-id",
+      "category": "unknown-id",
+      "kind": "failure",
+      "fr": "FR-1",
+      "summary": "不存在的 ID 被拒绝",
+      "invocation": "todo complete <不存在的ID> 或 todo delete <不存在的ID>",
+      "observable": [
+        "退出码非 0",
+        "输出可理解错误，指明 ID 不存在",
+        "已有数据不被修改"
+      ],
+      "exitSemantics": "校验失败退出码非 0",
+      "dataPreserved": true
+    },
+    {
+      "id": "todo-invalid-command",
+      "category": "invalid-command",
+      "kind": "failure",
+      "fr": "FR-1",
+      "summary": "无效命令被拒绝",
+      "invocation": "todo <未知子命令>，或缺少必要参数的调用",
+      "observable": [
+        "退出码非 0",
+        "输出可理解错误或用法说明，不产生静默成功",
+        "已有数据不被修改"
+      ],
+      "exitSemantics": "无效调用退出码非 0",
+      "dataPreserved": true
+    },
+    {
+      "id": "todo-data-io-failure",
+      "category": "data-io-failure",
+      "kind": "failure",
+      "fr": "FR-1",
+      "summary": "数据读写失败时非零失败且不破坏已有数据",
+      "invocation": "在数据文件不可读或不可写（受控注入）时执行任一子命令",
+      "observable": [
+        "退出码非 0 且输出可理解错误",
+        "不把读失败静默当作空列表成功",
+        "注入解除后已有有效数据仍可读取"
+      ],
+      "exitSemantics": "数据读写失败退出码非 0",
+      "dataPreserved": true,
+      "fixtureOnly": "通过受控注入（如只读数据文件、损坏副本）构造，不依赖真实磁盘随机故障"
+    }
+  ],
+  "requiredBehaviorCategories": [
+    "add",
+    "list",
+    "complete",
+    "delete",
+    "persistence",
+    "empty-title",
+    "unknown-id",
+    "invalid-command",
+    "data-io-failure"
+  ],
+  "tempProject": {
+    "identity": "todo-demo",
+    "creation": "由检查或执行入口在系统临时目录（os.tmpdir()）下按 mkdtemp 语义创建唯一临时根",
+    "rootPrefix": "shiploop-p08-todo-",
+    "layout": {
+      "projectRoot": "<tempRoot>/project",
+      "dataDirectory": "<tempRoot>/project/data",
+      "dataFiles": "待办持久化文件必须全部位于 dataDirectory 内；具体文件名与格式由 live 实现决定"
+    },
+    "isolation": [
+      "临时项目独立初始化（含独立 Git 仓库），不复用开发仓库、真实 HOME 或既有项目数据",
+      "测试与演示数据只写临时项目内部；不在临时根之外写入业务数据",
+      "不读取开发机用户配置、凭据或未获准的全局资源"
+    ],
+    "forbiddenLocations": [
+      "开发仓库目录",
+      "真实 HOME 目录",
+      "固定字面量的共享路径（多个运行复用同一目录）",
+      "系统目录与临时根之外的位置"
+    ],
+    "machineIndependence": "全部位置在运行时从系统临时目录派生；本契约与派生需求文本不包含任何开发机绝对路径",
+    "cleanup": {
+      "owner": "创建该临时项目的检查或执行入口负责清理",
+      "appliesTo": ["success", "failure", "timeout", "cancelled"],
+      "requiredEvidence": "运行结束后临时根不存在；清理失败必须保留现场并如实报告，不得静默当作已清理",
+      "protects": "只允许删除本次创建的临时根；授权根之外的任何路径不得删除"
+    }
+  },
+  "credentials": {
+    "boundary": "真实 Pi live 凭据只来自负责人授权的本机环境与受控配置；需求输入、测试、报告与证据不包含凭据",
+    "forbiddenIn": [
+      "需求输入与契约文件",
+      "测试与夹具",
+      "日志与运行证据",
+      "报告与 Git 提交"
+    ],
+    "fixtureContainsSecrets": false,
+    "missingCredentialPolicy": "缺认证或未授权时对应 live 项记 not_run，不折算为通过，也不得改用 FakeRuntime 冒充"
+  },
+  "runtimePolicy": {
+    "normalDelivery": {
+      "runtime": "pi",
+      "mode": "real-authorized",
+      "required": [
+        "负责人授权的 provider 与 model",
+        "人工批准后才创建实现 Run",
+        "时间与次数预算（超预算停止）"
+      ]
+    },
+    "fakeRuntime": {
+      "usage": "FakeRuntime 仅允许用于受控故障夹具，禁止替代正常交付或伪造成功证据",
+      "allowedFaultFixtures": [
+        { "id": "auth-failure", "summary": "缺认证或认证失败时的阻塞行为" },
+        { "id": "budget-exhaustion", "summary": "预算耗尽后停止，不继续执行" },
+        { "id": "cancel", "summary": "显式取消后的停止与状态保留" },
+        { "id": "interruption-restart", "summary": "获准中断后继续：核对既有代码、预算与 usage 后恢复" },
+        { "id": "dependency-failure", "summary": "依赖 Task 失败后不继续执行后续依赖项" }
+      ],
+      "faultsAreDeterministic": "故障用确定性注入构造，不要求也不依赖模型随机犯错"
+    },
+    "notRunCountsAsPassed": false,
+    "machineClaimNotPass": "Runtime 或编排器自称 completed 不等于产品验收通过，须以独立核验为准"
+  },
+  "planningPolicy": {
+    "planner": "真实 ShipLoop 规划流程（实际 CLI），不使用测试替身冒充规划",
+    "inputSnapshot": "本文件是 live 规划的固定需求输入；派生需求文本必须与本文件行为一致",
+    "minTasks": 3,
+    "dependencies": {
+      "required": true,
+      "rules": [
+        "Task ID 唯一",
+        "依赖必须显式声明且只引用同一计划内的 Task",
+        "依赖图无环",
+        "至少存在一条覆盖不少于 minTasks 项 Task 的依赖链"
+      ]
+    },
+    "scopeLocked": "Task 只覆盖 Todo CLI 演示需求，不得扩张到其他 Phase/Feature 或提前实现后置能力",
+    "humanApproval": "规划结果须负责人批准后才允许创建实现 Run",
+    "duplicateGuard": "重复规划或重复启动不得产生超出指定范围的第二份交付执行"
+  },
+  "evidencePolicy": {
+    "liveReport": "accept:p08:live 运行报告承载本契约的 live 结果；未运行记 not_run",
+    "linkedArtifacts": ["code", "tests", "taskResults", "featureResult", "gitCommits", "runEvidence"],
+    "artifactMeanings": {
+      "code": "临时项目内的实现代码",
+      "tests": "与需求行为对应的测试文件及其执行结果",
+      "taskResults": "Task 级结果与失败、返工记录",
+      "featureResult": "Feature 最终结果（含 not_run 事实）",
+      "gitCommits": "临时项目 Git 提交 SHA，可追溯到具体 Task",
+      "runEvidence": "Run/Attempt 身份、命令、退出码、预算与 usage 记录"
+    },
+    "linkage": "报告必须能把 Feature → Task → Run/Attempt → Git 提交 → 测试结果逐级对应；无法关联的身份按缺口记录，不得宣称通过",
+    "notRunCountsAsPassed": false,
+    "reportsSanitized": "报告与证据不包含凭据或开发机绝对路径"
+  }
+}

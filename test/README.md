@@ -261,3 +261,12 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   负例含额外工作流、无法解析 YAML、触发/权限/runner 漂移、乱序、未审命令、第三方
   Action、凭据注入与 CI 退出码/报告落盘语义。实际 GitHub Actions 运行、CI 环境
   原生模块加载与独立安装保持 Phase 集成 not_run；CI 不发布、不推送、不建 PR。
+
+- `index/phases/P08/features/P08-2/tasks/F-001.json`：Todo CLI 演示需求输入与验收契约冻结。
+  覆盖 `acceptance/p08.todo-requirements.json` 的九类行为目录（新增/列表/完成/删除/
+  跨进程持久化/空标题/未知 ID/无效命令/数据读写失败，失败行为非零退出且保全数据）、
+  临时项目 os.tmpdir()+mkdtemp 边界与四类结局清理责任、凭据 not_run 政策、正常交付
+  仅真实授权 Pi 且 FakeRuntime 限定五类确定性故障夹具、live 规划不少于 3 项有依赖
+  Task 的 DAG 判定（validateTodoTaskPlan，含环/重名/悬空/链长负例）、六类证据制品
+  身份链，以及契约漂移（版本/类别删减/绝对路径/凭据字段/政策弱化）fail-closed 拒绝。
+  真实规划、Todo 实现与 live 验收由后续 Task 交付，当前 not_run。
