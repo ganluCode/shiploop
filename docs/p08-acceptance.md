@@ -61,3 +61,25 @@ Harness 状态、测试数量或成功日志文字当作产品通过依据；通
 本契约与校验只覆盖结构、唯一性与允许值；真实安装、SQLite、Git、Host、受控
 进程与跨层故障事实由 P08-4 后续 Task（身份校验、范围计划、证据导入、安装
 检查、正式入口与 Phase 集成场景）在真实临时资源上交付，缺失时保持 not_run。
+
+## 6. 身份校验（F-002）
+
+`scripts/acceptance/p08-identity.ts` 提供统一身份基座（fail-closed）：
+
+- 前置交付基线（`shiploop.p08.prerequisite-baselines`）：P08-1～P08-3 逐项校验
+  feature 身份、commit 格式、交付状态、接口满足声明与受测 HEAD 祖先关系；
+  任一缺失或不匹配形成 blocked/not_run，不产生验收通过；
+- 不可变输入摘要：运行身份绑定配置/清单/前置交付/工具链/适用测试范围/外部
+  报告引用的内容摘要；HEAD、源码哈希/文件集合或工具链漂移输出结构化原因并
+  失败关闭；运行目录按 runId 一次性预留，旧运行不可覆盖；
+- 外部证据（只读导入）：Todo Live（`shiploop.todo.live-evidence`）、存量 Live
+  （`shiploop.brownfield.evidence-envelope`）、安装产物（`shiploop.p08.release-manifest`）
+  与人工门禁（`shiploop.p08.manual-gate-record`）分别校验来源 kind、runId、commit、
+  输入摘要、结构版本与允许状态；重复引用、损坏 JSON、未知字段或非受测 HEAD
+  祖先的陈旧 commit 一律拒绝；两类 live 互不替代；人工门禁身份必须与当前
+  P08 运行完全一致；
+- 校验失败写入脱敏诊断（`shiploop.p08.identity-diagnostic`）：不含开发机绝对
+  路径与凭据；重复 runId 时保留旧运行证据并写入独立 diagnostics 目录，不覆盖
+  原报告、产品 SQLite 或 Feature/Phase 元数据；
+- 真实前序报告与 Live 运行是否存在由 Phase 入口核对；本模块不执行 Git/
+  SQLite/Host/模型命令，祖先关系由入口经受控 probe 注入。
