@@ -3,11 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "ShipLoop engineering workspace (P01-1 skeleton; private, not published)",
+  "description": "ShipLoop engineering workspace (private, not published; local pack only)",
   "engines": {
     "node": "22.19.0",
     "npm": "10.9.3"
   },
+  "os": [
+    "darwin"
+  ],
   "packageManager": "npm@10.9.3",
   "workspaces": [
     "packages/core",

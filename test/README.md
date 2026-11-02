@@ -221,3 +221,13 @@ F-009 的 FakeRuntime 异常、输出、证据与恢复边界见 `index/phases/P
 F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档守护见
 `index/phases/P03/features/P03-10/tasks/F-019.json`：仅文档/索引守护用例（候选索引），
 不代表全量测试、递归重跑或任何阶段验收；双次全量阶段复跑仍为 pending/not_run。
+
+- `index/phases/P08/features/P08-1/tasks/F-001.json`：分发元数据与兼容声明冻结。
+  覆盖四个 package.json 的名称/统一版本/engines(Node 22.19.0、npm 10.9.3)/os(darwin)
+  一致性、工作区依赖与 package-lock 的 link/版本关系、exports/main/types 的 dist→src
+  可解析映射与 CLI bin shebang 约定、`distribution-compatibility.json` 与 Host 协议常量
+  （wire schema 6、旧客户端握手 5、协议 1、发现 schema 1）及数据库 Schema 读写范围
+  （迁移 1..64 连续）的一致性、握手版本门禁对未知 schema/协议的真实拒绝，以及无开发机
+  路径/凭据样式/Nezha 依赖和发布阻塞（license、npm scope、正式包名、发布身份）保持
+  pending 的边界。真实安装/原生模块加载/Host 启动/已有 Host 兼容矩阵登记为 Phase 集成
+  not_run；本 Task 仅本地 pack 元数据冻结，不公开发布。

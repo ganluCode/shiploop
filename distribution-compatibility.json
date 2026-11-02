@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "shiploop.distribution.compatibility",
+  "distributionMode": "local-pack-only",
+  "published": false,
+  "packages": {
+    "root": { "name": "shiploop", "path": "." },
+    "core": { "name": "shiploop-core", "path": "packages/core" },
+    "host": { "name": "shiploop-host", "path": "packages/host" },
+    "cli": { "name": "shiploop-cli", "path": "packages/cli" }
+  },
+  "unifiedVersion": "0.0.0",
+  "platforms": ["darwin"],
+  "toolchain": { "node": "22.19.0", "npm": "10.9.3" },
+  "hostProtocol": {
+    "wireProtocolVersions": [1],
+    "wireSchemaVersion": 6,
+    "legacyHandshakeSchemaVersionsAccepted": [5],
+    "discoverySchemaVersions": [1],
+    "unknownVersionPolicy": "reject"
+  },
+  "databaseSchema": {
+    "engine": "sqlite",
+    "readableAppliedVersions": { "min": 1, "max": 64 },
+    "writableTargetVersion": 64,
+    "higherVersionPolicy": "reject"
+  },
+  "releaseBlockers": {
+    "ownerConfirmation": "pending",
+    "items": {
+      "license": {
+        "status": "pending",
+        "note": "候选许可证尚未由负责人确认；仓库根 LICENSE 只是开发占位，不是发布决定"
+      },
+      "npmScope": {
+        "status": "pending",
+        "note": "npm scope（如 @shiploop/* 或无 scope）尚未确定"
+      },
+      "publicPackageNames": {
+        "status": "pending",
+        "note": "shiploop-core/host/cli 是工作区名称，正式公开包名未确定，不得据此发布"
+      },
+      "publishIdentity": {
+        "status": "pending",
+        "note": "公开发布身份、registry 策略与发布凭据管理未确认；本阶段仅本地 pack"
+      }
+    }
+  },
+  "phaseIntegration": {
+    "status": "not_run",
+    "items": [
+      { "id": "real-install-independent-directory", "note": "在独立干净目录用本地 tarball 真实安装三包并运行" },
+      { "id": "native-module-loading", "note": "安装产物中 better-sqlite3 与 Host 原生写入锁的加载" },
+      { "id": "host-startup-packed-artifact", "note": "打包产物 Host 真实启动与生命周期冒烟" },
+      { "id": "existing-host-compatibility-matrix", "note": "已有 Host 兼容/不兼容场景（旧客户端握手、未知/高版本拒绝）" }
+    ]
+  }
+}
