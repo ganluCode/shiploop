@@ -400,7 +400,7 @@ const STRATEGY_FIELD_PREFIX = 'payload.strategies.';
 export function settingsChangeSummary(payload: SettingsPayload): SettingsChangeSummary {
   return {
     schemaVersion: payload.schemaVersion,
-    strategies: listStrategyEntries(payload.strategies).map((entry) =>
+    strategies: listStrategyEntries(payload.strategies, payload.policies).map((entry) =>
       entry.field.startsWith(STRATEGY_FIELD_PREFIX) ? entry.field.slice(STRATEGY_FIELD_PREFIX.length) : entry.field,
     ),
     policies: Object.keys(payload.policies ?? {}),

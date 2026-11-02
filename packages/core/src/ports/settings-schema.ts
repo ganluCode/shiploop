@@ -232,7 +232,19 @@ export interface RetentionPolicyV2 {
 }
 
 /** 本阶段确认的政策子集；未列出的政策段（memoryPolicy/agentModes 等）未定义即非法。 */
+export interface FeatureAutoFixPolicyV2 {
+  readonly enabled?: boolean;
+  /** Missing uses modelMap.high, never a silent provider/model substitution. */
+  readonly strategy?: RuntimeStrategyV1;
+  /** Defaults to three only when enabled; never resets on process restart. */
+  readonly maxRepairs?: number;
+  readonly maxTokenTotal?: number;
+  readonly timeoutMs?: number;
+  readonly maxTurns?: number;
+}
+
 export interface SettingsPoliciesV2 {
+  readonly featureAutoFix?: FeatureAutoFixPolicyV2;
   readonly executionLimits?: ExecutionLimitsPolicyV2;
   readonly verification?: VerificationPolicyV2;
   readonly securityPolicy?: SecurityPolicyV2;
@@ -266,7 +278,7 @@ const STRATEGIES_KEYS = ['defaultStrategy', 'modelMap', 'purposeStrategies', 'ag
 const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'endpointRef'] as const;
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
-const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy', 'retentionPolicy'] as const;
+const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy', 'retentionPolicy', 'featureAutoFix'] as const;
 const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'toolTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
 const RETENTION_POLICY_KEYS = ['evidenceRetentionDays', 'backupRetentionDays', 'maxBackupCount', 'diskMinFreeBytes', 'diskMinFreePercent'] as const;
@@ -671,6 +683,29 @@ function validateRetentionPolicySection(
   return result;
 }
 
+function validateFeatureAutoFixPolicy(value: unknown, context: ValidationContext, field: string): FeatureAutoFixPolicyV2 {
+  const raw = requirePlainObject(value, context, field);
+  rejectUnknownKeys(raw, ['enabled', 'strategy', 'maxRepairs', 'maxTokenTotal', 'timeoutMs', 'maxTurns'], context, field);
+  const result: { enabled?: boolean; strategy?: RuntimeStrategyV1; maxRepairs?: number;
+    maxTokenTotal?: number; timeoutMs?: number; maxTurns?: number } = {};
+  if (raw.enabled !== undefined) {
+    if (typeof raw.enabled !== 'boolean') throw validationError(context, `${field}.enabled`, '必须为布尔值');
+    result.enabled = raw.enabled;
+  }
+  if (raw.strategy !== undefined) result.strategy = validateRuntimeStrategy(raw.strategy, context, `${field}.strategy`);
+  const limits = { maxRepairs: [1, 3], maxTokenTotal: [1, 1_000_000_000],
+    timeoutMs: [WORK_TIMEOUT_MS_MIN, WORK_TIMEOUT_MS_MAX], maxTurns: [1, 1000] } as const;
+  for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
+    if (raw[key] !== undefined) result[key] = validateBoundedInteger(raw[key], context, `${field}.${key}`, limits[key][0], limits[key][1]);
+  }
+  if (result.enabled === true) {
+    for (const key of ['maxTokenTotal', 'timeoutMs', 'maxTurns'] as const) {
+      if (result[key] === undefined) throw validationError(context, `${field}.${key}`, '启用自动修复必须显式批准有限预算');
+    }
+  }
+  return result;
+}
+
 function validateSettingsPolicies(
   value: unknown,
   context: ValidationContext,
@@ -679,12 +714,14 @@ function validateSettingsPolicies(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, POLICIES_KEYS, context, field);
   const result: {
+    featureAutoFix?: FeatureAutoFixPolicyV2;
     executionLimits?: ExecutionLimitsPolicyV2;
     verification?: VerificationPolicyV2;
     securityPolicy?: SecurityPolicyV2;
     deliveryPolicy?: DeliveryPolicyV2;
     retentionPolicy?: RetentionPolicyV2;
   } = {};
+  if (object.featureAutoFix !== undefined) result.featureAutoFix = validateFeatureAutoFixPolicy(object.featureAutoFix, context, `${field}.featureAutoFix`);
   if (object.executionLimits !== undefined) {
     result.executionLimits = validateExecutionLimitsPolicy(object.executionLimits, context, `${field}.executionLimits`);
   }
@@ -822,11 +859,12 @@ export interface StrategyEntryRef {
  * （defaultStrategy → modelMap → purposeStrategies → agentOverrides 键序）。
  * 无任何条目时返回空数组（未配置）。
  */
-export function listStrategyEntries(strategies: ProjectStrategiesV1 | undefined): StrategyEntryRef[] {
-  if (strategies === undefined) {
-    return [];
-  }
+export function listStrategyEntries(strategies: ProjectStrategiesV1 | undefined, policies?: SettingsPoliciesV2): StrategyEntryRef[] {
+  strategies ??= {};
   const entries: StrategyEntryRef[] = [];
+  if (policies?.featureAutoFix?.strategy !== undefined) {
+    entries.push({ field: 'payload.policies.featureAutoFix.strategy', strategy: policies.featureAutoFix.strategy });
+  }
   if (strategies.defaultStrategy !== undefined) {
     entries.push({ field: 'payload.strategies.defaultStrategy', strategy: strategies.defaultStrategy });
   }

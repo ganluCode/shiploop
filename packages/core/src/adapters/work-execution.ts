@@ -71,6 +71,7 @@ import { computePlanningStrategyCopyDigest } from '../ports/planning-input-prepa
 import { deriveRunDispatchDisplay } from '../ports/execution-dispatch.js';
 import type { DispatchAttemptFence, DispatchSettlementResult } from '../ports/dispatch-settlement.js';
 import type { ExecutionRunStatus } from '../ports/execution-store.js';
+import type { assembleFeatureCloseout } from './feature-closeout.js';
 
 export interface WorkRuntimeContext {
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
@@ -135,6 +136,8 @@ export function assembleWorkExecution(options: {
   } | null>;
   /** F-006：派发归属/槽位心跳续租周期（毫秒）；0 关闭周期续租（测试可显式调用）。 */
   readonly heartbeatIntervalMs?: number;
+  /** Internal default composition, sharing this Host's dispatch identity. */
+  readonly featureCloseoutFactory?: (identity: { ownerId: string; hostInstanceId: string }) => ReturnType<typeof assembleFeatureCloseout>;
 }) {
   const { session, application: app } = options;
   const now = options.nowUtcMs ?? Date.now;
@@ -616,7 +619,14 @@ export function assembleWorkExecution(options: {
     }
   }
 
+  const featureCloseout = options.featureCloseoutFactory?.({ ownerId: owner, hostInstanceId });
   const scheduler = createWorkScheduler({ store, featureDag, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
+    ...(featureCloseout === undefined ? {} : { onHandoff: async (handoff: { projectId: string; runId: string }) => {
+      const result = await featureCloseout.execute(handoff);
+      settleRun(handoff.projectId, handoff.runId);
+      try { options.notificationWake?.(); } catch { /* notification is not business settlement */ }
+      return result;
+    } }),
     claims: app.taskClaims,
     admission: { check: ref => finalizationAdmission(ref.projectId) },
     beforeRun: ref => { settleRun(ref.projectId, ref.runId); },
@@ -898,6 +908,7 @@ export function assembleWorkExecution(options: {
       quiescing = true;
       probeCancellation.abort();
       if (heartbeatTimer !== null) { clearTimeout(heartbeatTimer); heartbeatTimer = null; }
+      await featureCloseout?.close();
       await scheduler.close();
       const result = await execution.close();
       const pendingAttemptIds = [...new Set([...pending(), ...result.pendingAttemptIds])];

@@ -54,7 +54,8 @@ export function createFeatureCloseoutCoordinator(options: {
         row = options.store.transition(row, { stage: 'verified', evidenceRef: verified.evidenceRef });
         continue;
       }
-      if (row.repairCount >= row.maxRepairs) return options.store.transition(row, { stage: 'failed', reason: 'verification_failed' });
+      if (row.repairCount >= row.maxRepairs) return options.store.transition(row, { stage: 'failed',
+        evidenceRef: verified.evidenceRef, reason: 'verification_failed' });
       row = options.store.transition(row, { stage: 'repairing', evidenceRef: verified.evidenceRef, reason: verified.reason });
       try {
         const repair = await options.consumers.repair(key, row.repairCount);

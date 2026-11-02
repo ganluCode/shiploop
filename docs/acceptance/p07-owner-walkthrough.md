@@ -17,7 +17,7 @@
 - **原生恢复能力**：可信项目模式不是 OS 沙箱；Pi 会话续接是对话恢复，不是程序精确断点。原生存档缺失/损坏/不兼容、第二写入者与双存储不一致时明确拒绝或修复后继续；`unsupported`/`not_run` 不计为通过。
 - **备份/归档**：`data.backup.create` 经真实 Host 导出 SQLite 在线备份与制品文件；`restore verify → prepare → confirm` 是独立离线维护入口，只发布到显式空目标根，不经 HTTP 替换正在运行的数据库。备份验证覆盖 manifest/数据库/迁移/制品哈希；**局限**：备份导出的是打包时刻的一致快照，不覆盖导出之后的增量；恢复目标是隔离数据根，不回写原根；checkpoint 明确 unsupported 时不冒充可恢复。
 - **通知**：仅 `local-results` 本地渠道（冻结词汇），失败进入有界重试（默认 4 次、指数退避），投递独立于业务执行，不重跑任务；结果与原因经 Host/CLI 可查询。
-- **能力缺口（如实保留）**：Feature finalization 的执行/收尾消费者是受信装配端口，默认生产 Host 不装配（capability gap 按设计保留）。因此全部 Task 通过后 Run 停在 `running` 等待最终核验，本阶段演示不宣称 Feature 交付完成。
+- **当前边界（如实保留）**：普通 Run 的首次 Feature 验收、受控 Git 交付和单 Feature 结算已由默认 Host 装配；自动修复配置可校验，但通用修复 Runtime 尚未装配。自动修复启用时会在验收/提交前暂停，不重跑已通过 Task。跨 Host 恢复与共享 Batch 默认全链路仍需后续验收。
 
 ## 负责人命令（示例；run-id 每次唯一，不复用旧目录）
 

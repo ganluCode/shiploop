@@ -70,6 +70,7 @@ export async function seedApprovalWaitingVerification(options: {
   readonly responsibleParty?: string;
   readonly taskId?: string;
   readonly approvalItem?: boolean;
+  readonly checkDefinition?: import('../../../packages/core/src/ports/verification-store.ts').VerificationCheckSnapshotEntry;
 }): Promise<SeededApprovalWaitingState> {
   const fixture = options.fixture;
   const taskId = options.taskId ?? 't-1';
@@ -160,7 +161,7 @@ export async function seedApprovalWaitingVerification(options: {
         platform: process.platform,
       },
       checkSnapshot: [
-        {
+        options.checkDefinition ?? {
           checkKey: 'tests',
           scope: 'task',
           kind: 'command',

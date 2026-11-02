@@ -233,6 +233,7 @@ import { createBaselinePartialOutputReader } from './fs/baseline-partial-output.
 import { createBaselineRepositoryGuard } from './fs/baseline-repository-guard.js';
 import { createGitPublicMetadataLock } from './fs/git-public-metadata-lock.js';
 import { createCommandProcessAdapter } from './process/command-process.js';
+import { assembleFeatureCloseout } from './feature-closeout.js';
 import { createBaselineWorkspaceReader } from './fs/baseline-workspace.js';
 import { createPathService } from './fs/path-service.js';
 import { createRepositoryInspector } from './fs/repository-inspector.js';
@@ -1384,7 +1385,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         limits: { maxSizeBytes: 2_000_000, timeoutMs: 60_000 } }),
       recoveryCatalog: recoveryCatalog, ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    const verificationStops = createVerificationStopControl();
     const workExecution = assembleWorkExecution({ session,
+      featureCloseoutFactory: identity => assembleFeatureCloseout({ ...identity, session, resources: workResources,
+        artifacts: artifactStore, files: artifactFileStore, publisher: workspacePublisher,
+        processes: workspaceCommandProcess, inspectorFor: workspaceInspectorForCall,
+        driverFor: (projectId, signal, observeStop) => createGitCommitDriver({ signal, observeStop,
+          confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId) }),
+        lock: workspaceGitLock, stopControl: verificationStops, nowUtcMs,
+        confirmProcessIdentity: async (projectId, process) => { await confirmWorkspaceProcessIdentity(projectId)(process); },
+      }),
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         maintenanceGate,
         configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
@@ -1406,7 +1416,6 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
     // AbortSignal 停止路径。证据经既有 Artifact 发布，不写供应商私有存储。
-    const verificationStops = createVerificationStopControl();
     const executionStopControl = createExecutionStopControl({
       atomic: atomicStore,
       attempts: createSqliteAttemptAccess(session),

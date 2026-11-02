@@ -8,6 +8,7 @@ import { createSqliteAtomicCommandStore } from './atomic-commands.js';
 import { createSqliteRunDispatchSettlement } from './dispatch-settlement.js';
 import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 import type { SqliteStorageSession } from './session.js';
+import type { CommandTransaction } from '../../ports/atomic-commands.js';
 
 export interface FeatureCloseoutLease { readonly signal: AbortSignal }
 
@@ -26,8 +27,8 @@ export function createSqliteFeatureCloseoutLease(session: SqliteStorageSession, 
   function fail(reason: string): never {
     throw new StorageError('conflict', 'FeatureCloseout.lease', 'Feature closeout resources unavailable', { details: { reason } });
   }
-  function inspect(key: FeatureCloseoutKey, expected?: DispatchSettlementClaimIdentity, allowExpired = false): DispatchSettlementClaimIdentity {
-    return atomic.transact('FeatureCloseout.lease.read', tx => {
+  function inspect(key: FeatureCloseoutKey, expected?: DispatchSettlementClaimIdentity, allowExpired = false, transaction?: CommandTransaction): DispatchSettlementClaimIdentity {
+    const read = (tx: CommandTransaction) => {
       if (tx.getProject(key.projectId).status !== 'active') fail('closeout_project_not_active');
       const run = tx.getExecutionRun(key.projectId, key.runId);
       const batch = tx.getExecutionBatch(key.projectId, run.batchId);
@@ -50,16 +51,17 @@ export function createSqliteFeatureCloseoutLease(session: SqliteStorageSession, 
         lease.state === 'held' && (allowExpired || lease.leaseUntilUtcMs > now())
         && stableStringify(lease.resource) === stableStringify(resource)))) fail('closeout_feature_resource_missing');
       return { claimId: claim.id, claimVersion: claim.claimVersion, ownerId: claim.ownerId, hostInstanceId: claim.hostInstanceId };
-    });
+    };
+    return transaction ? read(transaction) : atomic.transact('FeatureCloseout.lease.read', read);
   }
   function data(token: FeatureCloseoutLease) {
     const value = tokens.get(token);
     if (!value || value.abort.signal.aborted) fail('closeout_lease_not_current');
     return value;
   }
-  function assertCurrent(token: FeatureCloseoutLease): void {
+  function assertCurrent(token: FeatureCloseoutLease, transaction?: CommandTransaction): void {
     const value = data(token);
-    try { inspect(value.key, value.expected); }
+    try { inspect(value.key, value.expected, false, transaction); }
     catch (error) { value.abort.abort(); throw error; }
   }
   function renew(token: FeatureCloseoutLease): void {

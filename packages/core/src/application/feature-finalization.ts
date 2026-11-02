@@ -31,15 +31,14 @@ export interface FeatureFinalizationOptions {
   readonly commit?: ControlledGitCommitService;
 }
 
-function isTerminal(feature: { status: string }, run: { status: string }, batch: { status: string }): boolean {
+function isTerminal(feature: { status: string }, run: { status: string }): boolean {
   return ['completed', 'partial', 'failed'].includes(feature.status) &&
-    ['succeeded', 'failed', 'cancelled'].includes(run.status) &&
-    ['succeeded', 'failed', 'cancelled'].includes(batch.status);
+    ['succeeded', 'failed', 'cancelled'].includes(run.status);
 }
 
 /**
  * F-007 Feature 收尾编排：外部验证、人审和 Git 在事务外完成；最终状态、Run、
- * 单 Feature Batch 与脱敏事件由一个原子事务提交。不会创建 Attempt、Runtime 或
+ * Batch（全部固定成员完成后）与脱敏事件由一个原子事务提交。不会创建 Attempt、Runtime 或
  * 修复 Session，重复唤醒在前置读取处直接返回既有终态。
  */
 export function createFeatureFinalizationService(options: FeatureFinalizationOptions) {
@@ -49,13 +48,18 @@ export function createFeatureFinalizationService(options: FeatureFinalizationOpt
       const plan = transaction.getFeaturePlan(input.projectId, input.featureId);
       const run = transaction.getExecutionRun(input.projectId, input.runId);
       const batch = transaction.getExecutionBatch(input.projectId, input.batchId);
-      if (run.batchId !== batch.id || run.featureId !== input.featureId || batch.featureId !== input.featureId) {
+      const members = transaction.listExecutionBatchMemberFeatureIds(input.projectId, batch.id);
+      if (run.batchId !== batch.id || run.featureId !== input.featureId || !members.includes(input.featureId)) {
         throw new Error('Feature、Run、Batch 归属不一致');
+      }
+      if (members.length > 1 && !isTerminal(plan.feature, run)
+        && (!['queued', 'running'].includes(batch.status) || batch.pauseRequestedAtUtcMs !== null)) {
+        throw new Error('Shared Batch control blocks Feature finalization');
       }
       return { feature: plan.feature, run, batch };
     });
 
-    if (isTerminal(current.feature, current.run, current.batch)) {
+    if (isTerminal(current.feature, current.run)) {
       return {
         ...current,
         deliveryStatus: current.feature.deliveryStatus,

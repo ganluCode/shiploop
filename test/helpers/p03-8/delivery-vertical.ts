@@ -78,9 +78,14 @@ export interface DeliveryVertical {
   close(): Promise<void>;
 }
 
-export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean; confirmProjectProfile?: boolean } = {}): Promise<DeliveryVertical> {
+export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean; confirmProjectProfile?: boolean;
+  reserveFinalResources?: boolean;
+  featureAutoFixPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').FeatureAutoFixPolicyV2;
+  verificationPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').VerificationPolicyV2 } = {}): Promise<DeliveryVertical> {
   const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true,
     confirmProjectProfile: options.confirmProjectProfile,
+    verificationPolicy: options.verificationPolicy,
+    featureAutoFixPolicy: options.featureAutoFixPolicy,
     deliveryPolicy: { commitMode: 'task_and_feature',
       gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true }, deliveryActions: ['commit'] } });
   const db: Database.Database = fixture.session.database;
@@ -138,8 +143,9 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
         hostInstanceId: attempt.host_instance_id, executionVersion: attempt.execution_version };
       const leases = db.prepare('SELECT * FROM workspace_leases').all() as Record<string, unknown>[];
       expect(leases).toHaveLength(3);
-      await seedApprovalWaitingVerification({ fixture, completion: core.taskVerificationCompletion, taskId, approvalItem: false });
-      if (taskId === 't-2') {
+      await seedApprovalWaitingVerification({ fixture, completion: core.taskVerificationCompletion, taskId, approvalItem: false,
+        checkDefinition: options.verificationPolicy?.checkDefinitions?.find(check => check.checkKey === 'tests') });
+      if (taskId === 't-2' && options.reserveFinalResources !== false) {
         // Fixture-only final reservation. Never revive an old process or invoke Runtime.
         fixture.session.transactWrite('F012.reserve-final', () => {
           for (const row of leases) {

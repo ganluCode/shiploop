@@ -219,8 +219,9 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
         return result;
       }
       try {
-        await options.onHandoff(handoff);
-        const recorded = options.store.recordFinalVerificationHandoff(projectId, runId);
+        const acknowledgement = await options.onHandoff(handoff);
+        const recorded = acknowledgement?.recordHandoff !== false
+          && options.store.recordFinalVerificationHandoff(projectId, runId);
         if (recorded) handedOff.add(handoffKey);
         const result: SchedulerRunResult = { projectId, runId, reason: dag.reason,
           capabilityGaps: [], claimed: false, handoff: recorded ? handoff : null };

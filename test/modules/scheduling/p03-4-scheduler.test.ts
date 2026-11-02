@@ -91,6 +91,25 @@ describe('F-006 bounded Work Scheduler', () => {
       expect(f.box.session.database.prepare('SELECT count(*) AS n FROM attempts').get()).toEqual({ n: 1 });
     } finally { await scheduler.close(); f.box.close(); }
   });
+  it('preserves a consumer-owned pause reason when handoff acknowledgement is declined', async () => {
+    const f = await openClaimFixture();
+    persistVerifiedPassFixture(f.box, f.ids, 't-1', f.input().inputSnapshot);
+    const store = schedulerOptions(f).store;
+    const record = vi.spyOn(store, 'recordFinalVerificationHandoff');
+    const onHandoff = vi.fn(async () => {
+      store.recordRunReason(f.ids.projectId, f.ids.runId, 'closeout_policy_blocked');
+      return { recordHandoff: false };
+    });
+    const scheduler = createWorkScheduler({ ...schedulerOptions(f), store, onHandoff });
+    try {
+      expect((await scheduler.scan()).runs[0]).toMatchObject({ handoff: null });
+      expect(record).not.toHaveBeenCalled();
+      expect(f.box.session.database.prepare('SELECT reason FROM runs').get())
+        .toEqual({ reason: 'closeout_policy_blocked' });
+      expect(scheduler.handedOffCount()).toBe(0);
+    } finally { await scheduler.close(); f.box.close(); }
+  });
+
   it('re-scans after a synchronously empty scan instead of reusing the settled promise', async () => {
     const run = { projectId: 'p-1', runId: 'r-1', status: 'queued', featureId: 'f-1',
       inputSnapshot: { schemaVersion: 1 }, revision: 1 };

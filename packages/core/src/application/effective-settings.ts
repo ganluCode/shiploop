@@ -38,6 +38,7 @@ import {
 } from '../ports/settings-schema.js';
 import type {
   DeliveryPolicyV2,
+  FeatureAutoFixPolicyV2,
   ExecutionLimitsPolicyV2,
   ModelComplexity,
   RetentionPolicyV2,
@@ -95,6 +96,7 @@ export interface EffectivePolicySection<T> {
 
 /** 有效政策集合：未提供的段缺省。 */
 export interface EffectivePolicies {
+  readonly featureAutoFix?: EffectivePolicySection<FeatureAutoFixPolicyV2>;
   readonly executionLimits?: EffectivePolicySection<ExecutionLimitsPolicyV2>;
   readonly verification?: EffectivePolicySection<VerificationPolicyV2>;
   readonly securityPolicy?: EffectivePolicySection<SecurityPolicyV2>;
@@ -297,12 +299,16 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
   const globalPolicies = globalScope?.payload.policies;
   const projectPolicies = projectScope?.payload.policies;
   const policies: {
+    featureAutoFix?: EffectivePolicySection<FeatureAutoFixPolicyV2>;
     executionLimits?: EffectivePolicySection<ExecutionLimitsPolicyV2>;
     verification?: EffectivePolicySection<VerificationPolicyV2>;
     securityPolicy?: EffectivePolicySection<SecurityPolicyV2>;
     deliveryPolicy?: EffectivePolicySection<DeliveryPolicyV2>;
     retentionPolicy?: EffectivePolicySection<RetentionPolicyV2>;
   } = {};
+  const featureAutoFix = pickPolicySection('policies.featureAutoFix', projectPolicies?.featureAutoFix, projectScope,
+    globalPolicies?.featureAutoFix, globalScope);
+  if (featureAutoFix !== undefined) policies.featureAutoFix = featureAutoFix;
   const executionLimits = pickPolicySection(
     'policies.executionLimits',
     projectPolicies?.executionLimits,

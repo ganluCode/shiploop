@@ -195,7 +195,7 @@ export function validateStrategyCapabilities(
   catalog: RuntimeCapabilityCatalog,
   context: ValidationContext,
 ): void {
-  for (const { field, strategy } of listStrategyEntries(payload.strategies)) {
+  for (const { field, strategy } of listStrategyEntries(payload.strategies, payload.policies)) {
     validateRuntimeStrategyCapabilities(strategy, catalog, context, field);
   }
 }
@@ -213,7 +213,7 @@ export interface SettingsConfigurationAssessment {
 }
 
 export function assessSettingsConfiguration(payload: SettingsPayload): SettingsConfigurationAssessment {
-  if (listStrategyEntries(payload.strategies).length === 0) {
+  if (listStrategyEntries(payload.strategies, payload.policies).length === 0) {
     return { configured: false, executable: false, reason: 'no_strategy_configured' };
   }
   return { configured: true, executable: false, reason: 'execution_capability_not_assembled' };

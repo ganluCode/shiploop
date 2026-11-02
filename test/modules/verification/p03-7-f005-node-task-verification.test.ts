@@ -15,10 +15,12 @@ const report = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('P03-7 F-005 Node Task verification', () => {
-  it('forwards Feature lease cancellation and does not launch a check after the lease is lost', async () => {
+  it.each(['lease_cancelled', 'parent_expired'])('does not launch a Feature check when %s', async reason => {
     let starts = 0;
-    const controller = new AbortController(); controller.abort();
+    const controller = new AbortController();
+    if (reason === 'lease_cancelled') controller.abort();
     const executor = createFeatureNodeVerificationExecutor({
+      nowUtcMs: () => 1000,
       processes: { async start() { starts++; throw new Error('must_not_start'); } },
       artifacts: {} as never, files: {} as never,
       verification: {
@@ -35,6 +37,7 @@ describe('P03-7 F-005 Node Task verification', () => {
       cwdRef: null, environmentRef: null, timeout: 1000, required: true, requirementRefs: [] };
     const result = await executor.start({ projectId: 'project-1', featureId: 'feature-1', runId: 'run-1', batchId: 'batch-1',
       operation: 'FeatureVerification.full', executionVersion: 1, signal: controller.signal,
+      deadlineUtcMs: reason === 'parent_expired' ? 999 : undefined,
       codeIdentity: { headCommit: 'a'.repeat(40), codeDigest: 'b'.repeat(64) },
       policyDigest: 'c'.repeat(64), environmentSummary: {}, targets: ['unit'],
       plan: { status: 'ready', mode: 'full_fallback', affectedModules: [], coveredModules: [], selectedChecks: [check],

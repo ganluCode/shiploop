@@ -152,7 +152,8 @@ export interface WorkSchedulerOptions {
   readonly prepareClaim?: (context: SchedulerClaimContext) => Promise<unknown>;
   /** Called only after claimTask has returned a committed receipt. */
   readonly consumeClaim?: (receipt: TaskClaimReceipt, context: SchedulerClaimContext) => Promise<void>;
-  readonly onHandoff?: (handoff: SchedulerHandoff) => Promise<void>;
+  /** A consumer owning durable closeout may decline the legacy reason marker. */
+  readonly onHandoff?: (handoff: SchedulerHandoff) => Promise<void | { readonly recordHandoff: boolean }>;
   /** finalization-only Run 在编码认领前分流；未装配时保持既有 capability gap。 */
   readonly finalization?: SchedulerFinalization;
   /** handoff 已记录后继续审批/提交；仅在 Run 仍可调度时调用。 */

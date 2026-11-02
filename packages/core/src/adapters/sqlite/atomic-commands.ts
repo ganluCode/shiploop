@@ -82,23 +82,47 @@ export function createSqliteAtomicCommandStore(
           if (outcome === 'completed' && snapshot.tasks.some(task => task.status !== 'passed')) throw new StorageError('conflict', operation, '必需 Task 尚未全部有效通过');
           const currentRun = executions.getExecutionRunInTransaction(projectId, runId);
           const currentBatch = executions.getExecutionBatchInTransaction(projectId, batchId);
-          if (currentRun.batchId !== batchId || currentRun.featureId !== featureId || currentBatch.featureId !== featureId) {
+          const members = executions.listExecutionBatchMemberFeatureIdsInTransaction(projectId, batchId);
+          const sharedBatch = members.length > 1;
+          if (currentRun.batchId !== batchId || currentRun.featureId !== featureId || !members.includes(featureId)) {
             throw new StorageError('ownership', operation, 'Feature、Run、Batch 归属不一致');
           }
           const alreadySettled = ['completed', 'partial', 'failed'].includes(snapshot.feature.status) &&
-            ['succeeded', 'failed', 'cancelled'].includes(currentRun.status) &&
-            ['succeeded', 'failed', 'cancelled'].includes(currentBatch.status);
+            ['succeeded', 'failed', 'cancelled'].includes(currentRun.status);
           if (!alreadySettled) {
+            if (sharedBatch && (!['queued', 'running'].includes(currentBatch.status) || currentBatch.pauseRequestedAtUtcMs !== null)) {
+              throw new StorageError('conflict', operation, 'Shared Batch 控制状态不允许结算');
+            }
             if (snapshot.feature.revision !== value.expectedFeatureRevision || currentRun.revision !== value.expectedRunRevision || currentBatch.revision !== value.expectedBatchRevision) {
               throw new StorageError('conflict', operation, 'Feature 收尾期间身份或 revision 已变化');
             }
             const timestamp = (options.nowUtcMs ?? Date.now)();
             const runStatus = outcome === 'completed' ? 'succeeded' : outcome === 'awaiting_approval' ? 'paused' : 'failed';
-            const batchStatus = runStatus;
             const featureUpdate = session.database.prepare('UPDATE features SET status = ?, delivery_status = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?').run(outcome, deliveryStatus, timestamp, projectId, featureId, value.expectedFeatureRevision);
             const runUpdate = session.database.prepare('UPDATE runs SET status = ?, reason = ?, ended_at = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(runStatus, value.reason, outcome === 'awaiting_approval' ? null : timestamp, timestamp, projectId, runId, value.expectedRunRevision);
-            const batchUpdate = session.database.prepare('UPDATE execution_batches SET status = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(batchStatus, value.reason, timestamp, projectId, batchId, value.expectedBatchRevision);
-            if (featureUpdate.changes !== 1 || runUpdate.changes !== 1 || batchUpdate.changes !== 1) throw new StorageError('conflict', operation, '最终收尾 CAS 未命中');
+            if (featureUpdate.changes !== 1 || runUpdate.changes !== 1) throw new StorageError('conflict', operation, '最终收尾 CAS 未命中');
+            // Shared Batch is not a child Run: never stop siblings or mark an
+            // unstarted member complete merely because this child settled.
+            let batchStatus: string | null = sharedBatch ? null : runStatus;
+            if (sharedBatch) {
+              const terminalMembers = members.map(memberId => {
+                const feature = plan.getFeaturePlanInTransaction(projectId, memberId).feature;
+                const runs = session.database.prepare('SELECT status FROM runs WHERE project_id=? AND batch_id=? AND feature_id=?')
+                  .all(projectId, batchId, memberId) as { status: string }[];
+                return { feature, runs, terminal: ['completed', 'partial', 'failed'].includes(feature.status)
+                  && runs.length > 0 && runs.every(run => ['succeeded', 'failed', 'cancelled'].includes(run.status)) };
+              });
+              if (terminalMembers.every(member => member.terminal)) {
+                batchStatus = terminalMembers.every(member => member.feature.status === 'completed'
+                  && member.feature.deliveryStatus === 'succeeded' && member.runs.some(run => run.status === 'succeeded'))
+                  ? 'succeeded' : 'failed';
+              }
+            }
+            if (batchStatus !== null) {
+              const batchReason = sharedBatch && batchStatus === 'failed' ? 'feature_member_failed' : value.reason;
+              const batchUpdate = session.database.prepare('UPDATE execution_batches SET status = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(batchStatus, batchReason, timestamp, projectId, batchId, value.expectedBatchRevision);
+              if (batchUpdate.changes !== 1) throw new StorageError('conflict', operation, '最终收尾 Batch CAS 未命中');
+            }
             const reasonCode = /^[a-z][a-z0-9_.-]{0,63}$/.test(value.reason as string) ? value.reason as string : 'finalization_failed';
             const featureEventPayload = {
               schemaVersion: 1, outcome, deliveryStatus, reasonCode,
@@ -117,18 +141,20 @@ export function createSqliteAtomicCommandStore(
                 payload: { schemaVersion: 1, status: runStatus, resultCategory: 'feature_finalization',
                   resultRef: value.operationId as string | null, batchId, featureId },
               });
-              executions.appendExecutionEventInTransaction({
-                projectId, eventType: 'execution.batch.ended', aggregateType: 'execution_batch', aggregateId: batchId,
-                aggregateRevision: currentBatch.revision + 1,
-                payload: { schemaVersion: 1, status: batchStatus, resultCategory: 'feature_finalization',
-                  resultRef: value.operationId as string | null, batchId, featureId },
-              });
+              if (batchStatus !== null) {
+                executions.appendExecutionEventInTransaction({
+                  projectId, eventType: 'execution.batch.ended', aggregateType: 'execution_batch', aggregateId: batchId,
+                  aggregateRevision: currentBatch.revision + 1,
+                  payload: { schemaVersion: 1, status: batchStatus, resultCategory: 'feature_finalization',
+                    resultRef: value.operationId as string | null, batchId, featureId },
+                });
+              }
             }
           }
           const resultFeature = plan.getFeaturePlanInTransaction(projectId, featureId).feature;
           const resultRun = executions.getExecutionRunInTransaction(projectId, runId);
           const resultBatch = executions.getExecutionBatchInTransaction(projectId, batchId);
-          const settled = ['completed', 'partial', 'failed'].includes(resultFeature.status) && ['succeeded', 'failed', 'cancelled'].includes(resultRun.status) && ['succeeded', 'failed', 'cancelled'].includes(resultBatch.status);
+          const settled = ['completed', 'partial', 'failed'].includes(resultFeature.status) && ['succeeded', 'failed', 'cancelled'].includes(resultRun.status);
           return { feature: resultFeature, run: resultRun, batch: resultBatch, deliveryStatus: settled ? resultFeature.deliveryStatus : deliveryStatus, outcome: settled ? resultFeature.status as FeatureFinalizationRecord['outcome'] : outcome, reason: settled ? (resultRun.reason ?? value.reason as string) : value.reason as string, operationId: (value.operationId as string | null) ?? null };
         };
         const transaction: CommandTransaction = Object.freeze({

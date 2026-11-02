@@ -8,6 +8,7 @@ export type FeatureVerificationStatus = (typeof FEATURE_VERIFICATION_STATUSES)[n
 export type FeatureVerificationOutcomeStatus = FeatureVerificationStatus | 'blocked' | 'invalid';
 
 export interface FeatureVerificationExecutionInput {
+  readonly deadlineUtcMs?: number;
   readonly signal?: AbortSignal;
   readonly projectId: string;
   readonly featureId: string;
@@ -51,6 +52,7 @@ export interface FeatureTaskGate {
 }
 
 export interface FeatureVerificationInput {
+  readonly deadlineUtcMs?: number;
   readonly signal?: AbortSignal;
   readonly projectId: string;
   readonly featureId: string;

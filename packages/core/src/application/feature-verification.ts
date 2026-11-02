@@ -138,6 +138,7 @@ export function createFeatureVerificationCoordinator(options: FeatureVerificatio
         }
       };
       const executionInput: FeatureVerificationExecutionInput = {
+        deadlineUtcMs: input.deadlineUtcMs,
         signal: input.signal,
         projectId: input.projectId, featureId: input.featureId, runId: input.runId,
         batchId: input.batchId, operation: input.operation ?? FEATURE_VERIFICATION_OPERATION,

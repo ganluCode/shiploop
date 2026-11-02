@@ -67,6 +67,8 @@ export const FAKE_STRATEGY = { runtime: 'fake', provider: 'test-provider', model
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
 export interface BindingFixtureOptions {
+  readonly verificationPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').VerificationPolicyV2;
+  readonly featureAutoFixPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').FeatureAutoFixPolicyV2;
   /** Explicit existing repository, owned by the caller (never cleaned by this fixture). */
   readonly repositoryPath?: string;
   /** Seed real managed knowledge before preparation; only selection requests are returned. */
@@ -251,10 +253,20 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     requireCompleted(
       await submit('settings.global.create', {
         schemaVersion: 2, strategies: { defaultStrategy: { ...strategy } },
-        ...(options.deliveryPolicy === undefined ? {} : { policies: { deliveryPolicy: options.deliveryPolicy } }),
+        ...(options.deliveryPolicy === undefined ? {} : { policies: {
+          ...(options.deliveryPolicy === undefined ? {} : { deliveryPolicy: options.deliveryPolicy }),
+        } }),
       }, { scope: { kind: 'global' } }),
       'settings.global.create',
     );
+    if (options.verificationPolicy !== undefined || options.featureAutoFixPolicy !== undefined) {
+      requireCompleted(await submit('settings.project.create', {
+        schemaVersion: 2, policies: {
+          ...(options.verificationPolicy === undefined ? {} : { verification: options.verificationPolicy }),
+          ...(options.featureAutoFixPolicy === undefined ? {} : { featureAutoFix: options.featureAutoFixPolicy }),
+        },
+      }, { scope }), 'settings.project.create');
+    }
     requireCompleted(
       await submit('phase.create', { id: 'phase-1', title: '绑定阶段', description: null, labels: [] }, { scope }),
       'phase.create',

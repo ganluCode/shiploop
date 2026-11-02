@@ -1,10 +1,68 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFeatureFinalizationService } from '../../../packages/core/src/application/feature-finalization.ts';
 import { openBudgetFixture } from '../../helpers/p03-3/budget-fixture.ts';
+import { createSqliteExecutionAccess } from '../../../packages/core/src/adapters/sqlite/execution-store.ts';
+import { BUDGET, NOW } from '../../helpers/p03-3/budget-fixture.ts';
 
 describe('F-007 Feature finalization', () => {
   const boxes: Array<{ close: () => void }> = [];
   afterEach(() => { for (const box of boxes.splice(0).reverse()) box.close(); });
+
+  it.each([
+    { passed: true, approved: true, parentStatus: 'succeeded', commits: 2 },
+    { passed: false, approved: true, parentStatus: 'failed', commits: 1 },
+    { passed: true, approved: false, parentStatus: 'queued', commits: 1 },
+  ])('shared Batch settles children independently ($parentStatus, approved=$approved)', async scenario => {
+    const box = await openBudgetFixture(); boxes.push(box);
+    const db = box.session.database;
+    const other = 'feature-other';
+    db.prepare(`INSERT INTO features(id,created_at,project_id,revision,updated_at,phase_id,title,status,plan_status,description,labels,source_refs,plan_digest)
+      SELECT ?,created_at,project_id,1,updated_at,phase_id,'Other','running',plan_status,description,labels,source_refs,plan_digest
+      FROM features WHERE id=?`).run(other, box.featureId);
+    db.prepare(`INSERT INTO tasks(id,created_at,project_id,revision,updated_at,feature_id,title,status,
+      complexity,description,labels,acceptance,requirements_refs,execution_config,config_source,config_source_key)
+      SELECT 'task-other',created_at,project_id,1,updated_at,?,'Other Task','passed',
+        complexity,description,labels,acceptance,requirements_refs,execution_config,config_source,config_source_key
+      FROM tasks WHERE id='t-1'`).run(other);
+    // The finalization primitive needs only approved membership and passed Tasks;
+    // this fixture does not claim to prove Runtime or Git authorization.
+    db.prepare("UPDATE tasks SET status='passed' WHERE project_id=?").run(box.projectId);
+    const access = createSqliteExecutionAccess(box.session, { nowUtcMs: () => NOW });
+    const batchId = 'shared-closeout';
+    box.session.transactWrite('test.sharedBatch', () => {
+      access.insertExecutionBatchInTransaction({ projectId: box.projectId, phaseId: 'phase-1', featureId: box.featureId,
+        batchId, scopeSnapshot: { featureIds: [box.featureId, other] }, configSnapshot: {},
+        budgetSnapshot: { schemaVersion: 1, ...BUDGET }, status: 'queued', runsCreated: 2, reason: null });
+      for (const [featureId, runId] of [[box.featureId, 'child-a'], [other, 'child-b']]) {
+        access.insertExecutionRunInTransaction({ projectId: box.projectId, batchId, featureId, runId, purpose: 'execute',
+          inputSnapshot: {}, configSnapshot: {}, status: 'queued', scopeDigest: 'a'.repeat(64), workKey: runId,
+          dispatchOrdinal: 1, maxAttemptsPerRun: 2, runTimeLimitMs: 60_000, reason: null });
+      }
+    });
+    const verify = vi.fn(async input => ({ passed: input.featureId === box.featureId || scenario.passed, reason: 'verification_result' }));
+    const commit = vi.fn(async ({ operationId }) => ({ intent: { operationId }, deliveryStatus: 'succeeded', status: 'succeeded' } as any));
+    const service = createFeatureFinalizationService({ atomic: box.atomic, verify,
+      readApproval: async input => ({ valid: input.featureId === box.featureId || scenario.approved, reason: 'approval_result' }), commit: { commit } });
+    const firstInput = { projectId: box.projectId, featureId: box.featureId, batchId, runId: 'child-a', operationId: 'git-a' };
+    const first = await service.finalize(firstInput);
+    expect(first).toMatchObject({ feature: { status: 'completed' }, run: { status: 'succeeded' }, batch: { status: 'queued' } });
+    expect(db.prepare('SELECT status FROM runs WHERE id=?').get('child-b')).toEqual({ status: 'queued' });
+    await service.finalize(firstInput);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    db.prepare("UPDATE execution_batches SET status='paused',revision=revision+1 WHERE id=?").run(batchId);
+    await expect(service.finalize({ ...firstInput, featureId: other, runId: 'child-b', operationId: 'git-b' }))
+      .rejects.toThrow('Shared Batch control');
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    db.prepare("UPDATE execution_batches SET status='queued',revision=revision+1 WHERE id=?").run(batchId);
+    const last = await service.finalize({ ...firstInput, featureId: other, runId: 'child-b', operationId: 'git-b' });
+    expect(last.batch.status).toBe(scenario.parentStatus);
+    await service.finalize(firstInput);
+    expect(commit).toHaveBeenCalledTimes(scenario.commits);
+    expect(db.prepare("SELECT count(*) AS n FROM state_events WHERE event_type='execution.batch.ended' AND aggregate_id=?").get(batchId))
+      .toEqual({ n: scenario.parentStatus === 'queued' ? 0 : 1 });
+  });
 
   it('完成 Feature、execute Run 和单 Feature Batch，重复调用不重复验证或提交', async () => {
     const box = await openBudgetFixture();

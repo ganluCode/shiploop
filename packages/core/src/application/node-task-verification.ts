@@ -409,6 +409,7 @@ export function createFeatureNodeVerificationExecutor(options: NodeTaskVerificat
         signal: input.signal,
         projectId: input.projectId, featureId: input.featureId, runId: input.runId,
         taskId: anchor.taskId, attemptId: anchor.attemptId, executionVersion: input.executionVersion,
+        deadlineUtcMs: input.deadlineUtcMs,
         batchId: input.batchId, operation: input.operation, evidenceOperationId: randomUUID(), codeDigest: input.codeIdentity.codeDigest,
         codeIdentity: {
           headCommit: input.codeIdentity.headCommit,

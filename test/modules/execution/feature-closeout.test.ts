@@ -37,6 +37,7 @@ it('persists three repairs at most, rechecks after each and never delivers faile
     const service = createFeatureCloseoutCoordinator({ ...t, owner: 'host-a', maxRepairs: 3 });
     const result = await service.execute(t.key);
     expect(result.stage).toBe('failed'); expect(result.repairCount).toBe(3);
+    expect(result.evidenceRef).toBe('failed-verification');
     expect(t.consumers.repair).toHaveBeenCalledTimes(3);
     expect(t.consumers.verify).toHaveBeenCalledTimes(4);
     expect(t.consumers.complete).not.toHaveBeenCalled();
