@@ -54,6 +54,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
   let wroteFile = false;
   let reason: string | null = null;
   let reservedTokens = 0;
+  const assistantMessages: { stopReason: string | null; toolNames: string[]; textCharacters: number; errorPresent: boolean }[] = [];
   const deadline = Math.min(input.expiresAt, Date.now() + input.timeoutMs);
   let session: { prompt(value: string): Promise<void>; waitForIdle?(): Promise<void>; abort(): Promise<void>; dispose(): void } | undefined;
   try {
@@ -120,6 +121,18 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     if (session === undefined || result.session.model?.provider !== input.provider || result.session.model?.id !== input.model) {
       throw new Error('actual_model_configuration_mismatch');
     }
+    result.session.subscribe((event: any) => {
+      if (event.type !== 'message_end' || event.message?.role !== 'assistant') return;
+      const message = event.message;
+      assistantMessages.push({
+        stopReason: typeof message.stopReason === 'string' ? message.stopReason : null,
+        toolNames: (message.content ?? []).filter((part: any) => part.type === 'toolCall')
+          .map((part: any) => part.name === 'write_approved_file' ? part.name : 'unexpected_tool'),
+        textCharacters: (message.content ?? []).filter((part: any) => part.type === 'text')
+          .reduce((sum: number, part: any) => sum + String(part.text ?? '').length, 0),
+        errorPresent: typeof message.errorMessage === 'string' && message.errorMessage.length > 0,
+      });
+    });
     await session.prompt(input.prompt);
     await session.waitForIdle?.();
     if (!wroteFile) throw new Error('approved_file_not_written');
@@ -137,7 +150,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     session?.dispose();
     save(input.reportFile, {
       schemaVersion: 1, executionMode: 'live', taskId: input.taskId, attemptId: input.attemptId,
-      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason,
+      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, assistantMessages,
     });
   }
 }
