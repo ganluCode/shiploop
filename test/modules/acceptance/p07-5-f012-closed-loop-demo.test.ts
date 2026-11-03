@@ -215,8 +215,7 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 F-012 公开闭环恢复�
     expect(finalBudget.deadline_at).toBe(before.deadline_at);
     expect(finalBudget.budget_snapshot).toEqual(before.budget_snapshot);
     expect(f.runtimeStarts()).toHaveLength(4);
-    /* 当前闭环在 Host 关闭前仍保留运行态；离线恢复目标会按恢复门禁保留暂停态，
-     * 两者都不能被解释成 Feature 已交付。 */
+    /* 离线恢复保留备份快照；源 Host 后续关闭不应改写已经导出的 Run 状态。 */
     expect(q(f, 'SELECT status FROM runs WHERE id = ?', runId)).toEqual({ status: 'running' });
     const featureReport = await client2.getFeatureReport(projectId, featureId);
     expect(featureReport.feature).toMatchObject({ featureId });
@@ -260,6 +259,7 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 F-012 公开闭环恢复�
     expect(JSON.stringify(notificationCli.body)).toContain('delivered');
 
     /* ---- 阶段六：公开 CLI 备份 → 核验 → 离线恢复到隔离目标 → 读取记录与制品。 ---- */
+    const runBeforeBackup = q(f, 'SELECT status FROM runs WHERE id = ?', runId);
     const backupId = `p07-f012-${randomUUID().slice(0, 8)}`;
     const created = await cliJson(['backup', 'create', '--backup-id', backupId, '--data-root', f.dataRoot]);
     expect(created.exitCode, JSON.stringify(created.body)).toBe(0);
@@ -300,7 +300,7 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 F-012 公开闭环恢复�
     try {
       expect(restored.prepare<[string, string], { n: number }>('SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND status = ?').get(projectId, 'passed'))
         .toEqual({ n: 3 });
-      expect(restored.prepare('SELECT status FROM runs WHERE id = ?').get(runId)).toEqual({ status: 'paused' });
+      expect(restored.prepare('SELECT status FROM runs WHERE id = ?').get(runId)).toEqual(runBeforeBackup);
       expect(restored.prepare('SELECT COUNT(*) AS n FROM attempts').get()).toEqual({ n: 4 });
       expect(restored.prepare<[string], { n: number }>('SELECT COUNT(*) AS n FROM notification_deliveries WHERE status = ?').get('delivered'))
         .toEqual({ n: delivered.length });
