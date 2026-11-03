@@ -39,6 +39,13 @@ export interface TodoLiveAuthorization {
   readonly model: string;
   readonly expiresAt: number;
   readonly maxTasks: number;
+  readonly liveLimits?: {
+    readonly maxRequestsPerTask: number;
+    readonly maxInputTokens: number;
+    readonly maxOutputTokens: number;
+    readonly allowedFiles: Readonly<Record<string, string>>;
+    readonly customModel: { readonly api: string; readonly baseUrl: string };
+  };
 }
 
 export interface TodoLiveRuntimeResult {
@@ -387,7 +394,7 @@ export async function saveTodoLiveReport(path: string, report: TodoLiveDeliveryR
   if (!isAbsolute(path)) fail('report_path_invalid');
   validateTodoLiveReport(report);
   await mkdir(resolve(path, '..'), { recursive: true, mode: 0o700 });
-  await writeFile(path, `${JSON.stringify(report, null, 2)}\\n`, { flag: 'wx', mode: 0o600 });
+  await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
 }
 
 export interface TodoPiLivePortsOptions {
@@ -418,6 +425,14 @@ export function createPiTodoLivePorts(options: TodoPiLivePortsOptions): TodoLive
     throw new TodoLiveDeliveryError('live_adapter_input_invalid');
   }
   const runner = fileURLToPath(new URL('./p08-todo-live-runner.ts', import.meta.url));
+  const limits = options.authorization.liveLimits;
+  if (!limits || !Number.isSafeInteger(options.authorization.maxTasks) || options.authorization.maxTasks < 1
+      || !Number.isSafeInteger(limits.maxRequestsPerTask) || limits.maxRequestsPerTask < 1
+      || !Number.isSafeInteger(limits.maxInputTokens) || limits.maxInputTokens < 1
+      || !Number.isSafeInteger(limits.maxOutputTokens) || limits.maxOutputTokens < 1
+      || options.authorization.maxTasks * limits.maxRequestsPerTask > 8
+      || options.authorization.maxTasks * limits.maxRequestsPerTask * (limits.maxInputTokens + limits.maxOutputTokens) > 200_000
+      || options.timeoutMs > 900_000) throw new TodoLiveDeliveryError('live_budget_required');
   return {
     async runTask(task, context) {
       await mkdir(options.reportDirectory, { recursive: true, mode: 0o700 });
@@ -429,10 +444,13 @@ export function createPiTodoLivePorts(options: TodoPiLivePortsOptions): TodoLive
         ...(task.acceptance ?? []).map(item => `Acceptance: ${item}`),
         'Work only in the current repository. Add or update the implementation and its tests as required.',
         'Do not change Git history; the trusted controller performs the commit after verification.',
-      ].join('\\n');
+      ].join('\n');
       await writeFile(inputFile, `${JSON.stringify({ schemaVersion: 1, taskId: task.id, attemptId,
         repository: options.repository, provider: options.authorization.provider, model: options.authorization.model,
-        prompt, reportFile, timeoutMs: options.timeoutMs, maxRequests: 1 })}\\n`, { flag: 'wx', mode: 0o600 });
+        prompt, reportFile, timeoutMs: options.timeoutMs, maxRequests: limits.maxRequestsPerTask,
+        maxInputTokens: limits.maxInputTokens, maxOutputTokens: limits.maxOutputTokens,
+        allowedFile: limits.allowedFiles[task.id], customModel: limits.customModel,
+        expiresAt: options.authorization.expiresAt })}\n`, { flag: 'wx', mode: 0o600 });
       let outcome: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string };
       try {
         outcome = await runTodoLiveProcess({ command: [process.execPath, runner, inputFile], cwd: options.repository,
@@ -466,33 +484,36 @@ export function createPiTodoLivePorts(options: TodoPiLivePortsOptions): TodoLive
       const evidenceRef = `checks/${task.id}.json`;
       await mkdir(join(options.reportDirectory, 'checks'), { recursive: true, mode: 0o700 });
       await writeFile(join(options.reportDirectory, 'checks', `${task.id}.json`), `${JSON.stringify({ taskId: task.id,
-        command, exitCode: outcome.exitCode, outputDigest })}\\n`, { flag: 'wx', mode: 0o600 });
+        command, exitCode: outcome.exitCode, outputDigest })}\n`, { flag: 'wx', mode: 0o600 });
       return { status: outcome.exitCode === 0 ? 'passed' : 'failed', taskId: task.id, exitCode: outcome.exitCode,
         command: [...command], evidenceRef, outputDigest, ...(outcome.exitCode === 0 ? {} : { reason: 'verification_exit_nonzero' }) };
     },
     async commitTask(task) {
       const message = `${task.id}: ${task.title}`;
       try {
+        const approvedFile = limits.allowedFiles[task.id];
+        if (!approvedFile || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(approvedFile)) throw new Error('approved_file_required');
         if (gitText(options.repository, ['status', '--porcelain']) === '') return {
           status: 'failed', taskId: task.id, commitSha: null, treeSha: null, message, reason: 'no_code_change',
         };
-        execFileSync('git', ['-C', options.repository, 'add', '--all', '--', '.'], {
+        execFileSync('git', ['-C', options.repository, 'add', '--', approvedFile], {
           cwd: options.repository, env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' },
           encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'],
         });
-        execFileSync('git', ['-C', options.repository, '-c', 'user.name=ShipLoop Todo live', '-c', 'user.email=todo-live@shiploop.invalid', 'commit', '-m', message], {
+        execFileSync('git', ['-C', options.repository, '-c', 'user.name=ShipLoop Todo live', '-c', 'user.email=todo-live@shiploop.invalid', 'commit', '--only', '-m', message, '--', approvedFile], {
           cwd: options.repository, env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' },
           encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
         });
         const commitSha = gitText(options.repository, ['rev-parse', 'HEAD']);
         const treeSha = gitText(options.repository, ['rev-parse', 'HEAD^{tree}']);
-        if (!GIT_SHA.test(commitSha) || !GIT_SHA.test(treeSha) || gitText(options.repository, ['status', '--porcelain']) !== '') throw new Error('commit_postcondition_failed');
+        if (!GIT_SHA.test(commitSha) || !GIT_SHA.test(treeSha)
+            || gitText(options.repository, ['status', '--porcelain', '--', approvedFile]) !== '') throw new Error('commit_postcondition_failed');
         return { status: 'succeeded', taskId: task.id, commitSha, treeSha, message };
       } catch { return { status: 'failed', taskId: task.id, commitSha: null, treeSha: null, message, reason: 'git_commit_failed' }; }
     },
     async saveEvidence(result) {
       await mkdir(options.reportDirectory, { recursive: true, mode: 0o700 });
-      await writeFile(join(options.reportDirectory, `task-${result.taskId}.json`), `${JSON.stringify(result)}\\n`, { flag: 'wx', mode: 0o600 });
+      await writeFile(join(options.reportDirectory, `task-${result.taskId}.json`), `${JSON.stringify(result)}\n`, { flag: 'wx', mode: 0o600 });
     },
   };
 }

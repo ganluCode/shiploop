@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   runTodoLiveDelivery,
+  createPiTodoLivePorts,
+  saveTodoLiveReport,
   validateTodoLiveReport,
   type TodoLiveDeliveryPorts,
   type TodoLiveTask,
@@ -37,6 +42,24 @@ const authorization = {
   realPi: true as const, provider: 'authorized-provider', model: 'authorized-model',
   expiresAt: Date.now() + 60_000, maxTasks: 3,
 };
+
+it('Live adapter rejects missing budgets before any SDK request', () => {
+  expect(() => createPiTodoLivePorts({ repository: '/private/tmp/project', reportDirectory: '/private/tmp/report',
+    authorization, secret: 'test-not-a-real-key', verificationCommands: {}, timeoutMs: 1000,
+  })).toThrow(/live_budget_required/);
+});
+
+it('Live delivery report is parseable JSON with a real trailing newline', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'p08-json-'));
+  try {
+    const result = await runTodoLiveDelivery({ projectId: 'project-1', featureId: 'feature-1', runId: 'run-1',
+      tasks, authorization, ports: ports() });
+    const path = join(root, 'report.json');
+    await saveTodoLiveReport(path, result);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(result);
+    expect(readFileSync(path, 'utf8').endsWith('\n')).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 describe('P08-2 F-004 Todo live 交付编排', () => {
   it('[case:p08-2-f004-dependent-task-gate] 每项 Task 通过真实 Pi 运行、局部检查和提交后才解锁后继', async () => {
