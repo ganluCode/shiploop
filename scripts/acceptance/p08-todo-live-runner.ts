@@ -62,6 +62,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
   let wroteFile = false;
   let reason: string | null = null;
   let reservedTokens = 0;
+  let requestRejection: string | null = null;
   const httpStatuses: number[] = [];
   const assistantMessages: { stopReason: string | null; toolNames: string[]; textCharacters: number; errorPresent: boolean }[] = [];
   const deadline = Math.min(input.expiresAt, Date.now() + input.timeoutMs);
@@ -99,14 +100,20 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     modelRuntime.streamSimple = (actual: any, context: any, options: any) => {
       if (actual.provider !== input.provider || actual.id !== input.model || Date.now() >= deadline
           || reservedTokens / (input.maxInputTokens + input.maxOutputTokens) >= input.maxRequests
-          || Buffer.byteLength(JSON.stringify(context)) + 4096 > input.maxInputTokens) throw new Error('live_route_or_budget_rejected');
+          || Buffer.byteLength(JSON.stringify(context)) + 4096 > input.maxInputTokens) {
+        requestRejection = 'live_route_or_budget_rejected';
+        throw new Error(requestRejection);
+      }
       reservedTokens += input.maxInputTokens + input.maxOutputTokens;
       return originalStream(actual, context, { ...options, maxRetries: 0, maxTokens: input.maxOutputTokens, apiKey: secret,
         fetch: async (url: any, init: any) => {
           const endpoint = new URL(url instanceof Request ? url.url : String(url));
           if (Date.now() >= deadline || realCalls >= input.maxRequests
               || endpoint.origin !== 'https://ark.cn-beijing.volces.com'
-              || !endpoint.pathname.startsWith('/api/plan/v3/')) throw new Error('live_transport_rejected');
+              || !endpoint.pathname.startsWith('/api/plan/v3/')) {
+            requestRejection = 'live_transport_rejected';
+            throw new Error(requestRejection);
+          }
           realCalls++;
           const response = await fetch(url, { ...init, redirect: 'error' });
           httpStatuses.push(response.status);
@@ -146,7 +153,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     });
     await session.prompt(input.prompt);
     await session.waitForIdle?.();
-    const failure = liveTerminalFailure(assistantMessages.at(-1)?.stopReason, wroteFile);
+    const failure = requestRejection ?? liveTerminalFailure(assistantMessages.at(-1)?.stopReason, wroteFile);
     if (failure) throw new Error(failure);
     terminal = 'completed';
     session.dispose();
@@ -162,7 +169,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     session?.dispose();
     save(input.reportFile, {
       schemaVersion: 1, executionMode: 'live', taskId: input.taskId, attemptId: input.attemptId,
-      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, assistantMessages, httpStatuses,
+      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, requestRejection, assistantMessages, httpStatuses,
     });
   }
 }
