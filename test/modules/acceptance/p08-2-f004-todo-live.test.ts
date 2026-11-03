@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyLiveAdmission, liveTerminalFailure } from '../../../scripts/acceptance/p08-todo-live-runner.ts';
+import { classifyLiveAdmission, liveTerminalFailure, redactLiveError } from '../../../scripts/acceptance/p08-todo-live-runner.ts';
 import {
   runTodoLiveDelivery,
   createPiTodoLivePorts,
@@ -61,6 +61,17 @@ it('Live admission distinguishes input size, request count, deadline and route w
   expect(classifyLiveAdmission({ ...ok, expired: true })).toBe('live_deadline_exceeded');
   expect(classifyLiveAdmission({ ...ok, routeMatches: false })).toBe('live_route_mismatch');
   expect(classifyLiveAdmission({ ...ok, contextBytes: 16904 })).toBeNull();
+});
+
+it('Live error details are bounded and redact credentials, URLs and local paths', () => {
+  const secret = 'private-test-secret';
+  const error = redactLiveError(`Invalid tool JSON ${secret} ${encodeURIComponent(secret)} ${Buffer.from(secret).toString('base64')} Bearer abcdef https://example.invalid/key /Users/example/auth.json`, secret);
+  expect(error).toContain('Invalid tool JSON');
+  expect(error).not.toContain(secret);
+  expect(error).not.toContain('abcdef');
+  expect(error).not.toContain('example.invalid');
+  expect(error).not.toContain('/Users/');
+  expect(redactLiveError('x'.repeat(2000), secret)).toHaveLength(1000);
 });
 
 it('Live adapter rejects missing budgets before any SDK request', () => {

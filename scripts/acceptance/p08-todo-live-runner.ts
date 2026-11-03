@@ -64,6 +64,17 @@ export function classifyLiveAdmission(input: {
   return null;
 }
 
+export function redactLiveError(value: string, secret: string): string {
+  let text = value;
+  for (const variant of [secret, encodeURIComponent(secret), Buffer.from(secret).toString('base64')].filter(Boolean)) {
+    text = text.split(variant).join('[REDACTED]');
+  }
+  return text.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/https?:\/\/[^\s"']+/g, '[URL]')
+    .replace(/(?:\/Users\/|\/private\/|\/tmp\/)[^\s"']+/g, '[PATH]')
+    .slice(0, 1000);
+}
+
 async function run(input: TodoPiRunnerInput): Promise<void> {
   const secret = process.env.SHIPLOOP_P08_LIVE_KEY ?? '';
   delete process.env.SHIPLOOP_P08_LIVE_KEY;
@@ -76,7 +87,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
   let requestRejection: string | null = null;
   const httpStatuses: number[] = [];
   const admissions: Record<string, unknown>[] = [];
-  const assistantMessages: { stopReason: string | null; toolNames: string[]; textCharacters: number; errorPresent: boolean }[] = [];
+  const assistantMessages: { stopReason: string | null; toolNames: string[]; textCharacters: number; errorPresent: boolean; errorMessage: string | null }[] = [];
   const deadline = Math.min(input.expiresAt, Date.now() + input.timeoutMs);
   let session: { prompt(value: string): Promise<void>; waitForIdle?(): Promise<void>; abort(): Promise<void>; dispose(): void } | undefined;
   try {
@@ -168,6 +179,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
         textCharacters: (message.content ?? []).filter((part: any) => part.type === 'text')
           .reduce((sum: number, part: any) => sum + String(part.text ?? '').length, 0),
         errorPresent: typeof message.errorMessage === 'string' && message.errorMessage.length > 0,
+        errorMessage: typeof message.errorMessage === 'string' ? redactLiveError(message.errorMessage, secret) : null,
       });
     });
     await session.prompt(input.prompt);
