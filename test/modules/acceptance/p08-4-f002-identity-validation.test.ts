@@ -305,6 +305,20 @@ async function todoLiveReport(): Promise<TodoLiveEvidenceReport> {
   });
 }
 
+it('Independent demo Git commits bind exactly to a separately validated ShipLoop source identity', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'p08-product-identity-'));
+  const report = await todoLiveReport();
+  const content = JSON.stringify(report);
+  writeFileSync(join(root, 'todo.json'), content);
+  const productCommits = [...new Set([report.code.headCommit, ...report.tasks.map(task => task.commitSha)].filter((sha): sha is string => sha !== null))];
+  const reference = { kind: 'todo-live' as const, path: 'todo.json', digest: sha256(content), sourceIdentity: { commit: HEAD, productCommits } };
+  const identity = { runId: 'p08-independent', testedCommit: HEAD, inputsDigest: 'a'.repeat(64), toolchain: { node: '22.19.0', npm: '10.9.3', platform: 'darwin' } };
+  const result = await importP08ExternalEvidence({ evidenceRoot: root, reference, runIdentity: identity, isAncestor: commit => commit === HEAD });
+  expect(result.commits).toEqual([report.code.headCommit, ...report.tasks.map(task => task.commitSha)]);
+  expect((await rejectedByAsync(() => importP08ExternalEvidence({ evidenceRoot: root, reference: { ...reference, sourceIdentity: { commit: HEAD, productCommits: [HEAD] } }, runIdentity: identity, isAncestor: alwaysAncestor }))).code).toBe('p08_external_evidence_structure_invalid');
+  expect((await rejectedByAsync(() => importP08ExternalEvidence({ evidenceRoot: root, reference, runIdentity: identity, isAncestor: neverAncestor }))).code).toBe('p08_external_evidence_stale_commit');
+});
+
 function brownfieldEnvelope(): unknown {
   const definition: BrownfieldCheckDefinition = {
     checkKey: 'existing-check', argv: ['node', 'checks/existing.mjs'], environmentIdentity: 'e'.repeat(64), timeoutMs: 10_000, required: true,

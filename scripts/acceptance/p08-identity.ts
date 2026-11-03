@@ -513,6 +513,7 @@ export type P08ExternalEvidenceReference = {
   readonly kind: P08ExternalEvidenceKind;
   readonly path: string;
   readonly digest: string;
+  readonly sourceIdentity?: { readonly commit: string; readonly productCommits: readonly string[] };
 };
 
 const REFERENCE_KEYS = ['kind', 'path', 'digest'] as const;
@@ -528,7 +529,7 @@ export function validateP08ExternalEvidenceReferences(refs: readonly unknown[]):
   const kinds = new Set<string>();
   for (const entry of refs) {
     const raw = object(entry, 'p08_external_reference_invalid', 'external-evidence', '引用');
-    exactKeys(raw, REFERENCE_KEYS, 'p08_external_reference_invalid', 'external-evidence', '引用');
+    exactKeys(raw, raw.sourceIdentity === undefined ? REFERENCE_KEYS : [...REFERENCE_KEYS, 'sourceIdentity'], 'p08_external_reference_invalid', 'external-evidence', '引用');
     const kind = nonEmptyString(raw.kind, 'p08_external_reference_invalid', 'external-evidence', '引用.kind', 32);
     if (!P08_EXTERNAL_EVIDENCE_KINDS.includes(kind as P08ExternalEvidenceKind)) {
       fail('p08_external_reference_invalid', 'external-evidence', `未知外部证据类别：${kind}`);
@@ -539,7 +540,18 @@ export function validateP08ExternalEvidenceReferences(refs: readonly unknown[]):
     if (paths.has(path)) fail('p08_external_reference_invalid', 'external-evidence', `引用路径重复：${path}`);
     if (kinds.has(kind)) fail('p08_external_reference_invalid', 'external-evidence', `引用类别重复：${kind}`);
     paths.add(path); kinds.add(kind);
-    references.push({ kind: kind as P08ExternalEvidenceKind, path, digest });
+    let sourceIdentity: P08ExternalEvidenceReference['sourceIdentity'];
+    if (raw.sourceIdentity !== undefined) {
+      if (kind !== 'todo-live' && kind !== 'existing-live') fail('p08_external_reference_invalid', 'external-evidence', '仅 Live 证据允许独立产物仓库身份');
+      const identity = object(raw.sourceIdentity, 'p08_external_reference_invalid', 'external-evidence', 'sourceIdentity');
+      exactKeys(identity, ['commit', 'productCommits'], 'p08_external_reference_invalid', 'external-evidence', 'sourceIdentity');
+      const commit = nonEmptyString(identity.commit, 'p08_external_reference_invalid', 'external-evidence', 'sourceIdentity.commit');
+      const productCommits = stringArray(identity.productCommits, 'p08_external_reference_invalid', 'external-evidence', 'sourceIdentity.productCommits');
+      if (!GIT_SHA_PATTERN.test(commit) || productCommits.length === 0 || productCommits.some(sha => !GIT_SHA_PATTERN.test(sha))
+          || new Set(productCommits).size !== productCommits.length) fail('p08_external_reference_invalid', 'external-evidence', '源码及产物提交身份非法');
+      sourceIdentity = { commit, productCommits };
+    }
+    references.push({ kind: kind as P08ExternalEvidenceKind, path, digest, ...(sourceIdentity ? { sourceIdentity } : {}) });
   }
   return references;
 }
@@ -794,8 +806,13 @@ export async function importP08ExternalEvidence(options: P08ExternalEvidenceImpo
   if (record.schemaVersion !== expectedSchema) fail('p08_external_evidence_schema_invalid', stage, `证据结构版本不匹配：期望 ${expectedSchema}，实际 ${String(record.schemaVersion)}`);
 
   const summary = await summarizeByKind(checked, record, runIdentity);
+  if (checked.sourceIdentity) {
+    const actual = [...new Set(summary.commits)].sort();
+    const expected = [...checked.sourceIdentity.productCommits].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) fail('p08_external_evidence_structure_invalid', stage, '演示产物提交与来源清单不一致');
+  }
   if (checked.kind !== 'manual-gate') {
-    for (const commit of summary.commits) {
+    for (const commit of checked.sourceIdentity ? [checked.sourceIdentity.commit] : summary.commits) {
       let ancestor = false;
       if (GIT_SHA_PATTERN.test(commit)) { try { ancestor = options.isAncestor(commit, runIdentity.testedCommit) === true; } catch { ancestor = false; } }
       if (!ancestor) fail('p08_external_evidence_stale_commit', stage, `证据 commit 非受测 HEAD 祖先（陈旧基线拒绝）：${commit}`);
