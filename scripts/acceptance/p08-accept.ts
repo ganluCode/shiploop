@@ -424,9 +424,11 @@ function makeClaims(
   add('P08-FR2-NEGATIVE-EVIDENCE', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'sha', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'phase_integration_not_run');
   add('P08-TODO-NEW-PROJECT-CLOSURE', phaseStatus, 'fake', ['command-exit', 'sqlite', 'git', 'host', 'process', 'artifact', 'manifest', 'report', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'todo_integration_not_run');
   add('P08-EXISTING-INCREMENTAL-CLOSURE', phaseStatus, 'fake', ['command-exit', 'sqlite', 'git', 'host', 'process', 'artifact', 'manifest', 'report', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'existing_integration_not_run');
-  for (const id of [
-    'P08-FR3-PERIOD-EVIDENCE-AGGREGATE', 'P08-TASK-LOCAL-VERIFICATION', 'P08-FEATURE-GATE-UNION',
-  ]) add(id, 'not_run', 'fake', ['report', 'usage'], id === 'P08-FR3-PERIOD-EVIDENCE-AGGREGATE' ? 'feature_gate_aggregate_deferred' : 'task_or_feature_gate_owned_by_nezha');
+  add('P08-FR3-PERIOD-EVIDENCE-AGGREGATE', 'not_run', 'fake', ['report', 'usage'], 'prior_phase_and_live_aggregate_pending');
+  for (const id of ['P08-TASK-LOCAL-VERIFICATION', 'P08-FEATURE-GATE-UNION']) {
+    add(id, deterministicStatus, 'fake', ['command-exit', 'report', 'manifest', 'usage', 'deterministic-regression', ...phaseRefs],
+      deterministicStatus === 'pass' ? 'trusted_task_union_revalidated' : 'trusted_task_union_not_passed');
+  }
   add('P08-LIVE-TODO-EVIDENCE', live.todo.status, 'live', live.todo.evidence, live.todo.reason);
   add('P08-LIVE-EXISTING-EVIDENCE', live.existing.status, 'live', live.existing.evidence, live.existing.reason);
   add('P08-MANUAL-OWNER-GATE', manual.status, 'manual', manual.evidence, manual.reason);
@@ -519,7 +521,13 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
     const evidenceRoot = resolve(options.evidenceRoot ?? root);
     const references = readReferences(options, root, evidenceRoot);
     const trusted = (await import('./p08-test-scope.ts')).collectP08TrustedTests(root);
-    const scope = (await import('./p08-test-scope.ts')).selectP08TestScope(trusted.files, options.fullRegression === true, trusted.integrationFiles);
+    const initialScope = (await import('./p08-test-scope.ts')).selectP08TestScope(trusted.files, options.fullRegression === true, trusted.integrationFiles);
+    const taskUnion = [...new Set(Object.values(trusted.featureFiles).flat())];
+    const selected = [...new Set([...initialScope.selected, ...taskUnion])].sort();
+    const scope = { ...initialScope, selected,
+      selectedReasons: { ...Object.fromEntries(taskUnion.map(file => [file, 'P08 Task/Feature trusted index union'])), ...initialScope.selectedReasons },
+      deferred: initialScope.deferred.filter(item => !selected.includes(item.file)),
+    };
     const testHashes = hashP08SourceInputs(root, scope.selected);
     const material = {
       runId,
@@ -785,8 +793,8 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
           testScope: scope,
           prerequisites: prereq,
           installation: installSection,
-          taskLocal: section('not_run', ['report', 'manifest', 'usage'], 'task_local_owned_by_nezha', identity, ['entry/run.json']),
-          featureGate: section('pass', ['report', 'manifest', 'sha', 'cleanup'], 'feature_gate_identity_recorded', identity, ['entry/run.json'], processesGone),
+          taskLocal: section(deterministicStatus, ['command-exit', 'report', 'manifest', 'usage'], 'trusted_task_union_revalidated', identity, deterministicRefs),
+          featureGate: section(deterministicStatus, ['command-exit', 'report', 'manifest', 'sha', 'cleanup', 'deterministic-regression'], 'trusted_task_union_revalidated', identity, deterministicRefs, processesGone),
           deterministic: section(deterministicStatus, ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', ...deterministicRefs], deterministicStatus === 'pass' ? 'deterministic_checks_passed' : 'deterministic_checks_not_run', identity, deterministicRefs, processesGone),
           phaseIntegration: phaseSection,
           live: liveSections,

@@ -96,6 +96,8 @@ it('[case:p08-f007-success-run] 成功执行确定性步骤后仍将 live 与人
   expect(result.report.conclusion).toBe('fail');
   expect(result.report.checks.find(check => check.id === 'P08-DETERMINISTIC-PHASE-REGRESSION')?.status).toBe('pass');
   expect(result.report.checks.find(check => check.id === 'P08-LIVE-TODO-EVIDENCE')?.status).toBe('not_run');
+  expect(result.report.checks.find(check => check.id === 'P08-TASK-LOCAL-VERIFICATION')?.status).toBe('pass');
+  expect(result.report.checks.find(check => check.id === 'P08-FEATURE-GATE-UNION')?.status).toBe('pass');
   expect(result.steps.map(step => step.id).slice(-1)).toEqual(['p08-manual-gate']);
 });it('[case:p08-f007-failure-report] 测试失败停止后续步骤，仍发布结构化失败报告并保留 not_run 传播', async () => {
   const root = resolve(import.meta.dirname, '../../..');
