@@ -209,6 +209,11 @@ export function validateP08PhaseIntegrationEvidence(value: unknown): P08PhaseInt
     throw new PhaseIntegrationError('evidence_contract_failed');
   }
   for (const project of evidence.projects) validateProjectEvidence(project);
+  const existing = evidence.projects.find(project => project.kind === 'non-nezha-existing-project');
+  if (!existing?.cli.commands.some(command => command.name === 'baseline.run'
+    && command.exitCode === 1 && command.status === 'failed')) {
+    throw new PhaseIntegrationError('existing_known_failure_not_preserved');
+  }
   return evidence;
 }
 

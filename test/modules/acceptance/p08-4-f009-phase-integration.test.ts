@@ -23,7 +23,7 @@ function project(kind: P08PhaseIntegrationEvidence['projects'][number]['kind'], 
       statusAfter: [], dirtyStatePreserved: true, committedPaths: ['approved.mjs'], commitSha: HEAD,
     },
     cli: {
-      commands: [{ name: 'project.init', exitCode: 0, status: 'registered' }, { name: 'baseline.run', exitCode: 0, status: 'completed' }],
+      commands: [{ name: 'project.init', exitCode: 0, status: 'registered' }, { name: 'baseline.run', exitCode: kind === 'non-nezha-existing-project' ? 1 : 0, status: kind === 'non-nezha-existing-project' ? 'failed' : 'completed' }],
       projectState: 'active', operationStates: ['completed'],
     },
     sqlite: { integrity: 'ok', projectRows: 2, operationRows: 2, checkRows: 2 },
@@ -82,6 +82,12 @@ it('[case:p08-f009-failure-boundary] 关键负例保留 rejected，不被成功�
   const value = evidence();
   const rejected = value.failureBoundaries.find(item => item.id === 'existing-known-failure');
   expect(rejected).toMatchObject({ status: 'rejected' });
+  expect(() => validateP08PhaseIntegrationEvidence({
+    ...value,
+    projects: [value.projects[0]!, { ...value.projects[1]!, cli: { ...value.projects[1]!.cli,
+      commands: [{ name: 'baseline.run', exitCode: 0, status: 'completed' }],
+    } }],
+  })).toThrow(/existing_known_failure_not_preserved/);
   expect(value.projects[1]!.cli.commands.find(command => command.name === 'baseline.run')).toMatchObject({ exitCode: 1 });
   expect(() => validateP08PhaseIntegrationEvidence({
     ...value,

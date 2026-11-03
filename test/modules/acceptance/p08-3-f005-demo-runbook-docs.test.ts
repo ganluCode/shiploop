@@ -297,7 +297,7 @@ describe('F-005 文档引用的入口与测试路径必须真实存在', () => {
     for (const script of referencedScripts) {
       expect(packageJson.scripts[script], script).toBeTypeOf('string');
     }
-    expect(packageJson.scripts['accept:p08']).toBeUndefined();
+    expect(packageJson.scripts['accept:p08']).toBe('node scripts/acceptance/p08-accept.ts');
     expect(runbook).toContain('没有');
     expect(runbook).toContain('`accept:p08`');
   });

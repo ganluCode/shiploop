@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | 夹具与契约层 | 真实临时 Git 仓库、存量检查定义与结果、证据封套、增量与生命周期契约 | `node scripts/run-tests.ts <定向测试文件>`（见 §10） | 只证明该契约/夹具行为；不是产品闭环 |
 | 产品级手动演示 | 安装的 `shiploop` CLI + Host + 用户仓库 + 真实 Pi | CLI 步骤见 [新用户安装与操作指南](../p08-1-user-guide.md)；真实 Pi 另需授权 | 逐条命令记录退出码与证据；未跑项 `not_run` |
-| Phase 集成验收 | 真实 Git/SQLite/Host/进程/停止/恢复组合 | 负责人独立安排，仓库当前没有 `accept:p08` 阶段入口 | 由负责人执行并签署；本手册不代替 |
+| Phase 集成验收 | 真实 Git/SQLite/Host/进程/停止/恢复组合 | `accept:p08` 阶段入口；没有自动人工签署 | 由负责人执行并签署；本手册不代替 |
 
 真实 Pi live 现有唯一实现入口是 Todo 演示的 `npm run accept:p08:live -- --approval <批准文件>`
 （见 [accept:p08:live 入口](../p08-2-live-acceptance-entry.md)）。存量增量变更**没有**已实现的
