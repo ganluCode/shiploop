@@ -1,0 +1,74 @@
+Historical evidence excerpt; not a current full regression result.
+Original content SHA256: d91394e9aeb091ec42dc3644c709ca700ac49526444c0507cfb3ec80db0a85eb
+
+# P07 acceptance
+
+Run: p07-auto-20261102-006
+Commit: 6ac73df39241878e0996e04405fa57ea39c87dd8
+Input: ed4f8b0de79a5273c558f700a296f8e29586daaa2000bc56f370c27cf3c70a0c
+Checklist: c5d983762fc9ae425dbaf2545e61260bd4aef3d9b39ec67f38705dcece2b0595
+
+Prerequisites: satisfied
+- P07-1: f95b6eafa148e589ef0afa5c6b0d14a1fb31c359 satisfied
+- P07-2: 7cb30f9b0055366022e993a8f4f89d9464dd1575 satisfied
+- P07-3: 3d03af7442d887c796054d5ecd19c3fb3ada1316 satisfied
+- P07-4: 7111773ca2d5ffde19748d35d326ca28297e1de5 satisfied
+
+Toolchain: {"node":"22.19.0","npm":"10.9.3","platform":"darwin"}
+Offline: pass; phase: fail
+Scope: phase; full history: not_run
+Pass: 10; fail: 0; not_run: 1
+
+| Check | Execution | Status | Reason |
+| --- | --- | --- | --- |
+| P07-FR1-RECOVERY-CLOSURE | offline | pass |  |
+| P07-FR2-NEGATIVE-EVIDENCE | offline | pass |  |
+| P07-T06-VERIFIER-CRASH-RECOVERY | offline | pass |  |
+| P07-T08-COMMIT-RECEIPT-RECOVERY | offline | pass |  |
+| P07-T11-RECORDER-BACKPRESSURE | offline | pass |  |
+| P07-T11-NATIVE-ARCHIVE-SINGLE-WRITER | offline | pass |  |
+| P07-T12-NOTIFICATION-INDEPENDENT-RETRY | offline | pass |  |
+| P07-T15-ARCHIVE-DELETE-RETENTION | offline | pass |  |
+| P07-T16-BACKUP-RESTORE-CONSISTENCY | offline | pass |  |
+| P07-RERUN-EVIDENCE-INTEGRITY | offline | pass |  |
+| P07-MANUAL-OWNER-GATE | manual | not_run | owner_pending |
+| P07-POST-FULL-HISTORY-REGRESSION | postponed | not_run | deferred_full_history_not_run |
+
+Scenario assertions (positive / expected rejections / execution errors):
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a3: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a4: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a3: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a4: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a3: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a5: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a5: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a3: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a6: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a2: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a4: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a7: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a6: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a8: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a9: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a10: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a3: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a11: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a7: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a12: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-CLOSURE a1: pass; +1 reject= errors=
+- P07-FR1-RECOVERY-
+

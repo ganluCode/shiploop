@@ -1,0 +1,71 @@
+Historical evidence excerpt; not a current full regression result.
+Original content SHA256: a02f6f0e6b0a59cfe8bda87f94b83da95fbd790cb9ef4c42cf8b62d43cf488e3
+
+# P01-4 Feature 验收报告（F-010：P01 持久化闭环阶段交付）
+
+- 验收日期：2026-10-03
+- 验收平台：macOS（Darwin 25.6.0 / arm64），Node `22.19.0` / npm `10.9.3` / SQLite `3.53.4` /
+  better-sqlite3 `13.0.3` / drizzle-orm `0.45.3` / Git `2.50.1 (Apple Git-155)` / Vitest `5.0.3`
+- 受测代码 commit：`815e9e6f3e6bb2387c2d0d949a17ffd6fb33d1dd`（分支
+  `feat/2026-10-01-23-44-21_p01-4-p01`，工作树 `clean`）
+- 阶段范围：P01 持久化闭环（FR-1 项目身份、FR-2 当前配置与制品、关闭重开逐字段一致），
+  macOS 为唯一正式验收平台。
+- 结论：**P01 阶段验收通过**——干净安装复跑七条命令真实退出码均为 0，连续两次
+  `npm run accept:p01` 结论均为 `pass`（`pass 14 / fail 0 / not_run 0`），证据先落盘后清理临时资源。
+- 本报告与配套文档在受测 commit 之后作为**文档/证据提交**加入，不改变受测代码；证据见
+  [`evidence-p01-4/`](evidence-p01-4/)（已脱敏）。
+
+## 1. 输入文档版本
+
+设计输入为 Harness 知识目录 `architecture-redesign/`（不在本仓库，以内容哈希固化版本），
+PRD 为 `p01-acceptance.md`（版本 0.2，2026-10-01）。本阶段实际依据的主要文档 SHA-256：
+
+| 文档 | SHA-256 |
+|---|---|
+| `08-migration-roadmap.md` | `c6f527bd0846e805189b6ea8369cedb90442f6254198a3216dc3600c3d9c04a6` |
+| `core-design/01-system-structure.md` | `1f66552a4e7e7b83c81f33138fbe81d5d9e4e5d9cb6ae5b69b92766e143c7490` |
+| `core-design/02-domain-and-lifecycle.md` | `6fabe0e602e2e22667a9cf3e37c0b9b85049e96a1b51d7cf4876e18096f65f99` |
+| `core-design/03-storage-and-transactions.md` | `c393f95c96d62c9ec708e3043fde78194c85acea2ea1dad6924b31fd83f7183d` |
+| `core-design/06-project-and-context.md` | `ea9ef3e50e9f9ea5423ca673e41f6d3397996fd774c543b268316397d00c1394` |
+| `core-design/07-verification-and-delivery.md` | `0bad1d917e9148d587924dfdd6c1901dd8cce6df159fe7a0a2c408c9ae3c11da` |
+| `core-design/11-database-model.md` | `57dc3c6eab520fea43b5078a131821525f5c85336c09990719f10f9b705e5fa9` |
+| `core-design/09-testing-and-implementation.md` | `69912f251a79be62617f80786a5e73e4db90d674977a32fad90282e8b4a213ad` |
+
+前置契约：[docs/p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)（检查清单与报告约定）；
+操作说明：[docs/p01-4-operations.md](../p01-4-operations.md)。
+
+前序基线（均为当前分支祖先，实际端口与测试在库）：
+
+| 阶段 | 分支 | tip commit | 已验收报告 |
+|---|---|---|---|
+| p01-engineering（P01-1） | `feat/2026-10-01-23-44-21_p01-1` | `44c8c30997c46b55d514bc429fcaf9337d755484` | `docs/acceptance/p01-1-f006-report.md` |
+| p01-state-artifacts（P01-2） | `feat/2026-10-01-23-44-21_p01-2-sqlite` | `74934acba07f6a33c9957ec66ad2ccec2606f828` | `docs/acceptance/p01-2-f014-report.md` |
+| p01-project-config（P01-3） | `feat/2026-10-01-23-44-21_p01-3` | `2578a66e28f49155fabdd5935bc228b9702459b5` | `docs/acceptance/p01-3-f014-report.md` |
+
+## 2. 实现范围（F-001 ~ F-010）
+
+- **F-001**：核验 P01-1/P01-2/P01-3 已验收基线与真实端口；冻结 14 个稳定必需检查 ID、FR 分支
+  映射、报告位置/`run-id`/超时/三态与脱敏规则（[p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)）。
+- **F-002**：真实临时 Git 仓库 / 隔离 `home` / 受控数据根夹具，固定配置与制品字节，
+  安全清理守卫与清理前证据导出（`test/helpers/p01-4-fixture.ts`、`safe-cleanup.ts`）。
+- **F-003**：经真实装配入口的持久化闭环（注册 → 全局/项目配置 → 制品发布 → 关闭重开逐字段一致）。
+- **F-004**：真实 SQLite 回滚与当前配置 CAS 负例（组合创建注入回滚、脱敏审计注入回滚、
+  跨进程同一旧 `revision` 竞争恰一胜者）。
+- **F-005**：制品缺失/篡改负例与发布中断核对（`missing`/`corrupt` 诊断、`pending` 仅 hash/size
+  匹配补 `ready`、孤儿 `kept_in_place`）。
+- **F-006**：当前配置完整策略覆盖/来源/非法输入拒绝与项目标签规范化/筛选/计数阶段检查组。
+- **F-007**：版本化 `report.json`/`summary.md` 与严格聚合器（三态、负例双断言、未知/重复 ID 拒绝）。
+- **F-008**：`npm run accept:p01` 单次验收入口（`verify` + 四个固定场景 + 构建冒烟，有界子进程、
+  fail-fast、失败/超时/启动失败显式分类）。
+- **F-009**：构建产物非源码 cwd 冒烟与开发路径检查（个人绝对路径/被禁依赖/缺失迁移资源 fail-closed）。
+- **F-010**（本报告）：干净安装复跑脚本 `scripts/acceptance/clean-snapshot-replay.ts`、
+  P01 操作说明与交付报告、脱敏证据，并修复干净快照下暴露的前序夹具测试回归（§7）。
+
+## 3. 环境与工具
+
+| 项 | 值 |
+|---|---|
+| 平台 | macOS（Darwin 25.6.0 / arm64） |
+| Node.js | `22.19.0` |
+| npm | `10.9.3`
+

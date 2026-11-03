@@ -1,0 +1,17 @@
+Historical evidence excerpt; not a current full regression result.
+Original content SHA256: 5b253996a92f9bc83020c7691271e0180c94b7b49c1c4cea8b5e6e76158f3a81
+
+# P06 负责人确认
+
+2026-10-29，负责人在当前对话明确同意：“好的，那就通过了吧，然后准备p07”。
+此前明确同意本阶段不执行全仓回归，延期到 CI；不记为已通过。
+
+受测提交：`5c1c13939d9a4d9bd841e676d41bd483fbe64618`。
+阶段：12 pass / 0 fail / 0 not_run，conclusion=pass，exitCode=0，reportVerified=true。
+离线：149 文件、2134 项通过；live：ark-agentplan/ark-code-latest，3 请求、指定文件变更及清理通过。
+正式报告：`[LOCAL_PATH]`。
+
+本确认仅签署上述受测身份与首版范围；未宣称全仓历史测试、远程 MCP、强 OS 沙箱、Chat 或 OpenViking 已验证。
+Phase 状态更新为 completed。P07 仍需准备代码基线及规划，未自动启动模型任务。
+
+

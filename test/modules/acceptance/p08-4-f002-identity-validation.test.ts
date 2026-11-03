@@ -50,6 +50,7 @@ import {
 import { P08_PREREQUISITE_FEATURES, p08RunIdentityMatches } from '../../../scripts/acceptance/p08-config.ts';
 import { aggregateTodoLiveEvidence, type TodoLiveEvidenceReport } from '../../../scripts/acceptance/p08-todo-live-report.ts';
 import { runTodoLiveDelivery, type TodoLiveDeliveryPorts, type TodoLiveTask } from '../../../scripts/acceptance/p08-todo-live.ts';
+import { verifyP08History } from '../../../scripts/acceptance/p08-history.ts';
 import { collectBrownfieldEvidenceEnvelope } from '../../../packages/core/src/ports/brownfield-evidence.ts';
 import {
   computeBrownfieldCheckCommandDigest,
@@ -67,6 +68,22 @@ const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const alwaysAncestor = (): boolean => true;
 const neverAncestor = (): boolean => false;
+
+it('Historical aggregation verifies all seven hashes and source ancestors without asserting a fresh historical regression', () => {
+  const result = verifyP08History(ROOT, alwaysAncestor);
+  expect(result.status).toBe('pass');
+  expect(result.refs).toHaveLength(8);
+  expect(result.ownerReview).toContain('P06:historical_original_report_missing');
+  expect(() => verifyP08History(ROOT, neverAncestor)).toThrow(/history_identity_invalid/);
+  const root = mkdtempSync(join(tmpdir(), 'p08-history-negative-'));
+  mkdirSync(join(root, 'acceptance'));
+  mkdirSync(join(root, 'docs/acceptance/p08-history'), { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'acceptance/p08-history.json'), 'utf8'));
+  for (const entry of manifest.entries) writeFileSync(join(root, entry.path), readFileSync(join(ROOT, entry.path)));
+  writeFileSync(join(root, 'acceptance/p08-history.json'), JSON.stringify(manifest));
+  writeFileSync(join(root, manifest.entries[0].path), 'tampered');
+  expect(() => verifyP08History(root, alwaysAncestor)).toThrow(/history_digest_mismatch/);
+});
 
 function rejectedBy<T>(action: () => T): { code: string; stage: string } {
   try { action(); } catch (error) {

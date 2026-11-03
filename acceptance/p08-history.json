@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "kind": "shiploop.p08.historical-evidence-index",
+  "entries": [
+    {
+      "phase": "P01",
+      "commit": "815e9e6f3e6bb2387c2d0d949a17ffd6fb33d1dd",
+      "path": "docs/acceptance/p08-history/P01.txt",
+      "sha256": "184056d1c1c704f777da44d84aa31071f1d09721a7c2972e1bb82d8a27d601c8",
+      "originalSha256": "a02f6f0e6b0a59cfe8bda87f94b83da95fbd790cb9ef4c42cf8b62d43cf488e3",
+      "evidenceLevel": "historical-report"
+    },
+    {
+      "phase": "P02",
+      "commit": "ca63e21a6a5c4e86c170345476d7d62b131077ca",
+      "path": "docs/acceptance/p08-history/P02.txt",
+      "sha256": "1e75aa6284f66059b1e5061d9e2c808c255bdf126600f5a13ebbff8836aef747",
+      "originalSha256": "c46916dc944d401d5f6f4583299776a950094d6166aa11d1d1eed28f61044965",
+      "evidenceLevel": "historical-report"
+    },
+    {
+      "phase": "P03",
+      "commit": "5279e3371a12892c88cfbe30596109c8fb846d08",
+      "path": "docs/acceptance/p08-history/P03.txt",
+      "sha256": "8699991e315dddfc3d64f0fa905e161253581e55cdd69f726fa2856cbf60f017",
+      "originalSha256": "dbfcdfa50cf44a29d407de10aa593de2c1f9705fd2a2c34d5a0a2e8441604208",
+      "evidenceLevel": "historical-report"
+    },
+    {
+      "phase": "P04",
+      "commit": "66683ec7bd7ed0da57b0c70ec6c69d33fc49be98",
+      "path": "docs/acceptance/p08-history/P04.txt",
+      "sha256": "e99aa45269cbe0e20e4a7fa44afa50ae8c14da2ed05a54436103e2d0e95cc69f",
+      "originalSha256": "46e3bddf9849a395a11caac1f2c3ff17f17a7e14a940b1af32f378a9b4983c44",
+      "evidenceLevel": "historical-report"
+    },
+    {
+      "phase": "P05",
+      "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "path": "docs/acceptance/p08-history/P05.txt",
+      "sha256": "81429161eab83a1a28587237d03a8838df06986c07d28cf66417e01ec51160f8",
+      "originalSha256": "cd6faca742a139c24659718e49dfc9c36f7a38a6cc975dc51520b0996a1b8bb3",
+      "evidenceLevel": "owner-confirmation"
+    },
+    {
+      "phase": "P06",
+      "commit": "5c1c13939d9a4d9bd841e676d41bd483fbe64618",
+      "path": "docs/acceptance/p08-history/P06.txt",
+      "sha256": "f5e255bf5ecd7563809afd99e6028a7a749dfc91260d7260054ebed94e645f44",
+      "originalSha256": "5b253996a92f9bc83020c7691271e0180c94b7b49c1c4cea8b5e6e76158f3a81",
+      "evidenceLevel": "owner-confirmation-original-missing"
+    },
+    {
+      "phase": "P07",
+      "commit": "6ac73df39241878e0996e04405fa57ea39c87dd8",
+      "path": "docs/acceptance/p08-history/P07.txt",
+      "sha256": "7942c26583cdd48a333abfbd3bee4dcf8b50b7a67f7b3b15c6be198a697b52cf",
+      "originalSha256": "d91394e9aeb091ec42dc3644c709ca700ac49526444c0507cfb3ec80db0a85eb",
+      "evidenceLevel": "historical-report"
+    }
+  ]
+}

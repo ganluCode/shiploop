@@ -1,0 +1,5 @@
+Historical evidence excerpt; not a current full regression result.
+Original content SHA256: 46e3bddf9849a395a11caac1f2c3ff17f17a7e14a940b1af32f378a9b4983c44
+
+{"commit":"66683ec7bd7ed0da57b0c70ec6c69d33fc49be98","machineAssertionsPassed":true,"drift":false,"checks":15}
+
