@@ -420,7 +420,7 @@ function makeClaims(
   add('P08-PREREQ-DELIVERY-REPORTS', prereqStatus, 'fake', ['report', 'manifest', 'sha'], prereqStatus === 'pass' ? undefined : 'prerequisite_not_run');
   add('P08-INSTALL-CLEAN-DIRECTORY', installation.status, 'fake', installation.evidence, installation.reason);
   add('P08-DETERMINISTIC-PHASE-REGRESSION', deterministicStatus, 'fake', ['command-exit', 'report', 'manifest', 'deterministic-regression', 'usage', ...phaseRefs], deterministicStatus === 'pass' ? undefined : 'deterministic_scope_not_run');
-  add('P08-FR1-PHASE-CLOSURE-RERUN', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'artifact', 'install', 'host', 'sqlite', 'git', 'process', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'phase_integration_not_run');
+  add('P08-FR1-PHASE-CLOSURE-RERUN', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'sha', 'artifact', 'install', 'host', 'sqlite', 'git', 'process', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'phase_integration_not_run');
   add('P08-FR2-NEGATIVE-EVIDENCE', phaseStatus, 'fake', ['command-exit', 'report', 'manifest', 'sha', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'phase_integration_not_run');
   add('P08-TODO-NEW-PROJECT-CLOSURE', phaseStatus, 'fake', ['command-exit', 'sqlite', 'git', 'host', 'process', 'artifact', 'manifest', 'report', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'todo_integration_not_run');
   add('P08-EXISTING-INCREMENTAL-CLOSURE', phaseStatus, 'fake', ['command-exit', 'sqlite', 'git', 'host', 'process', 'artifact', 'manifest', 'report', 'usage', 'cleanup', ...phaseRefs], phaseStatus === 'pass' ? undefined : 'existing_integration_not_run');
@@ -723,6 +723,12 @@ export async function runP08Acceptance(options: P08AcceptanceOptions): Promise<P
           copyIntoSource(source, output, 'products/p08-phase-integration.json');
           phaseIntegrationRefs = ['phase-integration/evidence.json'];
           phaseIntegrationStatus = 'pass';
+          if (installSection.status === 'pass') {
+            installSection = { ...installSection,
+              evidence: [...installSection.evidence, 'host', 'process'],
+              reportRefs: [...(installSection.reportRefs ?? []), ...phaseIntegrationRefs],
+            };
+          }
           const record = stepRecord(step, 'pass', null, phaseIntegrationEvidence.exitCode, { durationMs: phaseIntegrationEvidence.durationMs });
           steps.push(record);
           saveJson(join(workDir, `${step.id}.json`), { identity, ...record });
