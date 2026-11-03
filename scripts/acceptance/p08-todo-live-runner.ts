@@ -53,6 +53,17 @@ export function liveTerminalFailure(stopReason: string | null | undefined, wrote
   return null;
 }
 
+export function classifyLiveAdmission(input: {
+  routeMatches: boolean; expired: boolean; admittedRequests: number; maxRequests: number;
+  contextBytes: number; maxInputTokens: number;
+}): string | null {
+  if (!input.routeMatches) return 'live_route_mismatch';
+  if (input.expired) return 'live_deadline_exceeded';
+  if (input.admittedRequests >= input.maxRequests) return 'live_request_budget_exhausted';
+  if (input.contextBytes + 4096 > input.maxInputTokens) return 'live_input_budget_exceeded';
+  return null;
+}
+
 async function run(input: TodoPiRunnerInput): Promise<void> {
   const secret = process.env.SHIPLOOP_P08_LIVE_KEY ?? '';
   delete process.env.SHIPLOOP_P08_LIVE_KEY;
@@ -64,6 +75,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
   let reservedTokens = 0;
   let requestRejection: string | null = null;
   const httpStatuses: number[] = [];
+  const admissions: Record<string, unknown>[] = [];
   const assistantMessages: { stopReason: string | null; toolNames: string[]; textCharacters: number; errorPresent: boolean }[] = [];
   const deadline = Math.min(input.expiresAt, Date.now() + input.timeoutMs);
   let session: { prompt(value: string): Promise<void>; waitForIdle?(): Promise<void>; abort(): Promise<void>; dispose(): void } | undefined;
@@ -98,10 +110,17 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     if (!model) throw new Error('approved_model_unavailable');
     const originalStream = modelRuntime.streamSimple.bind(modelRuntime);
     modelRuntime.streamSimple = (actual: any, context: any, options: any) => {
-      if (actual.provider !== input.provider || actual.id !== input.model || Date.now() >= deadline
-          || reservedTokens / (input.maxInputTokens + input.maxOutputTokens) >= input.maxRequests
-          || Buffer.byteLength(JSON.stringify(context)) + 4096 > input.maxInputTokens) {
-        requestRejection = 'live_route_or_budget_rejected';
+      const admission = {
+        routeMatches: actual.provider === input.provider && actual.id === input.model,
+        expired: Date.now() >= deadline,
+        admittedRequests: reservedTokens / (input.maxInputTokens + input.maxOutputTokens),
+        maxRequests: input.maxRequests,
+        contextBytes: Buffer.byteLength(JSON.stringify(context)), maxInputTokens: input.maxInputTokens,
+      };
+      const rejection = classifyLiveAdmission(admission);
+      admissions.push({ ...admission, rejection, reservedTokens, remainingMs: Math.max(0, deadline - Date.now()) });
+      if (rejection) {
+        requestRejection = rejection;
         throw new Error(requestRejection);
       }
       reservedTokens += input.maxInputTokens + input.maxOutputTokens;
@@ -169,7 +188,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     session?.dispose();
     save(input.reportFile, {
       schemaVersion: 1, executionMode: 'live', taskId: input.taskId, attemptId: input.attemptId,
-      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, requestRejection, assistantMessages, httpStatuses,
+      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, requestRejection, assistantMessages, httpStatuses, admissions,
     });
   }
 }

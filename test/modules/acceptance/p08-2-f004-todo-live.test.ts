@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { liveTerminalFailure } from '../../../scripts/acceptance/p08-todo-live-runner.ts';
+import { classifyLiveAdmission, liveTerminalFailure } from '../../../scripts/acceptance/p08-todo-live-runner.ts';
 import {
   runTodoLiveDelivery,
   createPiTodoLivePorts,
@@ -51,6 +51,16 @@ it('SDK terminal errors take priority over whether a tool wrote the file', () =>
   expect(liveTerminalFailure('aborted', false)).toBe('assistant_aborted');
   expect(liveTerminalFailure('stop', false)).toBe('approved_file_not_written');
   expect(liveTerminalFailure('stop', true)).toBeNull();
+});
+
+it('Live admission distinguishes input size, request count, deadline and route without calling SDK', () => {
+  const ok = { routeMatches: true, expired: false, admittedRequests: 1, maxRequests: 2, contextBytes: 10000, maxInputTokens: 21000 };
+  expect(classifyLiveAdmission(ok)).toBeNull();
+  expect(classifyLiveAdmission({ ...ok, contextBytes: 17000 })).toBe('live_input_budget_exceeded');
+  expect(classifyLiveAdmission({ ...ok, admittedRequests: 2 })).toBe('live_request_budget_exhausted');
+  expect(classifyLiveAdmission({ ...ok, expired: true })).toBe('live_deadline_exceeded');
+  expect(classifyLiveAdmission({ ...ok, routeMatches: false })).toBe('live_route_mismatch');
+  expect(classifyLiveAdmission({ ...ok, contextBytes: 16904 })).toBeNull();
 });
 
 it('Live adapter rejects missing budgets before any SDK request', () => {
