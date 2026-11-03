@@ -45,6 +45,14 @@ function save(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { flag: 'w', mode: 0o600 });
 }
 
+export function liveTerminalFailure(stopReason: string | null | undefined, wroteFile: boolean): string | null {
+  if (stopReason === 'error') return 'assistant_error';
+  if (stopReason === 'aborted') return 'assistant_aborted';
+  if (stopReason === 'length') return 'assistant_output_truncated';
+  if (!wroteFile) return 'approved_file_not_written';
+  return null;
+}
+
 async function run(input: TodoPiRunnerInput): Promise<void> {
   const secret = process.env.SHIPLOOP_P08_LIVE_KEY ?? '';
   delete process.env.SHIPLOOP_P08_LIVE_KEY;
@@ -54,6 +62,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
   let wroteFile = false;
   let reason: string | null = null;
   let reservedTokens = 0;
+  const httpStatuses: number[] = [];
   const assistantMessages: { stopReason: string | null; toolNames: string[]; textCharacters: number; errorPresent: boolean }[] = [];
   const deadline = Math.min(input.expiresAt, Date.now() + input.timeoutMs);
   let session: { prompt(value: string): Promise<void>; waitForIdle?(): Promise<void>; abort(): Promise<void>; dispose(): void } | undefined;
@@ -99,7 +108,9 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
               || endpoint.origin !== 'https://ark.cn-beijing.volces.com'
               || !endpoint.pathname.startsWith('/api/plan/v3/')) throw new Error('live_transport_rejected');
           realCalls++;
-          return fetch(url, { ...init, redirect: 'error' });
+          const response = await fetch(url, { ...init, redirect: 'error' });
+          httpStatuses.push(response.status);
+          return response;
         } });
     };
     const result = await sdk.createAgentSession({
@@ -135,7 +146,8 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     });
     await session.prompt(input.prompt);
     await session.waitForIdle?.();
-    if (!wroteFile) throw new Error('approved_file_not_written');
+    const failure = liveTerminalFailure(assistantMessages.at(-1)?.stopReason, wroteFile);
+    if (failure) throw new Error(failure);
     terminal = 'completed';
     session.dispose();
     session = undefined;
@@ -150,14 +162,15 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     session?.dispose();
     save(input.reportFile, {
       schemaVersion: 1, executionMode: 'live', taskId: input.taskId, attemptId: input.attemptId,
-      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, assistantMessages,
+      provider: input.provider, model: input.model, realCalls, terminal, stopped, reservedTokens, reason, assistantMessages, httpStatuses,
     });
   }
 }
 
-const inputPath = process.argv[2];
-if (!inputPath) process.exitCode = 2;
-else {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+ const inputPath = process.argv[2];
+ if (!inputPath) process.exitCode = 2;
+ else {
   try {
     const value: unknown = JSON.parse(readFileSync(resolve(inputPath), 'utf8'));
     if (!valid(value)) throw new Error('runner_input_invalid');
@@ -165,6 +178,7 @@ else {
   } catch {
     process.exitCode = 1;
   }
+ }
 }
 
 export {};

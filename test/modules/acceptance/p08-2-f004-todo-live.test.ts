@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { liveTerminalFailure } from '../../../scripts/acceptance/p08-todo-live-runner.ts';
 import {
   runTodoLiveDelivery,
   createPiTodoLivePorts,
@@ -42,6 +43,15 @@ const authorization = {
   realPi: true as const, provider: 'authorized-provider', model: 'authorized-model',
   expiresAt: Date.now() + 60_000, maxTasks: 3,
 };
+
+it('SDK terminal errors take priority over whether a tool wrote the file', () => {
+  expect(liveTerminalFailure('error', false)).toBe('assistant_error');
+  expect(liveTerminalFailure('error', true)).toBe('assistant_error');
+  expect(liveTerminalFailure('length', true)).toBe('assistant_output_truncated');
+  expect(liveTerminalFailure('aborted', false)).toBe('assistant_aborted');
+  expect(liveTerminalFailure('stop', false)).toBe('approved_file_not_written');
+  expect(liveTerminalFailure('stop', true)).toBeNull();
+});
 
 it('Live adapter rejects missing budgets before any SDK request', () => {
   expect(() => createPiTodoLivePorts({ repository: '/private/tmp/project', reportDirectory: '/private/tmp/report',
