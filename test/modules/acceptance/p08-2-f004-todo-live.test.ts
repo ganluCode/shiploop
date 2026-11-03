@@ -61,6 +61,8 @@ it('Live admission distinguishes input size, request count, deadline and route w
   expect(classifyLiveAdmission({ ...ok, expired: true })).toBe('live_deadline_exceeded');
   expect(classifyLiveAdmission({ ...ok, routeMatches: false })).toBe('live_route_mismatch');
   expect(classifyLiveAdmission({ ...ok, contextBytes: 16904 })).toBeNull();
+  expect(classifyLiveAdmission({ ...ok, contextBytes: 28502, maxInputTokens: 21000 })).toBe('live_input_budget_exceeded');
+  expect(classifyLiveAdmission({ ...ok, contextBytes: 28502, maxInputTokens: 35000 })).toBeNull();
 });
 
 it('Live error details are bounded and redact credentials, URLs and local paths', () => {
@@ -78,6 +80,19 @@ it('Live adapter rejects missing budgets before any SDK request', () => {
   expect(() => createPiTodoLivePorts({ repository: '/private/tmp/project', reportDirectory: '/private/tmp/report',
     authorization, secret: 'test-not-a-real-key', verificationCommands: {}, timeoutMs: 1000,
   })).toThrow(/live_budget_required/);
+});
+
+it('Per-request budgets reserve larger follow-up context without exceeding aggregate approval', () => {
+  const options = { repository: '/private/tmp/project', reportDirectory: '/private/tmp/report',
+    authorization: { ...authorization, maxTasks: 4, liveLimits: {
+      maxRequestsPerTask: 2, maxInputTokens: 21000, maxOutputTokens: 4000,
+      allowedFiles: { 'F-001': 'store.mjs' },
+      customModel: { api: 'openai-responses', baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3' },
+      requestBudgets: [{ maxInputTokens: 8000, maxOutputTokens: 3000 }, { maxInputTokens: 35000, maxOutputTokens: 1000 }],
+    } }, secret: 'test-placeholder', verificationCommands: {}, timeoutMs: 1000 };
+  expect(() => createPiTodoLivePorts(options)).not.toThrow();
+  options.authorization.liveLimits.requestBudgets[1]!.maxInputTokens = 40000;
+  expect(() => createPiTodoLivePorts(options)).toThrow(/live_budget_required/);
 });
 
 it('Live delivery report is parseable JSON with a real trailing newline', async () => {

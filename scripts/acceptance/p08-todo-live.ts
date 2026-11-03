@@ -43,6 +43,7 @@ export interface TodoLiveAuthorization {
     readonly maxRequestsPerTask: number;
     readonly maxInputTokens: number;
     readonly maxOutputTokens: number;
+    readonly requestBudgets?: readonly { readonly maxInputTokens: number; readonly maxOutputTokens: number }[];
     readonly allowedFiles: Readonly<Record<string, string>>;
     readonly customModel: { readonly api: string; readonly baseUrl: string };
   };
@@ -433,6 +434,12 @@ export function createPiTodoLivePorts(options: TodoPiLivePortsOptions): TodoLive
       || options.authorization.maxTasks * limits.maxRequestsPerTask > 8
       || options.authorization.maxTasks * limits.maxRequestsPerTask * (limits.maxInputTokens + limits.maxOutputTokens) > 200_000
       || options.timeoutMs > 900_000) throw new TodoLiveDeliveryError('live_budget_required');
+  if (limits.requestBudgets && (limits.requestBudgets.length !== limits.maxRequestsPerTask
+      || limits.requestBudgets.some(b => !Number.isSafeInteger(b.maxInputTokens) || b.maxInputTokens < 1
+        || !Number.isSafeInteger(b.maxOutputTokens) || b.maxOutputTokens < 1)
+      || options.authorization.maxTasks * limits.requestBudgets.reduce((sum, b) => sum + b.maxInputTokens + b.maxOutputTokens, 0) > 200_000)) {
+    throw new TodoLiveDeliveryError('live_budget_required');
+  }
   return {
     async runTask(task, context) {
       await mkdir(options.reportDirectory, { recursive: true, mode: 0o700 });
@@ -460,6 +467,7 @@ export function createPiTodoLivePorts(options: TodoPiLivePortsOptions): TodoLive
         repository: options.repository, provider: options.authorization.provider, model: options.authorization.model,
         prompt, reportFile, timeoutMs: options.timeoutMs, maxRequests: limits.maxRequestsPerTask,
         maxInputTokens: limits.maxInputTokens, maxOutputTokens: limits.maxOutputTokens,
+        requestBudgets: limits.requestBudgets,
         allowedFile: limits.allowedFiles[task.id], customModel: limits.customModel,
         expiresAt: options.authorization.expiresAt })}\n`, { flag: 'wx', mode: 0o600 });
       let outcome: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string };

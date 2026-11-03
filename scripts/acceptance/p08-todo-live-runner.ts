@@ -17,6 +17,7 @@ interface TodoPiRunnerInput {
   readonly maxRequests: number;
   readonly maxInputTokens: number;
   readonly maxOutputTokens: number;
+  readonly requestBudgets?: readonly { readonly maxInputTokens: number; readonly maxOutputTokens: number }[];
   readonly expiresAt: number;
   readonly allowedFile: string;
   readonly customModel: { readonly api: string; readonly baseUrl: string };
@@ -38,7 +39,12 @@ function valid(input: unknown): input is TodoPiRunnerInput {
     && value.allowedFile !== '.' && value.allowedFile !== '..'
     && value.provider === 'ark-agentplan' && value.model === 'ark-code-latest'
     && value.customModel?.api === 'openai-responses'
-    && value.customModel?.baseUrl === 'https://ark.cn-beijing.volces.com/api/plan/v3';
+    && value.customModel?.baseUrl === 'https://ark.cn-beijing.volces.com/api/plan/v3'
+    && (value.requestBudgets === undefined || (Array.isArray(value.requestBudgets)
+      && value.requestBudgets.length === value.maxRequests
+      && value.requestBudgets.every(b => Number.isSafeInteger(b.maxInputTokens) && b.maxInputTokens > 0
+        && Number.isSafeInteger(b.maxOutputTokens) && b.maxOutputTokens > 0)
+      && value.requestBudgets.reduce((sum, b) => sum + b.maxInputTokens + b.maxOutputTokens, 0) <= 200_000));
 }
 
 function save(path: string, value: unknown): void {
@@ -84,6 +90,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
   let wroteFile = false;
   let reason: string | null = null;
   let reservedTokens = 0;
+  let admittedRequests = 0;
   let requestRejection: string | null = null;
   const httpStatuses: number[] = [];
   const admissions: Record<string, unknown>[] = [];
@@ -121,12 +128,13 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     if (!model) throw new Error('approved_model_unavailable');
     const originalStream = modelRuntime.streamSimple.bind(modelRuntime);
     modelRuntime.streamSimple = (actual: any, context: any, options: any) => {
+      const allowance = input.requestBudgets?.[admittedRequests] ?? input;
       const admission = {
         routeMatches: actual.provider === input.provider && actual.id === input.model,
         expired: Date.now() >= deadline,
-        admittedRequests: reservedTokens / (input.maxInputTokens + input.maxOutputTokens),
+        admittedRequests,
         maxRequests: input.maxRequests,
-        contextBytes: Buffer.byteLength(JSON.stringify(context)), maxInputTokens: input.maxInputTokens,
+        contextBytes: Buffer.byteLength(JSON.stringify(context)), maxInputTokens: allowance.maxInputTokens,
       };
       const rejection = classifyLiveAdmission(admission);
       admissions.push({ ...admission, rejection, reservedTokens, remainingMs: Math.max(0, deadline - Date.now()) });
@@ -134,8 +142,9 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
         requestRejection = rejection;
         throw new Error(requestRejection);
       }
-      reservedTokens += input.maxInputTokens + input.maxOutputTokens;
-      return originalStream(actual, context, { ...options, maxRetries: 0, maxTokens: input.maxOutputTokens, apiKey: secret,
+      reservedTokens += allowance.maxInputTokens + allowance.maxOutputTokens;
+      admittedRequests++;
+      return originalStream(actual, context, { ...options, maxRetries: 0, maxTokens: allowance.maxOutputTokens, apiKey: secret,
         fetch: async (url: any, init: any) => {
           const endpoint = new URL(url instanceof Request ? url.url : String(url));
           if (Date.now() >= deadline || realCalls >= input.maxRequests
