@@ -215,11 +215,19 @@ describe.skipIf(process.platform !== 'darwin')('P07-5 F-012 公开闭环恢复�
     expect(finalBudget.deadline_at).toBe(before.deadline_at);
     expect(finalBudget.budget_snapshot).toEqual(before.budget_snapshot);
     expect(f.runtimeStarts()).toHaveLength(4);
-    /* 离线恢复保留备份快照；源 Host 后续关闭不应改写已经导出的 Run 状态。 */
-    expect(q(f, 'SELECT status FROM runs WHERE id = ?', runId)).toEqual({ status: 'running' });
+    /* Use a public pause barrier before comparing queries and backing up; Task completion
+     * does not freeze asynchronous Run closeout at the transient running state. */
+    const control = q(f, 'SELECT status, revision FROM runs WHERE id = ?', runId);
+    if (control.status !== 'paused') {
+      const pause = await client2.pauseExecution({ projectId, runId, expectedRevision: control.revision });
+      if (pause.status !== 'completed') {
+        expect(q(f, 'SELECT status FROM runs WHERE id = ?', runId)).toEqual({ status: 'paused' });
+      }
+    }
+    await waitFor(() => q(f, 'SELECT status FROM runs WHERE id = ?', runId).status === 'paused', '公开暂停屏障完成', 30_000);
     const featureReport = await client2.getFeatureReport(projectId, featureId);
     expect(featureReport.feature).toMatchObject({ featureId });
-    expect(featureReport.runs.find(row => row.id === runId)).toMatchObject({ status: 'running' });
+    expect(featureReport.runs.find(row => row.id === runId)).toMatchObject({ status: 'paused' });
 
     /* ---- 阶段五：通知失败续投（受控渠道恢复健康 + 到期推进），不重跑任务。 ---- */
     const businessBaseline = {
