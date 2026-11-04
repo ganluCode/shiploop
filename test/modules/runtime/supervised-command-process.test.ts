@@ -206,6 +206,24 @@ describe('macOS supervised command port', () => {
     expect(existsSync(join(root, 'forbidden'))).toBe(false);
   });
 
+  it('backpressures both output pipes without dropping an in-budget burst for a delayed consumer', async () => {
+    const root = sandbox();
+    const handle = await start(request(root,
+      "process.stdout.write('x'.repeat(300000));process.stderr.write('y'.repeat(90000))",
+      { maxOutputBytes: 400_000 }));
+    await expect.poll(() => handle.query().bufferedOutputBytes).toBeGreaterThan(0);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const sizes = { stdout: 0, stderr: 0 };
+    for await (const chunk of handle.output) {
+      sizes[chunk.stream] += chunk.bytes.length;
+      expect(handle.query().bufferedOutputBytes).toBeLessThanOrEqual(65_536);
+      await nextTurn();
+    }
+    expect(sizes).toEqual({ stdout: 300_000, stderr: 90_000 });
+    expect(await handle.result).toMatchObject({ exitCode: 0, reason: null, droppedOutputBytes: 0,
+      outputBytes: 390_000, stop: { confirmed: true } });
+  });
+
   it('bounds output and buffering for a slow consumer without accumulating the full stream', async () => {
     const root = sandbox();
     const handle = await start(request(root, "setInterval(()=>process.stdout.write('x'.repeat(65536)),1)",

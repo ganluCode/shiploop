@@ -269,7 +269,8 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
       let consumerTaken = false;
       const wake = () => { waiter?.(); waiter = undefined; };
       const streams = [child.stdout!, child.stderr!];
-      const resume = () => streams.forEach((s) => s.resume());
+      let pumping = false;
+      const resume = () => pumpOutput();
       const stop = (why: CommandProcessReason) => {
         // First stop reason wins: user cancel vs timed_out stay distinct through the
         // shared path; late/old handle requests are idempotent no-ops.
@@ -286,9 +287,7 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
         if (finished) return;
         const remaining = Math.max(0, request.maxOutputBytes - outputBytes);
         const available = Math.max(0, BUFFER_LIMIT - buffered);
-        // A data callback may contain more than the queue budget. Retain only
-        // the bounded prefix; while running, turn the unrepresentable remainder
-        // into a controlled overflow instead of keeping a second hidden buffer.
+        // During stop, drain pipes but retain only the bounded prefix.
         const keep = Math.min(chunk.length, remaining, available);
         droppedOutputBytes += chunk.length - keep;
         if (keep > 0) {
@@ -297,11 +296,29 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
           outputBytes += keep;
           wake();
         }
-        if (chunk.length > remaining || (state === 'running' && chunk.length > available)) stop('output_overflow');
-        if (state === 'running' && buffered >= BUFFER_LIMIT) streams.forEach((s) => s.pause());
+        if (chunk.length > remaining) stop('output_overflow');
       };
-      child.stdout!.on('data', (chunk: Buffer) => capture('stdout', chunk));
-      child.stderr!.on('data', (chunk: Buffer) => capture('stderr', chunk));
+      const pumpOutput = () => {
+        if (pumping || finished) return;
+        pumping = true;
+        try {
+          for (const [index, stream] of streams.entries()) {
+            while (stream.readableLength > 0) {
+              const available = BUFFER_LIMIT - buffered;
+              if (state === 'running' && available === 0) return;
+              // Pull only what the queue can hold; a fast producer is not an overflow.
+              // Read one byte beyond the total budget to detect a real limit breach.
+              const size = state === 'running'
+                ? Math.min(stream.readableLength, available, request.maxOutputBytes - outputBytes + 1)
+                : Math.min(stream.readableLength, BUFFER_LIMIT);
+              const chunk = stream.read(size) as Buffer | null;
+              if (chunk === null) break;
+              capture(index === 0 ? 'stdout' : 'stderr', chunk);
+            }
+          }
+        } finally { pumping = false; }
+      };
+      streams.forEach(stream => stream.on('readable', pumpOutput));
       child.stdin!.on('error', () => {}); // EPIPE is reflected by command result, not an unhandled event.
       const abort = () => {
         if (!released) startupFailure.reject(new CommandProcessError('start_aborted'));
