@@ -362,6 +362,7 @@ function expectNoExecutionEntities(probe: StorageProbe): void {
   const present = tables.filter((name) => /batch|run|attempt|work/i.test(name)).sort();
   expect(present, `执行域表清单漂移（实际表：${tables.join(',')}）`).toEqual([
     'attempts',
+    'git_agent_repair_attempts',
     'attempt_notifications',
     'attempt_notification_diagnostics',
     'workspace_leases',
@@ -369,6 +370,7 @@ function expectNoExecutionEntities(probe: StorageProbe): void {
     'managed_workspaces',
     'batch_budget_revisions',
     'execution_batches',
+    'execution_batch_members',
     'runs',
     // P03-3 / F-006 起预占账本表由迁移 v11 建立（空表）：仍不代表创建执行实体。
     'task_attempt_reservations',
@@ -508,6 +510,7 @@ async function seedThreeTaskPlan(
   const repoDir = join(env.sandboxRoot, `repo-${label}`);
   initGitRepo(repoDir);
   writeFileSync(join(repoDir, 'README.md'), `# Repo ${label}\n`, 'utf8');
+  writeFileSync(join(repoDir, 'package.json'), JSON.stringify({ name: 'profile-fixture', private: true }), 'utf8');
   commitAll(repoDir, `init ${label}`, { home });
 
   const host = await startCatalogHost(env, root, label);
@@ -523,6 +526,13 @@ async function seedThreeTaskPlan(
     'project.register',
   ) as { result: { project: { id: string } } };
   const projectId = registered.result.project.id;
+  const detectedProfile = successResult(await runDistCli(env, ['project', 'profile', 'detect', projectId,
+    '--confirm', '--data-root', root, '--json']), 'project.profile-detect') as { result: { profile: { version: number } } };
+  const profilePath = join(env.sandboxRoot, `profile-${projectId}.json`);
+  writeFileSync(profilePath, JSON.stringify(detectedProfile.result.profile), 'utf8');
+  successResult(await runDistCli(env, ['project', 'profile', 'confirm', projectId,
+    '--revision', String(detectedProfile.result.profile.version), '--input', profilePath,
+    '--confirm', '--data-root', root, '--json']), 'project.profile-confirm');
   successResult(
     await runDistCli(env, [
       'config', 'create', '--scope', 'global',
@@ -770,6 +780,8 @@ describe('F-009 P03-2 跨模块集成回归（正式构建 Host/CLI + 隔离真�
         expect(receiptStatus(probe, prepared.commandId)).toBe('completed');
         expect(projectEventTypes(probe, projectId)).toEqual([
           'project.registered',
+          'project_profile.detected',
+          'project_profile.confirmed',
           'phase.created',
           'feature.plan.imported',
           'task.strategy.updated',
@@ -826,7 +838,7 @@ describe('F-009 P03-2 跨模块集成回归（正式构建 Host/CLI + 隔离真�
     {
       const probe = openProbe(root);
       try {
-        expect(projectEventTypes(probe, projectId)).toHaveLength(6);
+        expect(projectEventTypes(probe, projectId)).toHaveLength(8);
       } finally {
         probe.close();
       }

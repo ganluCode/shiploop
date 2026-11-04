@@ -217,6 +217,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expect(entry.reason.length).toBeGreaterThan(0);
     }
     expect(report.inputs.workflows).toEqual([
+      { label: '.github/workflows/node-compatibility.yml', sha256: sha256Hex(readFileSync(join(repoRoot, '.github/workflows/node-compatibility.yml'), 'utf8')) },
       { label: CI_WORKFLOW_FILE, sha256: sha256Hex(workflowText) },
     ]);
     // 报告不携带开发机绝对路径。
@@ -266,6 +267,18 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expectFailed(report, 'workflow-parseable');
       expect(report.passed).toBe(false);
     });
+  });
+
+  it('[case:node-matrix] 允许已审矩阵，拒绝修改后的矩阵', () => {
+    const text = readFileSync(join(repoRoot, '.github/workflows/node-compatibility.yml'), 'utf8');
+    for (const modified of [false, true]) {
+      withFixture('node-matrix-', { extraWorkflows: [{ name: 'node-compatibility.yml',
+        text: modified ? text.replace('contents: read', 'contents: write') : text }] }, root => {
+        const report = verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT });
+        if (modified) expectFailed(report, 'workflow-file-set');
+        else expect(report.passed).toBe(true);
+      });
+    }
   });
 
   it('[case:extra-workflow] 未登记的额外工作流文件失败', () => {
@@ -518,7 +531,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expect(good.status).toBe(0);
       const saved = JSON.parse(readFileSync(goodReport, 'utf8')) as CiConfigVerificationReport;
       expect(saved.passed).toBe(true);
-      expect(saved.inputs.workflows[0]?.label).toBe(CI_WORKFLOW_FILE);
+      expect(saved.inputs.workflows.map(row => row.label)).toEqual(['.github/workflows/node-compatibility.yml', CI_WORKFLOW_FILE]);
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }

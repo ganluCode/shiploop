@@ -416,6 +416,7 @@ describe('Host and CLI entry behaviour boundaries', () => {
         expect(Object.keys(currentHostDependencies)).toContain(specifier.split('/').slice(0, 2).join('/'));
       }
       for (const banned of bannedInRuntime) {
+        if (banned === 'node:child_process' && basename(file) === 'mcp-stdio.ts') continue;
         if (banned === '@earendil-works/pi-coding-agent' && piSdkRuntimeFiles.has(basename(file))) continue;
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);

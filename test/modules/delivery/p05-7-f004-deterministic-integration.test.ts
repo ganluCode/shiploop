@@ -391,7 +391,7 @@ describe('P05-7 F-004 deterministic integration application', () => {
       const result = await f.makeService().start(f.request);
       expect(() => f.box.atomic.transact('stale', tx => f.journal.append(tx, f.box.projectId, f.plan.integrationId, 99, result)))
         .toThrow(expect.objectContaining({ details: { reason: 'operation_fenced' } }));
-      expect(() => f.box.session.database.prepare('DELETE FROM git_integration_observations').run()).toThrow('integration observation is retained');
+      expect(() => f.box.session.database.prepare('DELETE FROM git_integration_observations').run()).toThrow('git_integration_observations immutable');
       expect(() => f.box.session.database.prepare("UPDATE git_integration_commands SET request_digest = ?").run(digest('a')))
         .toThrow('integration command is immutable');
     } finally { f.box.close(); }

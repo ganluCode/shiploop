@@ -35,7 +35,7 @@ describe('F-012 production composition', () => {
     expect(fixture.query('SELECT runtime_starts FROM execution_batches')).toEqual({ runtime_starts: 0 });
   });
   it('executes through explicit Fake composition and retains queryable Runtime evidence', async () => {
-    fixture = await openBindingFixture();
+    fixture = await openBindingFixture({ confirmProjectProfile: true });
     core = await openFakeCoreApplication({ dataRoot: fixture.box.dataRoot,
       capabilityCatalog: createStaticRuntimeCapabilityCatalog([{ runtimeId: 'fake', providers: [{ providerId: 'test-provider', models: ['fake-model'] }] }]),
       nowUtcMs: () => BINDING_NOW,
@@ -59,7 +59,7 @@ const providers = [{ providerId: 'test-provider', models: ['fake-model'] }];
 const catalog = () => createStaticRuntimeCapabilityCatalog([{ runtimeId: 'fake', providers }]);
 
 async function openHostCase(stopGate = false) {
-  fixture = await openBindingFixture();
+  fixture = await openBindingFixture({ confirmProjectProfile: true });
   const run = createFakeRuntimeGate(), stopped = createFakeRuntimeGate();
   releaseGates.push(run.release, stopped.release);
   const factory = createFakeWorkRuntimeFactory({ providers, gates: { run, stopped },

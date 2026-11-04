@@ -23,7 +23,7 @@ function fixture() {
   const digest = core.buildWorkAccessManifest(access, binding).digest;
   const inspect = vi.fn<core.WorkAuthenticationSource['inspect']>(async () => 'ready');
   const authorize = vi.fn<core.WorkAuthenticationPreflightDependencies['authorize']>(async () => ({ state: 'active', policyDigest: digest, sourceRead: true, modelRequest: true }));
-  const catalog = vi.fn<core.WorkAuthenticationPreflightDependencies['catalog']>(async () => ({ sdkVersion: '1.0.4', providerExists: true, modelExists: true, plugins: [] }));
+  const catalog = vi.fn<core.WorkAuthenticationPreflightDependencies['catalog']>(async () => ({ sdkVersion: '1.5.0', providerExists: true, modelExists: true, plugins: [] }));
   const source = { kind: 'local_login' as const, provider: 'anthropic', environmentRefs: [], inspect };
   const dependencies = { sources: new Map([[SOURCE, source]]), authorize, catalog, monotonicNow: () => 0 };
   return { access, binding, digest, source, inspect, authorize, catalog, dependencies };
@@ -78,7 +78,7 @@ describe('Work 认证与模型预检', () => {
     ['policy_drift', { plugins: [{ id: SOURCE, sourceRef: SOURCE, version: '1.0.0', contentDigest: null }] }],
   ] as const)('[case:catalog-%s] 精确核对 SDK、provider/model 与额外认证依赖', async (reason, override) => {
     const f = fixture();
-    f.catalog.mockResolvedValue({ sdkVersion: '1.0.4', providerExists: true, modelExists: true, plugins: [], ...override });
+    f.catalog.mockResolvedValue({ sdkVersion: '1.5.0', providerExists: true, modelExists: true, plugins: [], ...override });
     expect(await core.createWorkAuthenticationPreflight(f.dependencies).check(f.access, f.binding, f.digest))
       .toMatchObject({ status: 'rejected', reason });
     expect(f.inspect).not.toHaveBeenCalled();
@@ -111,7 +111,7 @@ describe('Work 认证与模型预检', () => {
       [[{ ...plugin, sourceRef: GRANT }], 'policy_drift'], [[{ ...plugin, contentDigest: null }], 'policy_drift'],
       [[plugin], null],
     ] as const) {
-      f.catalog.mockResolvedValue({ sdkVersion: '1.0.4', providerExists: true, modelExists: true, plugins });
+      f.catalog.mockResolvedValue({ sdkVersion: '1.5.0', providerExists: true, modelExists: true, plugins });
       expect(await service.check(access, f.binding, digest)).toMatchObject({ reason });
     }
     f.catalog.mockRejectedValue(new Error('sk-plugin-secret'));

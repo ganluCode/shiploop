@@ -533,58 +533,12 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('git.repairs.get');
     expect(body.capabilities.application.queries).toContain('execution.batch.delivery.get');
     // P06 includes bounded label, strategy and resource queries.
-    expect(body.capabilities.application.queries).toHaveLength(70);
-    expect(body.capabilities.application.commands).toEqual([
-  "execution.attempt.cancel",
-  "execution.stop.manual",
-  "execution.pause",
-  "execution.cancel",
-  "execution.resume",
-  "execution.retryFinal",
-  "project.register",
-  "project.metadata.update",
-  "project.profile.confirm",
-  "project.profile.detect",
-  "project.profile.modify",
-  "project.profile.reject",
-  "settings.global.create",
-  "settings.global.update",
-  "settings.project.create",
-  "settings.project.update",
-  "baseline.preview",
-  "baseline.run",
-  "baseline.cancel",
-  "phase.create",
-  "phase.metadata.update",
-  "phase.close",
-  "phase.reopen",
-  "phase.archive",
-  "feature.phase.move",
-  "feature.dag.update",
-  "feature.plan.import",
-  "plan.labels.update",
-  "feature.plan.revise",
-  "task.strategy.update",
-  "task.strategy.reapply",
-  "feature.plan.decide",
-  "task.approval.block",
-  "task.approval.approve",
-  "task.approval.reject",
-  "task.approval.unblock",
-  "task.verification.continue",
-  "execution.input.prepare",
-  "execution.preview",
-  "execution.start",
-  "execution.budget.revise",
-  "planning.start",
-  "planning.candidate.decide",
-  "workspace.discard",
-  "workspace.discard.preview",
-  "project.resource.import",
-  "project.resource.enable",
-  "project.resource.disable",
-  "project.resource.revoke"
-]);
+    expect([...body.capabilities.application.queries].sort()).toEqual([...new Set([
+      ...CURRENT_HOST_CAPABILITIES.application.queries.filter(query => query !== 'repository.move.preview'),
+      'execution.batch.delivery.get', 'knowledge.search', 'knowledge.read', 'memory.search',
+    ])].sort());
+    expect(body.capabilities.application.commands).toEqual(CURRENT_HOST_CAPABILITIES.application.commands.filter(
+      command => command !== 'repository.move.confirm' && command !== 'project.repository.rebind'));
     // No delivery factory is installed in this fixture: do not advertise write capabilities.
     expect(body.capabilities.application.commands).not.toContain('feature.verification.continue');
     expect(body.capabilities.application.commands).not.toContain('git.operation.reconcile');

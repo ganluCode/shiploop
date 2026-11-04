@@ -221,10 +221,10 @@ describe('F-001 P02-3 项目初始化与获准基线检查契约文档', () => {
 describe('F-001 契约文档与仓库基线一致（开工现状事实）', () => {
   it('根清单脚本与版本不变（accept:p02 自 P02-4/F-011 起正式交付，指向本地控制器）', () => {
     const root = readJson('package.json');
-    expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
+    expect(root.engines).toEqual({ node: '^22.19.0 || ^24.14.1 || ^26.7.0', npm: '>=10.9.3 <12' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'accept:p02', 'accept:p03', 'accept:p03:clean-replay', 'accept:p04', 'accept:p04:live', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ["accept:p01","accept:p02","accept:p03","accept:p03:clean-replay","accept:p04","accept:p04:live","accept:p05","accept:p06","accept:p07","accept:p08","accept:p08:live","build","check:boundaries","pack:local","test","typecheck","verify","verify:artifacts","verify:ci-config"].sort(),
     );
     // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
@@ -235,7 +235,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     // F-006 接线 projects.inspect/overview 并扩张握手能力集合，按 §3.1 显式升 v3；
     // P03-1 / F-009 计划域能力后续升 v4；P03-2 / F-007 决策/策略/输入准备与审批
     // 查询进入能力集合后续升 v5（docs/p03-2-plan-approval-contract.md）。
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 5 as const/);
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 6 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     expect(constants).toContain("COMMANDS_ROUTE = '/v1/commands'");
@@ -313,7 +313,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     // P03-5 / F-012 追加 workspace（工作区状态展示与人工丢弃预览/确认），
     // 与 p03-1/p03-2/p03-3/app-cli-args 冻结面同步扩展。
     expect(args.replace(/\s+/g, ' ')).toContain(
-      "APP_CLI_COMMANDS = [ 'project', 'config', 'receipt', 'events', 'baseline', 'phase', 'feature', 'task', 'execution', 'workspace', 'git', ] as const;",
+      "APP_CLI_COMMANDS = [ 'project', 'config', 'receipt', 'events', 'knowledge', 'baseline', 'phase', 'feature', 'task', 'planning', 'execution', 'workspace', 'git', 'integration', 'backup', 'restore', 'retention', 'notifications', ] as const;",
     );
     expect(args).toContain('APP_CLI_COMMAND_IDS');
     // 契约记录 project init/overview 与 baseline 子命令面（F-015 已增补）。

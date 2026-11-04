@@ -34,7 +34,7 @@ it('[case:factory-static-entry] assembles a versioned Pi entry without starting 
   const factory = createPiWorkRuntimeFactory({ providers, permissionGrants: ['fs.read'], isolationModes: ['trusted_project'],
     process: { start }, argv: ['trusted-runner'], cwd: '/trusted', environment: {} });
   const assembly = factory(context());
-  expect(assembly.entries[0]?.descriptor).toMatchObject({ ...capability, sdkVersion: '1.0.4', adapterVersion: '0.1.0' });
+  expect(assembly.entries[0]?.descriptor).toMatchObject({ ...capability, sdkVersion: '1.5.0', adapterVersion: '0.1.0' });
   expect(start).not.toHaveBeenCalled();
   expect(() => factory(context(createStaticRuntimeCapabilityCatalog([{ runtimeId: 'pi', providers }]))))
     .toThrowError(expect.objectContaining({ reason: 'pi_capability_declarations_required' }));
@@ -113,7 +113,7 @@ function realAssembly(mode: 'complete' | 'no-usage' | 'cancel' | 'crash' | 'star
     })() };
   } };
   const factory = createPiWorkRuntimeFactory({ providers, permissionGrants: [], isolationModes: ['trusted_project'],
-    process: processPort, argv: [process.execPath, '--experimental-transform-types', '--import',
+    process: processPort, argv: [process.execPath, '--import',
       fileURLToPath(new URL('../../helpers/node-ts-loader/register.mjs', import.meta.url)),
       fileURLToPath(new URL('../../helpers/pi-composition-runner-child.ts', import.meta.url))], cwd: process.cwd(),
     environment: { SHIPLOOP_TEST_PI_MODE: mode },

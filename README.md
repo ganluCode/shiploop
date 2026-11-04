@@ -11,8 +11,8 @@ P01-1 工程骨架 + P01-2 SQLite 原子存储与制品落盘 + P01-3 项目身�
 
 | 工具 | 精确版本 | 选择依据 |
 |---|---|---|
-| Node.js | `22.19.0` | 2026-10-01 在本机（macOS, nvm）已验证的 LTS 线上版本；Vitest 5 要求 `^22.12.0 \|\| ^24.0.0 \|\| >=26`，该版本满足；22.18+ 原生支持直接运行仅含可擦除语法的 TypeScript，工程脚本据此运行。 |
-| npm | `10.9.3` | 随 Node 22.19.0 的本机 npm，已实际验证 `npm ci` / `npm test` 闭环。 |
+| Node.js | 发布基线 `22.19.0` | 支持 `^22.19.0`、`^24.14.1`；`^26.7.0` 为已验证兼容范围。兼容 CI 分别执行干净安装、类型检查、构建和 Pi/认证定向回归，不代表每个版本均执行全仓验收。 |
+| npm | 发布基线 `10.9.3` | 允许 `>=10.9.3 <12`；发布打包与历史验收继续固定 npm 10.9.3。 |
 | TypeScript | `7.0.2` | 严格类型检查与构建编译器（`tsc -b` 产物含 `.js` / `.d.ts` / sourcemap），精确锁定；已在干净副本验证。 |
 | @types/node | `22.20.4` | Node 内置模块类型；TS 7 不再自动纳入全部 `@types/*`，由 `tsconfig.base.json` 显式 `types: ["node"]`。 |
 | Vitest | `5.0.3` | 一次性（非 watch）确定性测试运行器；设计文档建议的候选，精确锁定，不使用 `^`/`~` 范围。由 `scripts/run-tests.ts` 启动器校验本地安装的工具身份与精确版本后调用，不回退全局实现或 npx 下载。 |
@@ -20,11 +20,12 @@ P01-1 工程骨架 + P01-2 SQLite 原子存储与制品落盘 + P01-3 项目身�
 | drizzle-orm | `0.45.3` | SQLite ORM（P01-2 / F-001 起固定于 `shiploop-core` 适配层）。S2 实验在同一驱动上验证了 `immediate` 事务的提交/回滚；精确锁定，不使用 `^`/`~` 范围。 |
 | @types/better-sqlite3 | `9.6.0` | better-sqlite3 官方包不携带类型声明，锁定 DefinitelyTyped 对应版本；仅作为 `shiploop-core` 开发依赖。 |
 
-版本一致性由以下位置共同保证，改动时必须全部同步：
+发布基线与支持范围分开维护，改动时必须同步：
 
 - `.node-version` 与 `.nvmrc`：`22.19.0`
 - 根 `package.json` 的 `engines.node` / `engines.npm` 与 `packageManager`
-- 各工作区包的 `engines.node`
+- 各工作区包的 `engines.node` / `engines.npm`：允许安装范围；发布 CI 与 `.nvmrc` 仍固定基线
+- `.github/workflows/node-compatibility.yml`：Node 22/24/26 兼容矩阵；修改需同步 CI 检查器内的已审摘要
 - `.npmrc` 启用 `engine-strict=true`（版本不符直接安装失败）与 `save-exact=true`（新增依赖默认锁定精确版本）
 
 ## 目录与包结构

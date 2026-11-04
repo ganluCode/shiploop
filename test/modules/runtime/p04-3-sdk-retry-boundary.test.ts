@@ -28,7 +28,7 @@ describe('F-007 installed provider SDK retry boundary', () => {
     expect(controller.counters()).toMatchObject({ requestCount: 1, retryCount: 0, runtimeStarts: 1 });
   });
 
-  it.each([false, true])('[case:sdk-boundary-%s] counts actual fetches through Pi 1.0.4 and Anthropic SDK', async wrapped => {
+  it.each([false, true])('[case:sdk-boundary-%s] counts actual fetches through Pi 1.5.0 and Anthropic SDK', async wrapped => {
     let fetches = 0;
     const classifications: unknown[] = [];
     const fetchStub: typeof fetch = async () => {

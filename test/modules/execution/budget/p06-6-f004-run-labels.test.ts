@@ -73,7 +73,8 @@ describe('F-004 Run labels', () => {
     }
   });
 
-  it('adds the labels column through the latest migration and Drizzle schema', () => {
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(53);
+  it('adds the labels column through migration v53 and Drizzle schema', () => {
+    expect(SQLITE_MIGRATIONS.find(migration => migration.version === 53)?.sql).toMatch(/ALTER TABLE runs ADD COLUMN labels/);
+    expect(getTableColumns(schema.runs)).toHaveProperty('labels');
   });
 });

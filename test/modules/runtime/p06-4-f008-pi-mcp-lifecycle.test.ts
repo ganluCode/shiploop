@@ -194,7 +194,7 @@ it('[case:runner-real-sigterm] real Runner SIGTERM closes its detached MCP group
   const output: string[] = [];
   try {
     const marker = join(f.box.path, 'runner-ready.json');
-    handle = await port.start({ argv: [process.execPath, '--experimental-transform-types', '--import',
+    handle = await port.start({ argv: [process.execPath, '--import',
       fileURLToPath(new URL('../../helpers/node-ts-loader/register.mjs', import.meta.url)),
       fileURLToPath(new URL('../../helpers/p06-4/pi-mcp-runner-child.ts', import.meta.url)), marker],
       cwd: process.cwd(), environment: {}, stdin: Buffer.from(JSON.stringify(f.request)),

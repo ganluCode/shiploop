@@ -6,7 +6,7 @@
       "tests": [
         {
           "file": "test/modules/planning/p05-1-f014-planning-e2e.test.ts",
-          "cases": ["planning-e2e-single-run-candidate-apply"],
+          "all": true,
           "level": "integration"
         },
         {

@@ -91,7 +91,7 @@ describe('P06-6 / F-008 v52 旧库升级后的策略与标签路径兼容', () =
 
         // 升级到最新：只应用 v53，历史 Run 统一得到空数组标签。
         const upgrade = await migrateSqliteStorage(predecessor);
-        expect(upgrade.appliedVersions).toEqual([53]);
+        expect(upgrade.appliedVersions).toEqual(SQLITE_MIGRATIONS.filter(migration => migration.version > 52).map(migration => migration.version));
         const runId = fixture.ids.runId;
         const batchId = fixture.ids.batchId;
         const projectId = fixture.box.projectId;

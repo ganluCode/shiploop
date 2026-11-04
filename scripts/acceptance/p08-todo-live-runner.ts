@@ -105,7 +105,7 @@ async function run(input: TodoPiRunnerInput): Promise<void> {
     if (existsSync(target) && lstatSync(target).isSymbolicLink()) throw new Error('approved_file_symlink');
     const sdk: any = await import('@earendil-works/pi-coding-agent');
     const piAi: any = await import('@earendil-works/pi-ai');
-    if (sdk.VERSION !== '1.0.4') throw new Error('sdk_version_mismatch');
+    if (sdk.VERSION !== '1.5.0') throw new Error('sdk_version_mismatch');
     const agentDir = join(dirname(input.reportFile), `agent-${input.taskId}`);
     const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, cacheWarming: 'off', retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } });
     const resourceLoader = new sdk.DefaultResourceLoader({

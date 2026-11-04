@@ -5,8 +5,8 @@
   "type": "module",
   "description": "ShipLoop CLI (private workspace package; not published)",
   "engines": {
-    "node": "22.19.0",
-    "npm": "10.9.3"
+    "node": "^22.19.0 || ^24.14.1 || ^26.7.0",
+    "npm": ">=10.9.3 <12"
   },
   "os": [
     "darwin"

@@ -116,7 +116,7 @@ const failedObservation = (policyDigest: string) => ({
 
 describe('F-016 三 Task 链端到端（正式装配入口）', () => {
   it('首次检查失败 → 同 worktree 增量修复成功 → 依赖仅在有效通过后解锁', async () => {
-    fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true, thirdTaskChained: true,
+    fixture = await openBindingFixture({ confirmProjectProfile: true, secondTask: true, secondTaskDependsOnFirst: true, thirdTaskChained: true,
       deliveryPolicy: { commitMode: 'task_and_feature',
         gitIdentity: { name: 'Test Owner', email: 'owner@example.test', confirmed: true } },
     });
@@ -227,11 +227,11 @@ describe('F-016 三 Task 链端到端（正式装配入口）', () => {
     });
     expect(taskRow('t-3')).toMatchObject({ status: 'passed', code_attempts_used: 1, attempt_counter: 1 });
 
-    /* 全部通过：调度给出最终验证交接缺口（P03-8 才装配 final verification
-     * 消费者）；P03-7 不标 Run succeeded/Feature completed。 */
+    /* 全部 Task 通过后缺少 Feature 检查范围，暂停而非宣称交付完成。 */
     const final = await core.workExecution.scan();
-    expect(final.runs).toMatchObject([{ reason: 'scheduler_capability_missing', claimed: false }]);
-    expect(query('SELECT status FROM runs WHERE id = ?', fixture.runId)).toMatchObject({ status: 'running' });
+    expect(final.runs.every(entry => entry.claimed === false)).toBe(true);
+    expect(query('SELECT status, reason FROM runs WHERE id = ?', fixture.runId))
+      .toMatchObject({ status: 'paused', reason: 'feature_check_scope_missing' });
     /* Feature 不被冒称完成（P03-8 最终交付边界）。 */
     expect(query('SELECT status FROM features WHERE id = ?', fixture.featureId)).toMatchObject({ status: 'draft' });
     /* 首跑与返工的全部文件证据仍保留（不清空重写）。 */

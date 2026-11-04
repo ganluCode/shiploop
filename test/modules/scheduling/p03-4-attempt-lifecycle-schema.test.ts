@@ -38,7 +38,10 @@ describe('F-005 notification persistence migration', () => {
           }
         }
       });
-      const snapshot = () => Object.fromEntries(tables.map(table => [table, session.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
+      const historicalColumns = Object.fromEntries(tables.map(table => [table,
+        (session.database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(column => column.name)]));
+      const snapshot = () => Object.fromEntries(tables.map(table => [table,
+        session.database.prepare(`SELECT ${historicalColumns[table]!.join(',')} FROM ${table} ORDER BY id`).all()]));
       const before = snapshot();
       expect(before.attempts).toHaveLength(1);
       expect(before.workspace_leases).toHaveLength(3);
@@ -55,10 +58,6 @@ describe('F-005 notification persistence migration', () => {
       expect(session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(migrationsBefore);
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name IN ('attempt_notifications', 'attempt_notification_diagnostics')").all()).toEqual([]);
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual(SQLITE_MIGRATIONS.filter(migration => migration.version >= 17).map(migration => migration.version));
-      before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
-      before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
-      before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));
-      before.execution_batches = before.execution_batches!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));
       expect(snapshot()).toEqual(before);
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= 16 ORDER BY version').all()).toEqual(migrationsBefore);
       expect(createHash('sha256').update(SQLITE_MIGRATIONS.slice(0, 16).map(m => m.checksum).join('\n')).digest('hex')).toBe(checksum);

@@ -11,6 +11,8 @@
  * 非字面量 import/require 不受本守卫豁免；解析失败按加载失败处理。
  */
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { transform } from 'esbuild';
 
 const FORBIDDEN = [
   /^@earendil-works\//,
@@ -41,4 +43,14 @@ export async function resolve(specifier, context, nextResolve) {
     }
   }
   return nextResolve(specifier, context);
+}
+
+export async function load(url, context, nextLoad) {
+  if (url.startsWith('file:') && url.endsWith('.ts')) {
+    const result = await transform(await readFile(new URL(url), 'utf8'), {
+      loader: 'ts', format: 'esm', target: 'es2022', sourcefile: url,
+    });
+    return { format: 'module', source: result.code, shortCircuit: true };
+  }
+  return nextLoad(url, context);
 }

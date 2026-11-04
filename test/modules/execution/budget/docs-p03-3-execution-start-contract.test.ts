@@ -51,8 +51,10 @@ describe('P03-3 / F-005 显式执行启动契约文档', () => {
       capability: 'execution.start',
     });
     expect(APP_CAPABILITIES).toContain('execution.start');
-    // Host 通用命令路由接线宣告与 Core 白名单一致（v5 内增量，升版随 F-011 评估）。
-    expect([...APPLICATION_COMMAND_CAPABILITIES]).toEqual([...COMMAND_OPERATIONS]);
+    // Host 增加仓库移动确认；GitAgent 启动及整库恢复走专用入口。
+    expect([...APPLICATION_COMMAND_CAPABILITIES]).toEqual(COMMAND_OPERATIONS.flatMap(operation =>
+      operation === 'project.repository.rebind' ? ['repository.move.confirm', operation]
+        : operation === 'git.operation.start' || operation === 'data.backup.restore' ? [] : [operation]));
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(5);
     expect(doc).toContain('execution.start');
     expect(doc).toContain('与 `execution.preview` 共享');

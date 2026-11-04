@@ -342,7 +342,11 @@ describe('F-013 结算：重放、成功重入与共享预算', () => {
       expect(count(h, 'run_outcome_settlements')).toBe(1);
       expect(row(h, 'execution_batches', seed.batchId)).toMatchObject({ runs_created: 1, attempts_created: 1, runtime_starts: 1, no_progress_runs: 1 });
       expect(row(h, 'runs', seed.runId)).toMatchObject({ status: 'failed', ended_at: NOW });
-      expect(h.snapshot().state_events).toEqual(before.state_events);
+      const events = h.snapshot().state_events as { event_type: string; aggregate_id: string }[];
+      expect(events.filter(event => event.event_type !== 'execution.run.ended')).toEqual(before.state_events);
+      expect(events.filter(event => event.event_type === 'execution.run.ended')).toMatchObject([
+        { aggregate_id: seed.runId },
+      ]);
       expect(h.snapshot().command_receipts).toEqual(before.command_receipts);
       persistedAfterReopen(h);
       const after = h.snapshot();

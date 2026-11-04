@@ -75,7 +75,7 @@ describe('P03-4 F-001 persistent execution model', () => {
     } finally { f.box.close(); }
   });
 
-  it('rejects duplicate active attempts, task numbers and resource keys even after lease expiry', async () => {
+  it('rejects duplicate active attempts and task numbers; v39 permits shared global gate keys', async () => {
     const f = await fixture();
     try {
       f.insert({ lease_until: NOW - 1 }); f.lease({ lease_until: NOW - 1, state: 'quarantined' });
@@ -87,6 +87,7 @@ describe('P03-4 F-001 persistent execution model', () => {
       f.db.prepare("UPDATE attempts SET status = 'interrupted'").run();
       expect(() => f.insert({ id: 'attempt-2' })).toThrow();
       f.insert({ id: 'attempt-2', number: 2 });
+      expect(() => f.lease({ id: 'lease-2', owner_id: 'attempt-2' })).not.toThrow();
       expect(() => f.lease({ id: 'lease-2', owner_id: 'attempt-2' })).toThrow();
     } finally { f.box.close(); }
   });
@@ -305,7 +306,8 @@ describe('P03-4 F-001 persistent execution model', () => {
             delete row.pause_requested_at;
           }
         }
-        expect(after, table).toEqual(before[table]);
+        const historicalColumns = Object.keys((before[table] as Record<string, unknown>[])[0] ?? {});
+        expect(after.map(row => Object.fromEntries(historicalColumns.map(key => [key, row[key]]))), table).toEqual(before[table]);
       }
       expect(predecessor.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
       expect(predecessor.database.prepare('SELECT attempts_created, runtime_starts FROM execution_batches').get()).toEqual({ attempts_created: 1, runtime_starts: 1 });
@@ -360,7 +362,8 @@ describe('P03-4 F-001 persistent execution model', () => {
             delete row.pause_requested_at;
           }
         }
-        expect(after, table).toEqual(before[table]);
+        const historicalColumns = Object.keys((before[table] as Record<string, unknown>[])[0] ?? {});
+        expect(after.map(row => Object.fromEntries(historicalColumns.map(key => [key, row[key]]))), table).toEqual(before[table]);
       }
       expect(predecessor.database.prepare('SELECT COUNT(*) AS n FROM git_operations').get()).toEqual({ n: 0 });
       expect(predecessor.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);

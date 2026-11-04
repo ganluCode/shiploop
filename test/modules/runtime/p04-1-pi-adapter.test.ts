@@ -134,7 +134,7 @@ class ScriptedPiSession implements PiSession {
 
 describe('P04-1 standard Pi SDK contract', () => {
   it('[case:pi-sdk-actual-contract] locks the installed SDK version, license, import and lifecycle API', () => {
-    expect(PI_SDK_VERSION).toBe('1.0.4');
+    expect(PI_SDK_VERSION).toBe('1.5.0');
     expect(piSdk.VERSION).toBe(PI_SDK_VERSION);
     expect(PI_SDK_LICENSE).toBe('MIT');
     expect(typeof piSdk.createAgentSession).toBe('function');
@@ -153,7 +153,7 @@ describe('P04-1 standard Pi SDK contract', () => {
       [{ descriptor: piDescriptor, adapter }],
       catalog,
     );
-    expect(registry.resolve(PI_RUNTIME_ID)?.descriptor.sdkVersion).toBe('1.0.4');
+    expect(registry.resolve(PI_RUNTIME_ID)?.descriptor.sdkVersion).toBe('1.5.0');
     expect(registry.resolve(PI_RUNTIME_ID)?.descriptor.contractVersion).toBe(RUNTIME_ADAPTER_CONTRACT_VERSION);
   });
 

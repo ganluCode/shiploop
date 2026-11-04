@@ -492,8 +492,10 @@ export function verifyArtifacts(options: VerifyArtifactsOptions): ArtifactVerifi
         problems.push('清单缺少 toolchain 对象');
       } else {
         if (isObject(engines)) {
-          if (toolchain['node'] !== engines['node']) problems.push(`清单 Node 版本与仓库 engines 不一致：${JSON.stringify(toolchain['node'])} vs ${JSON.stringify(engines['node'])}`);
-          if (toolchain['npm'] !== engines['npm']) problems.push(`清单 npm 版本与仓库 engines 不一致：${JSON.stringify(toolchain['npm'])} vs ${JSON.stringify(engines['npm'])}`);
+          const nodeBaseline = engines['node'] === '^22.19.0 || ^24.14.1 || ^26.7.0' ? '22.19.0' : engines['node'];
+          const npmBaseline = engines['npm'] === '>=10.9.3 <12' ? '10.9.3' : engines['npm'];
+          if (toolchain['node'] !== nodeBaseline) problems.push(`清单 Node 版本与发布基线不一致：${JSON.stringify(toolchain['node'])} vs ${JSON.stringify(nodeBaseline)}`);
+          if (toolchain['npm'] !== npmBaseline) problems.push(`清单 npm 版本与发布基线不一致：${JSON.stringify(toolchain['npm'])} vs ${JSON.stringify(npmBaseline)}`);
         } else {
           problems.push('仓库根 package.json 缺少 engines 声明');
         }

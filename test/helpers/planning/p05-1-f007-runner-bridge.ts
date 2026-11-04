@@ -93,7 +93,7 @@ export async function startHostlessPlanningRunnerBridge(options: { readonly pref
       providers: [{ providerId: 'provider', models: ['model'] }],
       permissionGrants: [], isolationModes: ['trusted_project'],
       process: processPort,
-      argv: [process.execPath, '--experimental-transform-types', '--import',
+      argv: [process.execPath, '--import',
         fileURLToPath(new URL('../node-ts-loader/register.mjs', import.meta.url)),
         fileURLToPath(new URL('./p05-1-f007-runner-child.ts', import.meta.url))],
       cwd: process.cwd(),

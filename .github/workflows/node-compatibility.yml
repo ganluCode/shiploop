@@ -1,0 +1,37 @@
+name: node-compatibility
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: Node ${{ matrix.node }} compatibility
+    runs-on: macos-14
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.19.0', '24.14.1', '26.7.0']
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Pi and authentication regression
+        run: >-
+          node scripts/run-tests.ts
+          test/modules/runtime/p04-1-pi-adapter.test.ts
+          test/modules/runtime/p04-1-pi-composition.test.ts
+          test/modules/runtime/p04-1-pi-runner.test.ts
+          test/modules/runtime/p04-1-pi-stopping.test.ts
+          test/modules/runtime/p04-1-pi-f007-contract.test.ts
+          test/modules/runtime/p04-2-pi-authentication.test.ts
+          test/modules/authorization/p04-2-authentication-preflight.test.ts

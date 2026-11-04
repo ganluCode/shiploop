@@ -7040,11 +7040,12 @@ function validatePlanningContextRecordWire(operation: HostOperation, value: unkn
 function validatePlanningRunRecordWire(operation: HostOperation, value: unknown): void {
   const run = requirePlain(operation, value);
   exactKeys(operation, run, [
-    'id', 'batchId', 'purpose', 'status', 'reason', 'startedAt', 'endedAt',
+    'id', 'batchId', 'labels', 'purpose', 'status', 'reason', 'startedAt', 'endedAt',
     'pauseRequestedAt', 'attemptsCreated', 'maxAttemptsPerRun', 'runTimeLimitMs',
   ]);
   requireStableId(operation, run.id);
   requireStableId(operation, run.batchId);
+  requireLabelsArray(operation, run.labels);
   if (run.purpose !== 'plan') {
     malformed(operation, 'planning_run_purpose_invalid');
   }

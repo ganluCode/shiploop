@@ -179,7 +179,7 @@ async function waitIdle(core: CoreApplication): Promise<void> {
 
 describe('F-005 Work 组合根的同 Run 串行派发', () => {
   it('两个依赖 Task 复用同一 Run 认领/槽位，Runtime 完成不等于 passed，收尾 handoff 不新建 Attempt', async () => {
-    const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true,
+    const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true, confirmProjectProfile: true,
       deliveryPolicy: { commitMode: 'task_and_feature',
         gitIdentity: { name: 'Test Owner', email: 'owner@example.test', confirmed: true } } });
     fixtures.push(fixture);
@@ -250,14 +250,13 @@ describe('F-005 Work 组合根的同 Run 串行派发', () => {
     });
     const final = await core.workExecution.scan();
     // 未装配最终验证消费者：保留可查询阻塞原因，不新建 Attempt，也不把 Run 标成功。
-    expect(final.runs).toMatchObject([{ reason: 'scheduler_capability_missing', claimed: false,
-      capabilityGaps: ['feature_final_verification_consumer'] }]);
-    expect(row(fixture, 'SELECT status FROM runs WHERE id = ?', fixture.runId)).toEqual({ status: 'running' });
+    expect(final.runs).toMatchObject([{ reason: 'all_passed', claimed: false, capabilityGaps: [] }]);
+    expect(row(fixture, 'SELECT status, reason FROM runs WHERE id = ?', fixture.runId)).toEqual({ status: 'paused', reason: 'feature_check_scope_missing' });
     expect(count(fixture, 'SELECT COUNT(*) AS n FROM attempts')).toBe(2);
     expect(row(fixture, 'SELECT status FROM features WHERE id = ?', fixture.featureId)).toEqual({ status: 'draft' });
     const dag = evaluateTaskDag(createSqliteTaskDagStore(fixture.session).readTaskDagView(
       fixture.projectId, fixture.runId), BINDING_NOW);
-    expect(dag.reason).toBe('all_passed');
+    expect(dag.reason).toBe('run_control_blocked');
 
     // 关闭停止新认领并清理计时器/唤醒，不再产生执行。
     const closed = await core.workExecution.close();
@@ -367,7 +366,7 @@ describe('F-005 finalization-only 分流与准入', () => {
 
 describe('F-005 启动门控与关闭', () => {
   it('恢复门控解除前不消费，解除后从持久 queued Run 补扫，关闭后不再认领', async () => {
-    const fixture = await openBindingFixture();
+    const fixture = await openBindingFixture({ confirmProjectProfile: true });
     fixtures.push(fixture);
     const core = await openFakeCoreApplication({
       dataRoot: fixture.box.dataRoot,

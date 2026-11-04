@@ -695,7 +695,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
         body: handshakeBody({ schemaVersion: legacyVersion }),
       });
       const error = expectRejected(legacySchema, 400, 'unsupported_schema_version', 'host.handshake');
-      expect(error.details?.supportedSchemaVersions).toEqual([5]);
+      expect(error.details?.supportedSchemaVersions).toEqual([6, 5]);
     }
 
     const protocolMismatch = await loopbackRequest({

@@ -37,6 +37,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 /** P01 起冻结的工具链与平台支持矩阵（docs/p08-packaging.md FR-1 / 兼容性）。 */
 const FROZEN_NODE = '22.19.0';
 const FROZEN_NPM = '10.9.3';
+const SUPPORTED_ENGINES = { node: '^22.19.0 || ^24.14.1 || ^26.7.0', npm: '>=10.9.3 <12' };
 const FROZEN_OS = ['darwin'];
 const UNIFIED_VERSION = '0.0.0';
 
@@ -132,7 +133,7 @@ describe('P08-1 / F-001 分发元数据与兼容声明', () => {
         expect(manifest['version']).toBe(UNIFIED_VERSION);
         expect(manifest['private']).toBe(true);
         expect(manifest['type']).toBe('module');
-        expect(manifest['engines']).toEqual({ node: FROZEN_NODE, npm: FROZEN_NPM });
+        expect(manifest['engines']).toEqual(SUPPORTED_ENGINES);
         expect(manifest['os']).toEqual(FROZEN_OS);
         // 公开发布身份未定：不擅自声明 license 或发布配置。
         expect(manifest['license']).toBeUndefined();
@@ -180,7 +181,7 @@ describe('P08-1 / F-001 分发元数据与兼容声明', () => {
         expect(entry, `lock 缺少 ${packageDir || '根'} 条目`).toBeDefined();
         expect(entry!['name']).toBe(manifest['name']);
         expect(entry!['version']).toBe(UNIFIED_VERSION);
-        expect(entry!['engines']).toEqual({ node: FROZEN_NODE, npm: FROZEN_NPM });
+        expect(entry!['engines']).toEqual(SUPPORTED_ENGINES);
         expect(entry!['os']).toEqual(FROZEN_OS);
       }
       for (const [linkName, resolvedDir] of [

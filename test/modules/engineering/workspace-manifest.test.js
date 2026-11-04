@@ -17,6 +17,8 @@ const workspaceDirs = ['packages/core', 'packages/host', 'packages/cli'];
 const workspaceNames = ['shiploop-core', 'shiploop-host', 'shiploop-cli'];
 const pinnedNodeVersion = '22.19.0';
 const pinnedNpmVersion = '10.9.3';
+const supportedNodeRange = '^22.19.0 || ^24.14.1 || ^26.7.0';
+const supportedNpmRange = '>=10.9.3 <12';
 
 describe('root workspace manifest', () => {
   const root = readJson('package.json');
@@ -31,8 +33,8 @@ describe('root workspace manifest', () => {
   });
 
   it('pins the verified Node and npm versions consistently', () => {
-    expect(root.engines?.node).toBe(pinnedNodeVersion);
-    expect(root.engines?.npm).toBe(pinnedNpmVersion);
+    expect(root.engines?.node).toBe(supportedNodeRange);
+    expect(root.engines?.npm).toBe(supportedNpmRange);
     expect(root.packageManager).toBe(`npm@${pinnedNpmVersion}`);
   });
 
@@ -69,7 +71,7 @@ describe.each(workspaceDirs.map((dir, index) => [dir, workspaceNames[index]]))(
     });
 
     it('declares the same Node engine pin as the root manifest', () => {
-      expect(pkg.engines?.node).toBe(pinnedNodeVersion);
+      expect(pkg.engines?.node).toBe(supportedNodeRange);
     });
   },
 );

@@ -83,7 +83,7 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
   featureAutoFixPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').FeatureAutoFixPolicyV2;
   verificationPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').VerificationPolicyV2 } = {}): Promise<DeliveryVertical> {
   const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true,
-    confirmProjectProfile: options.confirmProjectProfile,
+    confirmProjectProfile: options.confirmProjectProfile ?? true,
     verificationPolicy: options.verificationPolicy,
     featureAutoFixPolicy: options.featureAutoFixPolicy,
     deliveryPolicy: { commitMode: 'task_and_feature',

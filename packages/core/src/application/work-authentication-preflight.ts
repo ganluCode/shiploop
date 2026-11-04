@@ -27,7 +27,7 @@ function authorizationReason(value: WorkAuthenticationAuthorization, digest: str
   return null;
 }
 function catalogReason(value: WorkAuthenticationCatalog, manifest: WorkAccessManifest): WorkAuthenticationReason | null {
-  if (value.sdkVersion !== '1.0.4') return 'sdk_version_incompatible';
+  if (value.sdkVersion !== '1.5.0') return 'sdk_version_incompatible';
   const expected = manifest.access.resources.filter(r => r.kind === 'auth_plugin');
   if (!Array.isArray(value.plugins) || value.plugins.length > 1) return 'policy_drift';
   for (const plugin of expected) {
@@ -96,7 +96,7 @@ export function createWorkAuthenticationPreflight(deps: WorkAuthenticationPrefli
         const catalog = await step(() => deps.catalog(manifest, controller.signal));
         denied = catalogReason(catalog, manifest);
         // Only publish the pinned version; arbitrary adapter strings may contain secrets.
-        sdkVersion = catalog.sdkVersion === '1.0.4' ? '1.0.4' : null;
+        sdkVersion = catalog.sdkVersion === '1.5.0' ? '1.5.0' : null;
         if (denied) return finish(denied);
         failure = 'source_error';
         const state = await step(() => source.inspect({ nowUtcMs: binding.nowUtcMs + Math.max(0, now() - started), signal: controller.signal }));

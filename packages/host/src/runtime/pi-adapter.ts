@@ -588,7 +588,7 @@ function usageOf(message: unknown, nativeSdkMessageUsage = false): RuntimeUsageR
     ? Math.round(total * 1_000_000)
     : null;
   if (inputTokens === null && outputTokens === null && costUsdMicros === null) return null;
-  // Pi 1.0.4 emits the finalized request's usage on each native assistant
+  // Pi 1.5.0 emits the finalized request's usage on each native assistant
   // message (pi-ai/api/openai-responses-shared finalizeResponse). Session
   // totals and arbitrary injected session events have no such scope proof.
   if (nativeSdkMessageUsage && messageRole(message) === 'assistant'
@@ -600,7 +600,7 @@ function usageOf(message: unknown, nativeSdkMessageUsage = false): RuntimeUsageR
       cacheReadTokens: count('cacheRead'), cacheWriteTokens: count('cacheWrite'), reasoningTokens: count('reasoning'),
       providerTotalTokens: count('totalTokens'), cacheReadIncludedInInput: false, cacheWriteIncludedInInput: false,
       coverage: 'partial', normalization: 'raw', completeness: 'partial', accounting: 'incremental',
-      sourceRefs: ['pi-sdk-1.0.4-assistant-message'] };
+      sourceRefs: [`pi-sdk-${PI_SDK_VERSION}-assistant-message`] };
   }
   // Pi exposes message usage but does not identify whether it is a delta or a
   // session cumulative total. Keep the fact usable while preserving that gap.
@@ -790,7 +790,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       if (session.agent !== undefined && session.model !== undefined) {
         try {
           const sdk = await loadPiSdk();
-          nativeSdkMessageUsage = sdk.VERSION === PI_SDK_VERSION && sdk.VERSION === '1.0.4' && session instanceof sdk.AgentSession;
+          nativeSdkMessageUsage = sdk.VERSION === PI_SDK_VERSION && session instanceof sdk.AgentSession;
         } catch { /* Unknown/custom sessions retain unknown accounting. */ }
       }
       let events!: EventChannel;

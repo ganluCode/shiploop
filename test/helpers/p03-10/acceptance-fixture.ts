@@ -293,6 +293,9 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
     ids.projectId = registered.result.project.id;
     await stage('registered');
     const project = ['--project', ids.projectId];
+    const detectedProfile = await fixture.cli<{ result: { profile: { version: number } } }>(['project', 'profile', 'detect', ids.projectId, '--confirm']);
+    const profilePath = fixture.input('project-profile.json', detectedProfile.result.profile);
+    await fixture.cli(['project', 'profile', 'confirm', ids.projectId, '--revision', String(detectedProfile.result.profile.version), '--input', profilePath, '--confirm']);
     const strategy = { runtime: 'fake', provider: 'fake-provider', model: 'fake-model' };
     await fixture.cli(['config', 'create', '--scope', 'global', '--input', fixture.input('config.json', {
       schemaVersion: 2, strategies: { defaultStrategy: strategy, modelMap: { low: strategy } },

@@ -81,16 +81,19 @@ export function createSqliteFeatureExecutionReportStore(
         const operations = pages<GitOperationRow>(
           `SELECT ${GIT_OPERATION_COLUMNS} FROM git_operations WHERE project_id = ? AND feature_id = ? AND id > ? ORDER BY id LIMIT ?`,
           projectId, featureId).map(row => gitOperationRecordFromRow(row, OPERATION));
-        /* 会话归因到各自的 Attempt（s.attempt_id）：P03-9 显式恢复的新 Attempt 会以
-         * 旧 Attempt 会话为 parentSessionId 续接（同一会话树跨 Attempt）；若把
-         * 子会话归因到树根 Attempt，恢复后报告会出现 attempt.sessionId 指向他人
-         * 归属会话的矛盾结构，被线协议一致性拒绝（features.report.get）。 */
-        const sessionRows = db.prepare<[string, string], SessionRow & { root_attempt_id: string }>(`
-          SELECT ${SESSION_COLUMNS.split(',').map(c => `s.${c.trim()}`).join(',')}, s.attempt_id AS root_attempt_id
-            FROM sessions s
-            WHERE s.project_id = ? AND s.kind = 'work'
-              AND s.attempt_id IN (SELECT id FROM attempts WHERE project_id = s.project_id AND feature_id = ?)
-            ORDER BY s.id`).all(projectId, featureId);
+        // Explicit Attempt ownership wins across resume edges; unbound Work children inherit it.
+        const sessionRows = db.prepare<[string, string, string], SessionRow & { root_attempt_id: string }>(`
+          WITH RECURSIVE report_sessions(id, attempt_id) AS (
+            SELECT s.id, s.attempt_id FROM sessions s
+              WHERE s.project_id = ? AND s.kind = 'work' AND s.purpose <> 'chat'
+                AND s.attempt_id IN (SELECT id FROM attempts WHERE project_id = s.project_id AND feature_id = ?)
+            UNION
+            SELECT s.id, parent.attempt_id FROM sessions s JOIN report_sessions parent ON s.parent_session_id = parent.id
+              WHERE s.project_id = ? AND s.kind = 'work' AND s.purpose <> 'chat' AND s.attempt_id IS NULL
+          )
+          SELECT ${SESSION_COLUMNS.split(',').map(c => `s.${c.trim()}`).join(',')}, membership.attempt_id AS root_attempt_id
+            FROM sessions s JOIN report_sessions membership ON membership.id = s.id
+            ORDER BY s.id`).all(projectId, featureId, projectId);
         const sessions = sessionRows.map(row => ({ attemptId: row.root_attempt_id, session: workSessionRecordFromRow(row) }));
         // Include direct references even when old evidence lacks the modern locator prefix.
         const refs = new Set<string>();

@@ -1006,12 +1006,12 @@ describe('F-018 FR-2：基线执行矩阵（真实进程/事件/占用/证据）
       expect(failureView).toMatchObject({ status: 'failed', exitCode: 3 });
       expect(failureView.reasonCode ?? null).toBeNull();
       expect(checkView(detail, 'c-missing-command')).toMatchObject({
-        status: 'error',
+        status: 'not_run',
         reasonCode: 'missing_command',
         exitCode: null,
       });
       expect(checkView(detail, 'd-unknown-script')).toMatchObject({
-        status: 'error',
+        status: 'not_run',
         reasonCode: 'unknown_script',
         exitCode: null,
       });
@@ -1055,8 +1055,8 @@ describe('F-018 FR-2：基线执行矩阵（真实进程/事件/占用/证据）
         ).toMatchObject([
           { check_key: 'a-success', status: 'passed', revision: 2 },
           { check_key: 'b-preexisting-failure', status: 'failed', revision: 2 },
-          { check_key: 'c-missing-command', status: 'error', revision: 2 },
-          { check_key: 'd-unknown-script', status: 'error', revision: 2 },
+          { check_key: 'c-missing-command', status: 'not_run', revision: 2 },
+          { check_key: 'd-unknown-script', status: 'not_run', revision: 2 },
         ]);
       } finally {
         probe.close();

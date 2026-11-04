@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本矩阵描述标准 `@earendil-works/pi-coding-agent@1.0.4` 通过受信 Host/Core 组合根接入时的恢复事实。标准 Pi 的生产默认 descriptor 是 `PI_RUNTIME_RECOVERY_DESCRIPTOR`：适配器版本 `0.1.0`，原生格式 `jsonl`/`3`。该 descriptor 不把 SDK 的持久化文件等同于 Core 执行恢复。
+本矩阵描述标准 `@earendil-works/pi-coding-agent@1.5.0` 通过受信 Host/Core 组合根接入时的恢复事实。标准 Pi 的生产默认 descriptor 是 `PI_RUNTIME_RECOVERY_DESCRIPTOR`：适配器版本 `0.1.0`，原生格式 `jsonl`/`3`。该 descriptor 不把 SDK 的持久化文件等同于 Core 执行恢复。
 
 状态含义如下：
 
@@ -21,7 +21,7 @@
 | `executionRecovery` | `unsupported` | Pi Session 持久化不是 checkpoint、工具执行或副作用恢复契约 | Core 不把会话续接当执行恢复 |
 | `modelSwitchOnResume` | `unsupported` | 未验证恢复时 provider/model 切换 | `required` 拒绝；不推断兼容性 |
 | `nativeFork` | `unsupported` | 未验证不可变来源 fork 与单写入者交接 | `auto`/`required` 均不能伪造恢复成功 |
-| SDK 版本与原生格式声明 | `verified` | `1.0.4`、`jsonl`、`3` 在 descriptor 中固定 | Recorder、诊断查询 |
+| SDK 版本与原生格式声明 | `verified` | `1.5.0`、`jsonl`、`3` 在 descriptor 中固定 | Recorder、诊断查询 |
 | Core `auto`/`required` 决策 | `verified` | `decideRuntimeRecovery` 与恢复组合根测试 | Core Runtime Recovery Service |
 | Artifact 来源、Task/Attempt/fence 核验 | `verified` | `RuntimeRecoverySourceReader` 为可信内部端口；来源不是客户端路径 | Core 恢复预检与受管 Pi 来源管理器 |
 | 恢复记录字段边界 | `verified` | 仅传递 invocation、决策、来源摘要、模型、watermark、gaps 等受限事实 | P04-5 Recorder、P04-7 Runtime Control |

@@ -75,7 +75,7 @@ async function seedFailedBatch(attempt: { id: string; execution_version: number;
 
 describe('F-012 同一 worktree 有界增量返工（全真实组装）', () => {
   it('代码检查失败 → 同 worktree 返工认领新 Attempt，首跑文件保留', async () => {
-    fixture = await openBindingFixture();
+    fixture = await openBindingFixture({ confirmProjectProfile: true });
     core = await openFakeCoreApplication({
       dataRoot: fixture.box.dataRoot,
       capabilityCatalog: createStaticRuntimeCapabilityCatalog([
@@ -161,7 +161,7 @@ describe('F-012 同一 worktree 有界增量返工（全真实组装）', () => 
         failureEvidenceRefs: readonly unknown[]; recovery: { selection: { mode: string }; decision: { mode: string } } };
     };
     /* F-011 返工快照：绑定直接上一 Attempt、现场身份、失败证据与真实恢复记录。 */
-    expect(snapshot.schemaVersion).toBe(3);
+    expect(snapshot.schemaVersion).toBe(5);
     expect(snapshot.rework.attemptId).toBe(reworkAttempt.id);
     expect(snapshot.rework.previousAttemptId).toBe(attempt.id);
     expect(snapshot.rework.previousTaskId).toBe('t-1');

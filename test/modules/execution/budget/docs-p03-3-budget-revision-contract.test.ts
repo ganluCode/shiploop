@@ -30,8 +30,9 @@ describe('F-009 budget revision contract', () => {
       scopeKind: 'project',
       payloadKind: 'executionBudgetRevised',
     });
-    // Host 接线宣告与 Core 白名单同步（不漂移）。
-    expect([...APPLICATION_COMMAND_CAPABILITIES]).toEqual([...COMMAND_OPERATIONS]);
+    expect([...APPLICATION_COMMAND_CAPABILITIES]).toEqual(COMMAND_OPERATIONS.flatMap(operation =>
+      operation === 'project.repository.rebind' ? ['repository.move.confirm', operation]
+        : operation === 'git.operation.start' || operation === 'data.backup.restore' ? [] : [operation]));
     // 本 Feature 不新增迁移（v9 既有三列/修订表承担；历史迁移不变）。
     for (const word of ['本 Feature 不新增迁移', '历史 v1..v13 SQL/checksum 不变']) {
       expect(doc).toContain(word);
@@ -62,6 +63,7 @@ describe('F-009 budget revision contract', () => {
     // 执行域事件白名单（Run 派发、预算修订与 Task 原子认领）。
     expect([...EXECUTION_EVENT_TYPES]).toEqual([
       'execution.run.dispatched',
+      'execution.run.labels.updated',
       'execution.budget.revised',
       'execution.run.paused',
       'execution.batch.paused',
@@ -71,10 +73,18 @@ describe('F-009 budget revision contract', () => {
       'execution.batch.cancelled',
       'execution.run.resumed',
       'execution.batch.resumed',
+      'execution.feature.paused',
+      'execution.feature.cancelling',
+      'execution.feature.cancelled',
+      'execution.feature.resumed',
       'task.claimed',
       'task.attempt.updated',
       'task.approval.blocked',
       'task.approval.decided',
+      'task.terminal',
+      'task.action_required',
+      'execution.run.ended',
+      'execution.batch.ended',
       'feature.finalized',
       'feature.finalization_blocked',
     ]);

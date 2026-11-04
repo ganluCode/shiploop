@@ -191,10 +191,10 @@ describe('F-001 P02-2 应用命令/查询/事件契约文档', () => {
 describe('F-001 契约文档与仓库基线一致（开工现状事实）', () => {
   it('根清单脚本与版本不变（accept:p02 自 P02-4/F-011 起正式交付，指向本地控制器）', () => {
     const root = readJson('package.json');
-    expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
+    expect(root.engines).toEqual({ node: '^22.19.0 || ^24.14.1 || ^26.7.0', npm: '>=10.9.3 <12' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'accept:p02', 'accept:p03', 'accept:p03:clean-replay', 'accept:p04', 'accept:p04:live', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ["accept:p01","accept:p02","accept:p03","accept:p03:clean-replay","accept:p04","accept:p04:live","accept:p05","accept:p06","accept:p07","accept:p08","accept:p08:live","build","check:boundaries","pack:local","test","typecheck","verify","verify:artifacts","verify:ci-config"].sort(),
     );
     // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
@@ -205,7 +205,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     // P03-2 / F-007 将线消息升至 v5（决策/策略/输入准备三命令与审批查询进入
     // 握手能力集合，显式升版纪律）；本守护跟随当前实现状态，演进依据见
     // docs/p03-2-plan-approval-contract.md。
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 5 as const/);
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 6 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     const lifecycle = readText('packages/host/src/contract/lifecycle.ts');

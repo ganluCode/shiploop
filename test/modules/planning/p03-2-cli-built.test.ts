@@ -351,6 +351,7 @@ describe('F-008 构建后 CLI（真实 dist/bin.js + 正式构建 Host）', () =
     const repoDir = join(env.sandboxRoot, 'repo-a');
     initGitRepo(repoDir);
     writeFileSync(join(repoDir, 'README.md'), '# Repo A\n', 'utf8');
+    writeFileSync(join(repoDir, 'package.json'), JSON.stringify({ name: 'profile-fixture', private: true }), 'utf8');
     commitAll(repoDir, 'init A', { home });
 
     const hostPid = await startCatalogHost(env, root, 'F-008 构建后');
@@ -360,7 +361,14 @@ describe('F-008 构建后 CLI（真实 dist/bin.js + 正式构建 Host）', () =
       await runDistCli(env, ['project', 'register', repoDir, '--name', 'F-008 built', '--data-root', root, '--json']),
       'project.register',
     ) as { result: { project: { id: string } } };
-    const projectId = registered.result.project.id;
+  const projectId = registered.result.project.id;
+  const detectedProfile = successResult(await runDistCli(env, ['project', 'profile', 'detect', projectId,
+    '--confirm', '--data-root', root, '--json']), 'project.profile-detect') as { result: { profile: { version: number } } };
+  const profilePath = join(env.sandboxRoot, `profile-${projectId}.json`);
+  writeFileSync(profilePath, JSON.stringify(detectedProfile.result.profile), 'utf8');
+  successResult(await runDistCli(env, ['project', 'profile', 'confirm', projectId,
+    '--revision', String(detectedProfile.result.profile.version), '--input', profilePath,
+    '--confirm', '--data-root', root, '--json']), 'project.profile-confirm');
     const configPath = join(env.sandboxRoot, 'config.json');
     writeFileSync(configPath, JSON.stringify(GLOBAL_CONFIG), 'utf8');
     successResult(

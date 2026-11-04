@@ -303,7 +303,7 @@ it('[case:runner-real-signal] real supervised Runner receives SIGTERM, aborts SD
         yield chunk;
       }
     })() };
-  } }, argv: [process.execPath, '--experimental-transform-types', '--import', fileURLToPath(new URL('../../helpers/node-ts-loader/register.mjs', import.meta.url)),
+  } }, argv: [process.execPath, '--import', fileURLToPath(new URL('../../helpers/node-ts-loader/register.mjs', import.meta.url)),
     fileURLToPath(new URL('../../helpers/pi-stopping-runner-child.ts', import.meta.url))], cwd: process.cwd(),
     environment: {}, confirm: async identity => ({ launchId: identity.launchId }),
     resourceStop: { snapshot: request => {

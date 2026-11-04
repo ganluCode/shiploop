@@ -137,6 +137,7 @@ interface PreparedHarness {
 /** 授权先于仓库 I/O 的观测探针：统计 inspect 调用次数。 */
 class CountingInspector implements RepositoryInspector {
   readonly calls: string[] = [];
+  identityOverride: string | undefined;
   private readonly inner: RepositoryInspector;
   constructor(inner: RepositoryInspector) {
     this.inner = inner;
@@ -144,7 +145,7 @@ class CountingInspector implements RepositoryInspector {
   async inspect(repositoryPath: unknown): Promise<RepositoryInspection> {
     const result = await this.inner.inspect(repositoryPath);
     this.calls.push(result.canonicalPath);
-    return result;
+    return this.identityOverride === undefined ? result : { ...result, repoIdentity: this.identityOverride };
   }
 }
 
@@ -803,9 +804,9 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
     // repoIdentity 由公共目录 realpath 派生，同路径替换内容不改变身份；漂移
     // 场景为权威绑定行与当前只读检查结果不一致（换仓/误改绑定）。以真实检查
     // 为准拒绝，不以绑定行冒充当前仓库。
-    s.session.database
-      .prepare('UPDATE repository_bindings SET repo_identity = ?')
-      .run('gitdir-sha256:' + 'f'.repeat(64));
+    expect(() => s.session.database.prepare('UPDATE repository_bindings SET repo_identity = ?')
+      .run('gitdir-sha256:' + 'f'.repeat(64))).toThrow('repository binding facts are immutable');
+    s.inspector.identityOverride = 'gitdir-sha256:' + 'f'.repeat(64);
     await expectPublicError(s.previewSubmit(), {
       code: 'conflict',
       reason: 'binding_identity_mismatch',

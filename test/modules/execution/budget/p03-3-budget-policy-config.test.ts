@@ -327,7 +327,7 @@ describe('P03-3 / F-001 执行授权并发规则（保存政策 ≠ 执行支持
     expect(() => assertSingleWorkConcurrencyAuthorization({})).not.toThrow();
   });
 
-  it('有效并发大于一：执行授权明确拒绝（结构化 reason），即便配置合法可保存', () => {
+  it('有效并发 1..MAX 可授权，范围外仍明确拒绝', () => {
     // 保存面：maxConcurrentWorks=MAX 仍是合法配置（旧配置允许保存）。
     const saved = validateSettingsPayload(
       {
@@ -337,12 +337,11 @@ describe('P03-3 / F-001 执行授权并发规则（保存政策 ≠ 执行支持
       CONTEXT,
     );
     expect(saved.policies?.executionLimits?.maxConcurrentWorks).toBe(MAX_CONCURRENT_WORKS_MAX);
-    // 执行面：有效并发 > 1 明确拒绝。
+    // P05 执行面已支持有界 Feature 并发。
     for (const concurrency of [2, MAX_CONCURRENT_WORKS_MAX]) {
-      const error = expectValidationError(() => assertSingleWorkConcurrencyAuthorization(policiesWith(concurrency)));
-      expect(error.details?.reason).toBe('concurrency_not_supported');
-      expect(error.message).toContain('单并发');
+      expect(() => assertSingleWorkConcurrencyAuthorization(policiesWith(concurrency))).not.toThrow();
     }
+    expectValidationError(() => assertSingleWorkConcurrencyAuthorization(policiesWith(MAX_CONCURRENT_WORKS_MAX + 1)));
   });
 
   it('全局来源的有效并发同样受限；非法输入 fail-closed 拒绝', () => {
@@ -356,7 +355,7 @@ describe('P03-3 / F-001 执行授权并发规则（保存政策 ≠ 执行支持
       maxConcurrentWorks: 3,
       source: 'global_default',
     });
-    expectValidationError(() => assertSingleWorkConcurrencyAuthorization(fromGlobal));
+    expect(() => assertSingleWorkConcurrencyAuthorization(fromGlobal)).not.toThrow();
 
     expectValidationError(() => resolveEffectiveMaxConcurrentWorks('policies'));
     expectValidationError(() =>
@@ -375,7 +374,7 @@ describe('P03-3 / F-001 执行授权并发规则（保存政策 ≠ 执行支持
         },
       },
     });
-    expectValidationError(() => assertSingleWorkConcurrencyAuthorization(merged.policies));
+    expect(() => assertSingleWorkConcurrencyAuthorization(merged.policies)).not.toThrow();
   });
 });
 
@@ -549,7 +548,7 @@ describe('P03-3 / F-001 持久层：读取/修改默认配置不追溯改写既�
     )!.execution_config;
     expect(JSON.parse(secondConfig)).toMatchObject({ ...STRATEGY, maxCodeAttempts: 9 });
 
-    // 全局配置里保存的并发政策（4 > 1）在授权面被拒（保存 ≠ 执行支持）。
+    // P05 的有界 Feature 并发授权不改变此前已捕获的 Task 配置。
     const merged = mergeEffectiveSettings({
       global: {
         scopeRevision: 2,
@@ -559,7 +558,7 @@ describe('P03-3 / F-001 持久层：读取/修改默认配置不追溯改写既�
       },
     });
     expect(merged.policies.executionLimits?.value.maxConcurrentWorks).toBe(4);
-    expectValidationError(() => assertSingleWorkConcurrencyAuthorization(merged.policies));
+    expect(() => assertSingleWorkConcurrencyAuthorization(merged.policies)).not.toThrow();
 
     await harness.close();
   });

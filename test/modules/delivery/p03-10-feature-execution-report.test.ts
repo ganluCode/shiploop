@@ -111,6 +111,29 @@ test('[case:history-evidence-timing] cross-Run histories, overlapping Sessions, 
   expect(reportDatabaseSnapshot(f)).toEqual(before);
 });
 
+test('[case:child-session-ownership] unbound Work children inherit the resumed Attempt without crossing Chat edges', async () => {
+  const f = await fixture();
+  const runId = (await f.start()).runId!;
+  const original = reportAttempt(f, { id: 'original', runId });
+  const resumed = reportAttempt(f, { id: 'resumed', runId, number: 2, parentSessionId: original.sessionId });
+  const insert = f.session.database.prepare(`INSERT INTO sessions
+    (id, created_at, updated_at, project_id, parent_session_id, kind, purpose, runtime, adapter_version,
+      status, execution_stage, input_ref, last_activity_at, started_at, ended_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'fake', '1', 'ended', 'runtime', ?, ?, ?, ?)`);
+  const child = (id: string, parent: string, kind: 'work' | 'chat', purpose: 'review' | 'chat') =>
+    insert.run(id, NOW, NOW, f.projectId, parent, kind, purpose, resumed.snapshot.artifactId, NOW + 100, NOW, NOW + 100);
+  child('review-child', resumed.sessionId!, 'work', 'review');
+  child('review-grandchild', 'review-child', 'work', 'review');
+  child('chat-child', resumed.sessionId!, 'chat', 'chat');
+  child('work-behind-chat', 'chat-child', 'work', 'review');
+  const sessions = createSqliteFeatureExecutionReportStore(f.session)
+    .readFeatureExecutionReportView(f.projectId, f.featureId)!.sessions;
+  expect(sessions.map(row => [row.session.id, row.attemptId])).toEqual([
+    ['original-session', 'original'], ['resumed-session', 'resumed'],
+    ['review-child', 'resumed'], ['review-grandchild', 'resumed'],
+  ]);
+});
+
 test('[case:pages-and-missing] exhausts keyset pages and retains missing or foreign evidence', async () => {
   const f = await fixture();
   const runId = (await f.start()).runId!;

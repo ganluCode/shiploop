@@ -18,7 +18,7 @@ const evidence = { catalogDigest: 'a'.repeat(64), registryDigest: 'b'.repeat(64)
 
 async function fixture(options: { reason?: string; unconfirmed?: boolean; denied?: boolean; allFail?: boolean;
   probe?: 'failed' | 'passed' | 'backup-failed'; revoke?: boolean; stale?: boolean; budget?: boolean; pause?: boolean; deadline?: boolean; quiesce?: boolean; unavailable?: boolean } = {}) {
-  const f = await openBindingFixture();
+  const f = await openBindingFixture({ confirmProjectProfile: true });
   const switches = !(options.denied || options.unconfirmed || options.stale || options.budget || options.revoke || options.pause || options.deadline || options.quiesce || options.unavailable
     || options.probe === 'backup-failed' || options.reason && !['temporary_server_failure', 'connection_interrupted', 'quota_blocked'].includes(options.reason));
   const starts: string[] = [];

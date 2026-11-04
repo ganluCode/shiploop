@@ -38,11 +38,11 @@ describe('P06-2 F-001 knowledge contracts and schema', () => {
     await withSandbox(async (root) => {
       const session = openSqliteStorageSession({ path: join(root, 'state.db') });
       try {
-        const before = SQLITE_MIGRATIONS.slice(0, -1);
+        const before = SQLITE_MIGRATIONS.filter(migration => migration.version < 49);
         await migrateSqliteStorage(session, { migrations: before });
         const oldRows = session.database.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all();
         await migrateSqliteStorage(session);
-        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(49);
+        expect(SQLITE_MIGRATIONS.some(migration => migration.version === 49)).toBe(true);
         expect(session.database.prepare('SELECT version, checksum FROM schema_migrations WHERE version < 49 ORDER BY version').all()).toEqual(oldRows);
         expect(session.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('documents', 'document_versions', 'memory_records') ORDER BY name").all()).toEqual([
           { name: 'document_versions' }, { name: 'documents' }, { name: 'memory_records' },

@@ -640,7 +640,7 @@ async function waitUntil(read: () => boolean, timeoutMs: number): Promise<boolea
 }
 
 async function runCoreScenario(config: CoreScenarioConfig): Promise<CoreFaultObservation> {
-  const f = await openBindingFixture();
+  const f = await openBindingFixture({ confirmProjectProfile: true });
   let core: Awaited<ReturnType<typeof openCoreApplication>> | undefined;
   try {
     const starts: string[] = [];

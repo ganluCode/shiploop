@@ -91,7 +91,7 @@ function okResult(outcome: CliOutcome, command: string): Record<string, unknown>
 }
 
 async function openCase(): Promise<{ projectId: string; runId: string }> {
-  fixture = await openBindingFixture({ deliveryPolicy: {
+  fixture = await openBindingFixture({ confirmProjectProfile: true, deliveryPolicy: {
     commitMode: 'task_and_feature',
     gitIdentity: { name: 'Test Owner', email: 'owner@example.test', confirmed: true },
   } });

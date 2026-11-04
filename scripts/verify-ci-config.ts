@@ -3,14 +3,14 @@
  *
  * 输入：仓库内的 GitHub Actions 工作流（.github/workflows/*.yml）与根 package.json、
  * package-lock.json。检查（任一不满足即失败，不缩小检查范围放行）：
- * 1. workflow-file-set        只允许登记的 release-ci.yml；多余工作流一律拒绝；
+ * 1. workflow-file-set        仅允许 release-ci.yml 与摘要固定的兼容矩阵；多余工作流拒绝；
  * 2. workflow-parseable       受限 YAML 子集解析；锚点/别名/流式/多行标量/制表符等
  *                             未审语法直接失败（fail-closed，不猜测降级）；
  * 3. trigger-scope            触发范围只能是 push/pull_request 且 branches 恰为 main；
  *                             schedule、pull_request_target、通配分支等拒绝；
  * 4. permissions-minimal      顶层必须显式 contents: read；任何更大权限拒绝；
  * 5. runner-toolchain         单一 macOS runner（macos-14）、有界 timeout、
- *                             setup-node 的 node-version 与 package.json engines 精确一致；
+ *                             setup-node 固定发布基线；engines 可为已审兼容范围；
  * 6. required-step-order      必需步骤按固定顺序执行（npm ci -> verify:ci-config ->
  *                             verify -> pack:local -> verify:artifacts -> ci-summary）；
  *                             不允许 continue-on-error / if 条件跳过（任一步失败即非零）；
@@ -431,7 +431,7 @@ export function verifyCiConfig(options: VerifyCiConfigOptions): CiConfigVerifica
   const context: WorkflowContext = { repoRoot, parsed, jobs, job, jobId, steps, codeText: stripCommentsText(rawText), rawText };
 
   const checks: CiConfigCheck[] = [
-    checkWorkflowFileSet(listed),
+    checkWorkflowFileSet(listed, workflowDir),
     checkParseable(existsSync(workflowPath), parseError, context),
     checkTriggerScope(context),
     checkPermissions(context),
@@ -499,12 +499,18 @@ function structuralGuard(context: WorkflowContext, problems: string[]): boolean 
   return true;
 }
 
-function checkWorkflowFileSet(listed: readonly string[]): CiConfigCheck {
+function checkWorkflowFileSet(listed: readonly string[], workflowDir: string): CiConfigCheck {
   const check = baseCheck('workflow-file-set', '工作流文件集合受控', [WORKFLOW_DIRECTORY]);
   const allowed = new Set<string>(ALLOWED_WORKFLOW_FILES);
-  const extra = listed.filter((name) => !allowed.has(name));
+  // The matrix uses expressions outside the release YAML subset; pin its reviewed content.
+  const matrix = 'node-compatibility.yml';
+  const extra = listed.filter((name) => !allowed.has(name) && name !== matrix);
   const missing = [...allowed].filter((name) => !listed.includes(name));
   const problems: string[] = [];
+  if (listed.includes(matrix) && sha256Hex(readFileSync(join(workflowDir, matrix), 'utf8')) !==
+    'a06c7c967ecb81c2a7ffa44df355e5a672244dc059e1e38875f746edd394e69a') {
+    problems.push('Node compatibility workflow differs from reviewed configuration');
+  }
   if (listed.length === 0) problems.push(`${WORKFLOW_DIRECTORY} 下没有任何工作流文件，最小发布 CI 未登记`);
   for (const name of extra) problems.push(`未登记的工作流文件：${WORKFLOW_DIRECTORY}/${name}`);
   for (const name of missing) problems.push(`缺少登记的工作流文件：${WORKFLOW_DIRECTORY}/${name}`);
@@ -592,10 +598,10 @@ function checkRunnerToolchain(context: WorkflowContext, manifest: Record<string,
   const engines = manifest ? asRecord(manifest['engines']) : null;
   const engineNode = engines ? asString(engines['node']) : null;
   const engineNpm = engines ? asString(engines['npm']) : null;
-  if (!engineNode || !/^\d+\.\d+\.\d+$/.test(engineNode)) {
+  if (!engineNode || (!/^\d+\.\d+\.\d+$/.test(engineNode) && engineNode !== '^22.19.0 || ^24.14.1 || ^26.7.0')) {
     problems.push(`package.json engines.node 必须精确固定为 X.Y.Z；实际：${JSON.stringify(engineNode)}`);
   }
-  if (!engineNpm || !/^\d+\.\d+\.\d+$/.test(engineNpm)) {
+  if (!engineNpm || (!/^\d+\.\d+\.\d+$/.test(engineNpm) && engineNpm !== '>=10.9.3 <12')) {
     problems.push(`package.json engines.npm 必须精确固定为 X.Y.Z；实际：${JSON.stringify(engineNpm)}`);
   }
   const setupSteps = context.steps.filter((step) => step.uses?.startsWith('actions/setup-node'));
@@ -612,7 +618,7 @@ function checkRunnerToolchain(context: WorkflowContext, manifest: Record<string,
       }
       const pinned = asString(withKeys[NODE_VERSION_KEY]);
       if (engineNode) {
-        if (pinned !== engineNode) {
+        if (pinned !== (engineNode === '^22.19.0 || ^24.14.1 || ^26.7.0' ? '22.19.0' : engineNode)) {
           problems.push(`setup-node ${NODE_VERSION_KEY} 必须与 engines.node 一致：期望 ${engineNode}，实际 ${JSON.stringify(pinned)}`);
         }
       } else if (!pinned || !/^\d+\.\d+\.\d+$/.test(pinned)) {

@@ -264,9 +264,15 @@ describe('F-009 可发布构建产物路径扫描', () => {
       resolve(REPO_ROOT, 'packages/cli/package.json'),
     ];
     expect(
-      scanManifestDependencies(manifests.filter(file => file !== resolve(REPO_ROOT, 'packages/host/package.json')),
+      scanManifestDependencies(manifests.filter(file => file !== resolve(REPO_ROOT, 'packages/host/package.json') && file !== resolve(REPO_ROOT, 'package.json')),
         [...FORBIDDEN_RUNTIME_DEPS], REPO_ROOT),
     ).toEqual([]);
+    const rootManifest = JSON.parse(readFileSync(manifests[0]!, 'utf8'));
+    expect(rootManifest.devDependencies['@earendil-works/pi-coding-agent']).toBe(currentHostDependencies['@earendil-works/pi-coding-agent']);
+    for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      expect(Object.keys(rootManifest[section] ?? {})).not.toContain('@earendil-works/pi-coding-agent');
+    }
+    expect(scanManifestDependencies([manifests[0]!], ['nezha', '@nezhajs'], REPO_ROOT)).toEqual([]);
     // P04 permits the pinned SDK only in Host; Core/CLI retain the vendor-independent guard.
     expect(JSON.parse(readFileSync(resolve(REPO_ROOT, 'packages/host/package.json'), 'utf8')).dependencies)
       .toEqual(currentHostDependencies);

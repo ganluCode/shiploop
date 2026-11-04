@@ -41,7 +41,7 @@ export async function runP04LiveRunner(input: { approval: P04LiveApproval; ident
     } else {
       const sdk = await import('@earendil-works/pi-coding-agent');
       const { InMemoryCredentialStore, InMemoryModelsStore } = await import('@earendil-works/pi-ai');
-      if (sdk.VERSION !== '1.0.4') throw new Error('sdk_version_mismatch');
+      if (sdk.VERSION !== '1.5.0') throw new Error('sdk_version_mismatch');
       const agentDir = join(a.reportDir, 'agent');
       const modelRuntime = await sdk.ModelRuntime.create({ credentials: new InMemoryCredentialStore(),
         modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
@@ -141,7 +141,7 @@ export async function runP04LiveRunner(input: { approval: P04LiveApproval; ident
     if (timer) clearTimeout(timer);
     session?.dispose();
     process.removeListener('SIGTERM', cancel); process.removeListener('SIGINT', cancel);
-    save('runner-result.json', { schemaVersion: 1, identity, provider: a.provider, model: a.model, sdkVersion: '1.0.4',
+    save('runner-result.json', { schemaVersion: 1, identity, provider: a.provider, model: a.model, sdkVersion: '1.5.0',
       realCalls, admittedRequests: budget.snapshot().requests, reservedTokens: budget.snapshot().reservedTokens, terminal, stopped, usage: [...usage.values()],
       usageCoverage: [...usage.values()].some(value => (value as { usage: unknown }).usage !== null) ? 'partial' : 'unknown', recording: terminal === 'completed' ? 'complete' : 'partial',
       finalSequence: sequence, externalToolProcesses: 'not_run', nativeArchive: 'not_retained', executionMode: 'live' });

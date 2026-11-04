@@ -127,21 +127,18 @@ describe('P03-3 / F-001 执行预算契约文档', () => {
     expect(absent.executionConfig).not.toHaveProperty('maxCodeAttempts');
   });
 
-  it('并发授权规则与实现一致：缺省单并发；有效并发大于一结构化拒绝', () => {
+  it('历史契约保留单并发起点，当前授权支持有界 Feature 并发', () => {
     const doc = readContractDoc();
     expect(EFFECTIVE_MAX_CONCURRENT_WORKS_DEFAULT).toBe(1);
     expect(doc).toContain('concurrency_not_supported');
     expect(doc).toContain('保存政策不等于\n  执行支持');
     expect(() => assertSingleWorkConcurrencyAuthorization({})).not.toThrow();
-    let rejected: StorageError | undefined;
-    try {
+    expect(() => {
       assertSingleWorkConcurrencyAuthorization({
         executionLimits: { value: { maxConcurrentWorks: 2 }, source: { kind: 'global_default', scopeRevision: 1, sourceKey: 'policies.executionLimits' } },
       });
-    } catch (error) {
-      rejected = error as StorageError;
-    }
-    expect(rejected?.details?.reason).toBe('concurrency_not_supported');
+    }).not.toThrow();
+    expect(() => assertSingleWorkConcurrencyAuthorization({ executionLimits: { value: { maxConcurrentWorks: 0 } } })).toThrow(StorageError);
   });
 
   it('纯预算判定语义与守护测试文件登记一致', () => {

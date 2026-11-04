@@ -5,8 +5,8 @@
   "type": "module",
   "description": "ShipLoop Host (private workspace package; not published)",
   "engines": {
-    "node": "22.19.0",
-    "npm": "10.9.3"
+    "node": "^22.19.0 || ^24.14.1 || ^26.7.0",
+    "npm": ">=10.9.3 <12"
   },
   "os": [
     "darwin"
@@ -27,13 +27,13 @@
     "dist"
   ],
   "dependencies": {
-    "@earendil-works/chord": "1.0.4",
-    "@earendil-works/pi-agent-core": "1.0.4",
-    "@earendil-works/pi-ai": "1.0.4",
-    "@earendil-works/pi-codemode": "1.0.4",
-    "@earendil-works/pi-coding-agent": "1.0.4",
-    "@earendil-works/pi-mcp": "1.0.4",
-    "@earendil-works/pi-tui": "1.0.4",
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-codemode": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-mcp": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "shiploop-core": "0.0.0"
   },
   "scripts": {

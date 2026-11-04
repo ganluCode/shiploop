@@ -66,6 +66,7 @@ async function openVertical(options: {
   readonly dataRoot?: string;
 } = {}) {
   const fixture = await openBindingFixture({
+    confirmProjectProfile: true,
     secondTask: true,
     secondTaskDependsOnFirst: true,
     deliveryPolicy: {
@@ -208,8 +209,9 @@ describe('P04-9 F-010 单 Feature 双 Task 派发纵向', () => {
     expect(count(fixture, 'SELECT COUNT(*) AS n FROM attempts')).toBe(2);
     expectNoUnexplainedOccupancy(fixture);
     expect(core.workExecution.dispatchState(fixture.projectId, fixture.runId)).toMatchObject({
-      runStatus: 'running', claimState: 'held', slotState: 'held', activeAttemptCount: 0,
+      runStatus: 'paused', claimState: 'released', slotState: 'released', activeAttemptCount: 0,
     });
+    expect(row(fixture, 'SELECT reason FROM runs WHERE id = ?', fixture.runId)).toEqual({ reason: 'feature_check_scope_missing' });
 
     // 关闭顺序：先派发/执行器关闭并核验停止，再关闭状态库。
     const closed = await core.workExecution.close();
@@ -221,7 +223,7 @@ describe('P04-9 F-010 单 Feature 双 Task 派发纵向', () => {
 
 describe('P04-9 F-010 双消费者竞争同一持久状态', () => {
   it('[case:dual-consumer-same-run] 同 Run 重复入队/唤醒只产生一个有效 Attempt、归属、槽位与启动预算', async () => {
-    const fixture = await openBindingFixture();
+    const fixture = await openBindingFixture({ confirmProjectProfile: true });
     fixtures.push(fixture);
     const open = () => openFakeCoreApplication({
       dataRoot: fixture.box.dataRoot,
@@ -273,7 +275,7 @@ describe('P04-9 F-010 双消费者竞争同一持久状态', () => {
   }, 180_000);
 
   it('[case:dual-consumer-two-runs] 两个已授权 Run 竞争容量 1 时仅胜者启动，败者保留可解释阻塞', async () => {
-    const fixture = await openBindingFixture();
+    const fixture = await openBindingFixture({ confirmProjectProfile: true });
     fixtures.push(fixture);
     try {
       const owner = createLocalOwnerPrincipal();
@@ -379,7 +381,7 @@ describe('P04-9 F-010 双消费者竞争同一持久状态', () => {
 
 describe('P04-9 F-010 Host 重建与丢失唤醒', () => {
   it('[case:host-rebuild-lost-wake] 未收到唤醒且 Host 被重建后，恢复门控解除即从持久状态补扫执行', async () => {
-    const fixture = await openBindingFixture();
+    const fixture = await openBindingFixture({ confirmProjectProfile: true });
     fixtures.push(fixture);
     const open = () => openFakeCoreApplication({
       dataRoot: fixture.box.dataRoot,

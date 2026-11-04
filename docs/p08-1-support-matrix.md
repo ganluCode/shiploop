@@ -17,8 +17,8 @@
 | 项目 | 固定值 | 说明 |
 |---|---|---|
 | 正式支持平台 | macOS（`darwin`） | Windows / WSL / Linux 未验收、不记为通过 |
-| Node.js | `22.19.0` | `.nvmrc`、`.node-version`、`engines` 与兼容声明一致 |
-| npm | `10.9.3` | `packageManager: npm@10.9.3`；不使用 pnpm/yarn |
+| Node.js | 发布基线 `22.19.0` | 支持 `^22.19.0`、`^24.14.1`；`^26.7.0` 已验证兼容。`.nvmrc`、`.node-version` 与发布/历史验收继续固定基线；兼容 CI 独立验证三个版本 |
+| npm | 发布基线 `10.9.3` | engines 允许 `>=10.9.3 <12`；`packageManager: npm@10.9.3` 保留发布基线，不使用 pnpm/yarn |
 | 原生模块 | better-sqlite3 与 Host 写入锁 | 需要 Xcode Command Line Tools；真实安装加载属 Phase 集成 |
 | 包管理器 | npm workspaces + 已提交 `package-lock.json` | 不通过 npx/全局工具补齐运行依赖 |
 

@@ -194,8 +194,8 @@ it('[case:config-valid] 真实配置通过校验且沿用 npm/P01/P02 版本约�
   expect(config.reportRoot).toBe('artifacts/acceptance/p03');
   // 沿用 npm 与 P01/P02 冻结版本约束（与 root package.json 逐字段核对）。
   expect(config.toolchain.packageManager).toBe(pkg.packageManager);
-  expect(config.toolchain.node).toBe(pkg.engines.node);
-  expect(config.toolchain.npm).toBe(pkg.engines.npm);
+  expect(config.toolchain.node).toBe(readFileSync(join(REPO_ROOT, '.node-version'), 'utf8').trim());
+  expect(`npm@${config.toolchain.npm}`).toBe(pkg.packageManager);
   expect(config.toolchain.lockfile).toBe('package-lock.json');
   expect(() => readFileSync(join(REPO_ROOT, config.toolchain.lockfile))).not.toThrow();
   // 有限步骤/总时间与输出上限。

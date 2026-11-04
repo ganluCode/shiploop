@@ -29,10 +29,10 @@ function access(): WorkAccessConfiguration {
 function context() { return { nowUtcMs: 2000, signal: new AbortController().signal }; }
 
 describe('Pi 显式认证适配', () => {
-  it('[case:local-login-contract] SDK 1.0.4 的 API key/OAuth 格式在明确文件下 ready，不写锁或复制认证', async () => {
+  it('[case:local-login-contract] SDK 1.5.0 的 API key/OAuth 格式在明确文件下 ready，不写锁或复制认证', async () => {
     const sandbox = createTempSandbox('shiploop-pi-auth-');
     try {
-      expect(VERSION).toBe('1.0.4');
+      expect(VERSION).toBe('1.5.0');
       const authPath = join(sandbox.path, 'auth.json');
       const source = createPiLocalLoginAuthenticationSource({ provider: 'anthropic', authPath });
       for (const credential of [
@@ -118,7 +118,7 @@ describe('Pi 显式认证适配', () => {
     ] as const) {
       const input = { ...access(), provider, model };
       const manifest = buildWorkAccessManifest(input, { ...binding, strategy: { runtime: 'pi', provider, model } });
-      expect(await catalog(manifest, context().signal)).toEqual({ sdkVersion: '1.0.4', providerExists, modelExists, plugins: [] });
+      expect(await catalog(manifest, context().signal)).toEqual({ sdkVersion: '1.5.0', providerExists, modelExists, plugins: [] });
     }
   });
 

@@ -202,14 +202,18 @@ it.each(['publication', 'result_transaction', 'supervisor'] as const)('preserves
     const faulty = createWorkspaceRetentionService({ store: a.store, stopVerifier: verifier,
       publishEvidence: fault === 'publication' ? async () => { throw new Error('publication_failed'); } : a.publishEvidence });
     if (fault === 'result_transaction') f.box.session.database.exec("CREATE TRIGGER retention_fault BEFORE UPDATE ON workspace_operations WHEN NEW.kind = 'retain' AND NEW.status <> 'pending' BEGIN SELECT RAISE(ABORT, 'retention_fault'); END");
-    await expect(faulty.retain(input)).rejects.toThrow();
+    if (fault === 'supervisor') {
+      const isolated = await faulty.retain(input);
+      expect(isolated.workspace.status).toBe('quarantined');
+      expect(isolated.receipt.status === 'completed' && isolated.receipt.result).toMatchObject({ stop: 'unknown', reusable: false });
+    } else await expect(faulty.retain(input)).rejects.toThrow();
     expect(a.resources.read(f.identity).leases.map(l => l.state)).toEqual(['quarantined', 'quarantined', 'quarantined']);
-    expect(a.workspaces.readOperation(f.ids.projectId, input.operationId)!.status).toBe('pending');
+    expect(a.workspaces.readOperation(f.ids.projectId, input.operationId)!.status).toBe(fault === 'supervisor' ? 'blocked' : 'pending');
     expect(readFileSync(sentinel)).toEqual(Buffer.from([0, 255, 1]));
     if (fault === 'result_transaction') f.box.session.database.exec('DROP TRIGGER retention_fault');
     failStop = false;
     f.box.reopen();
-    const recovered = await f.assemble(verifier).service.retain(input);
+    const recovered = await f.assemble(verifier).service.retain(fault === 'supervisor' ? f.input() : input);
     expect(recovered.workspace.status).toBe('retained');
     expect(f.assemble(verifier).resources.read(f.identity).leases).toEqual([]);
   } finally { f.box.close(); }

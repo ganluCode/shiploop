@@ -225,7 +225,7 @@ describe('F-004 可信测试装配受限 principal（项目 A/B）', () => {
     // feature.plan.revise）+ P03-2 / F-001 Task 策略编辑、F-002 计划决策与
     // F-006 执行输入准备三项 + P03-3 / F-004 执行授权面与 F-009 预算修订两项后
     // 加上 P03-5 workspace.discard 后冻结 21 项。
-    expect(owner.capabilities.size).toBe(21);
+    expect(owner.capabilities.size).toBe(APP_CAPABILITIES.length);
     expect(owner.projectScope).toEqual({ kind: 'all' });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(Object.isFrozen(owner.projectScope)).toBe(true);

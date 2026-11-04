@@ -227,7 +227,7 @@ describe('P05-4 F-008 real Feature dispatch vertical matrix', () => {
   }, 60_000);
 
   it('[case:duplicate-wake-host-rebuild] 重复唤醒和 Host 重建只补扫一次，旧 Attempt/预算保持持久事实', async () => {
-    const fixture = await openBindingFixture();
+    const fixture = await openBindingFixture({ confirmProjectProfile: true });
     fixtures.push(fixture);
     const open = () => openFakeCoreApplication({
       dataRoot: fixture.box.dataRoot,

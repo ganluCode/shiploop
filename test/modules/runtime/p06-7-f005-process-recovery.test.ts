@@ -36,7 +36,7 @@ it('[case:p06-f005-runner-kill-host-rebuild] rebuilt Host recovers real orphan M
         invocationId: bound.invocationId, executionVersion: attempt.executionVersion,
         owner: { principalId: attempt.owner, hostInstanceId: attempt.hostInstanceId } } };
     const markerPath = join(f.box.path, 'runner-ready.json');
-    handle = await port.start({ argv: [process.execPath, '--experimental-transform-types', '--import',
+    handle = await port.start({ argv: [process.execPath, '--import',
       fileURLToPath(new URL('../../helpers/node-ts-loader/register.mjs', import.meta.url)),
       fileURLToPath(new URL('../../helpers/p06-7/resource-runner-child.ts', import.meta.url)), markerPath],
       cwd: process.cwd(), environment: {}, stdin: Buffer.from(JSON.stringify(request)),

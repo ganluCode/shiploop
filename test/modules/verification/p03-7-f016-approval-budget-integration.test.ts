@@ -83,6 +83,7 @@ function openCore(): Promise<CoreApplication> {
 
 async function openCase(): Promise<void> {
   fixture = await openBindingFixture({
+    confirmProjectProfile: true,
     secondTask: true, secondTaskDependsOnFirst: true,
     deliveryPolicy: {
       commitMode: 'task_and_feature',

@@ -61,8 +61,8 @@ Pi 默认工具不是 OS 沙箱，本机同用户进程仍可能读取外部文�
 | --- | --- | --- |
 | 正式平台 | macOS（`darwin`） | 三包 `os` 均限定 `darwin`；非 darwin 明确拒绝 |
 | Windows / WSL / Linux | 未支持 | 不在本期验收条件内，不记为通过 |
-| Node.js | `22.19.0` | 根与三包 `engines.node` 一致；不升级、不降级 |
-| npm | `10.9.3` | `packageManager: npm@10.9.3`；不使用 pnpm/yarn |
+| Node.js | `^22.19.0 || ^24.14.1 || ^26.7.0` | 发布基线为 22.19.0；22/24 支持，26 已验证兼容；根与三包 engines 一致 |
+| npm | `>=10.9.3 <12` | 发布基线与 packageManager 为 `npm@10.9.3`；不使用 pnpm/yarn |
 | 锁文件 | `package-lock.json`（`lockfileVersion: 3`） | `npm ci` 安装；不通过 npx/全局工具补齐运行依赖 |
 | 原生模块 | `better-sqlite3`、Host 写入锁 | 安装需要 Xcode Command Line Tools；真实安装加载属 Phase 集成 |
 | 统一版本 | `0.0.0` | `shiploop-core` / `shiploop-host` / `shiploop-cli` 同版本、`private: true` |

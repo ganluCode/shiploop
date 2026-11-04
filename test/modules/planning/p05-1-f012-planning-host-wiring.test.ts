@@ -634,6 +634,9 @@ describe('P05-1 / F-012 规划 Host 协议与 HostClient 纵向', () => {
       { ...detail, executionState: 'unknown_terminal' },
       { ...detail, schemaVersion: undefined },
       { ...detail, run: { ...detail.run, id: randomUUID() } },
+      { ...detail, run: { ...detail.run, labels: 'invalid' } },
+      { ...detail, run: { ...detail.run, labels: [1] } },
+      { ...detail, run: { ...detail.run, unexpected: true } },
       { ...detail, context: { ...detail.context, planningTask: { ...detail.context.planningTask, status: 'pretend_passed' } } },
       { ...detail, outcomeAxes: { ...detail.outcomeAxes, notExecutableReasons: ['invented_reason'] } },
     ]) {

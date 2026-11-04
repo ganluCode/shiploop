@@ -7,7 +7,7 @@ const handoff = new URL('../../../docs/p04-4-f007-recovery-handoff.md', import.m
 describe('F-007 recovery handoff materials', () => {
   it('[case:support-matrix-statuses] records the supported state vocabulary and standard Pi production boundary', () => {
     const text = readFileSync(matrix, 'utf8');
-    for (const term of ['PI_RUNTIME_RECOVERY_DESCRIPTOR', '1.0.4', 'jsonl', 'unsupported', 'verified', 'unverified', 'not_run', 'partial',
+    for (const term of ['PI_RUNTIME_RECOVERY_DESCRIPTOR', '1.5.0', 'jsonl', 'unsupported', 'verified', 'unverified', 'not_run', 'partial',
       'nativeHistory', 'conversationResume', 'executionRecovery', 'modelSwitchOnResume', 'nativeFork', 'FakeRuntime',
       'executionStopControl', 'verificationStops']) {
       expect(text).toContain(term);

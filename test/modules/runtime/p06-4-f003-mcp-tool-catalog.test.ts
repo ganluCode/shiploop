@@ -153,7 +153,12 @@ describe('P06-4 F-003 approved MCP catalog', () => {
     const tool = catalog.tools[0]!;
     const valid = { count: 2, values: ['a'], mode: 'read', extra: { flag: true } };
     expect(validateToolArguments(tool as Tool, { type: 'toolCall', id: 'valid', name: tool.name, arguments: valid })).toEqual(valid);
-    const invalid = [{ ...valid, count: 4 }, { ...valid, count: 1.5 }, { ...valid, values: ['a', 'a'] },
+    const fractional = { ...valid, count: 1.5 };
+    expect(validateToolArguments(tool as Tool, { type: 'toolCall', id: 'coerced', name: tool.name, arguments: fractional }))
+      .toEqual({ ...valid, count: 1 });
+    expect(fractional.count).toBe(1.5);
+    await expect(tool.execute('fractional', fractional)).rejects.toMatchObject({ reason: 'invalid_arguments' });
+    const invalid = [{ ...valid, count: 4 }, { ...valid, values: ['a', 'a'] },
       { ...valid, values: ['c'] }, { ...valid, mode: 'all' }, { ...valid, extra: {} }, { ...valid, unknown: true }, {}];
     for (const args of invalid) {
       expect(() => validateToolArguments(tool as Tool, { type: 'toolCall', id: 'invalid', name: tool.name, arguments: args })).toThrow();

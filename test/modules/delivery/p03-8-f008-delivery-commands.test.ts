@@ -10,6 +10,7 @@ import { openBudgetFixture, NOW, type BudgetFixture } from '../../helpers/p03-3/
 import { createRestrictedPrincipal } from '../../helpers/p02-2/principals.ts';
 import type { FeatureDeliveryDependencies } from '../../../packages/core/src/application/feature-delivery-commands.ts';
 import { hostCapabilitiesForDelivery, validateHandshakeResponse } from '../../../packages/host/src/contract/index.ts';
+import { CURRENT_SCHEMA_VERSION } from '../../../packages/host/src/contract/constants.ts';
 
 const CODE = 'ab'.repeat(32);
 
@@ -214,7 +215,7 @@ describe('F-008 Feature delivery commands', () => {
     hosts.push(host);
     const client = await connectToHost({ canonicalRoot: f.box.box.dataRoot });
     try {
-      expect(client.handshake.schemaVersion).toBe(5);
+      expect(client.handshake.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
       expect(client.handshake.capabilities.application.commands.includes(operations[1])).toBe(available);
     } finally { client.close(); }
     const token = readFileSync(join(f.box.box.dataRoot, 'host', 'auth.token'), 'utf8');
@@ -250,14 +251,14 @@ describe('F-008 Feature delivery commands', () => {
     expect(validateCommandEnvelope(input).schemaVersion).toBe(5);
   });
 
-  it('keeps the existing v5 handshake compatible with both real capability views and rejects fabricated capabilities', () => {
-    const input = { schemaVersion: 5, protocolVersion: 1, hostInstanceId: randomUUID(), dataRootIdentity: 'a'.repeat(64),
+  it('keeps the current handshake compatible with both real capability views and rejects fabricated capabilities', () => {
+    const input = { schemaVersion: CURRENT_SCHEMA_VERSION, protocolVersion: 1, hostInstanceId: randomUUID(), dataRootIdentity: 'a'.repeat(64),
       lifecycleState: 'ready', startedAt: new Date(NOW).toISOString(), capabilities: hostCapabilitiesForDelivery(false) };
     const expected = { expectedHostInstanceId: input.hostInstanceId, expectedDataRootIdentity: input.dataRootIdentity };
     expect(input.capabilities.application.commands).not.toContain(operations[0]);
     for (const available of [false, true]) {
       const capabilities = hostCapabilitiesForDelivery(available);
-      expect(validateHandshakeResponse({ ...input, capabilities }, expected).schemaVersion).toBe(5);
+      expect(validateHandshakeResponse({ ...input, capabilities }, expected).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     }
     const capabilities = structuredClone(hostCapabilitiesForDelivery(true));
     (capabilities.application.commands as string[]).push('git.push');
@@ -266,6 +267,6 @@ describe('F-008 Feature delivery commands', () => {
       ...input.capabilities, application: { ...input.capabilities.application,
         commands: [...input.capabilities.application.commands, operations[0]] },
     } }, expected)).toThrow(expect.objectContaining({ details: expect.objectContaining({ reason: 'capability_mismatch' }) }));
-    expect(() => validateHandshakeResponse({ ...input, schemaVersion: 6 }, expected)).toThrow();
+    expect(() => validateHandshakeResponse({ ...input, schemaVersion: CURRENT_SCHEMA_VERSION + 1 }, expected)).toThrow();
   });
 });

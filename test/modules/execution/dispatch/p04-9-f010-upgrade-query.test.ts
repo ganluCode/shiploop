@@ -2,8 +2,8 @@
  * P04-9 / F-010：P04-8（v32）旧数据升级后仍可查询派发、Attempt、Git 与通过证据。
  *
  * 路径与 F-001 的真实 v32 逐表复制测试互补：这里先在真实生产组合根上产生
- * 一次「执行 → 验证通过 → 受控 Task 提交」的持久证据，再以 VACUUM INTO 复制
- * 到独立沙箱，移除 v33/v34 结构与迁移记录还原 P04-8 形态，随后按真实迁移
+ * 一次「执行 → 验证通过 → 受控 Task 提交」的持久证据，再按 v32 列集复制
+ * 到独立沙箱中的真实 v32 库，随后按真实迁移
  * 升级并以生产 Core 查询端口读取。不断言旧库字节与生产实现相同，不断言
  * 阶段验收；旧 Run/Attempt/Git/通过证据的身份与内容必须逐项保持。
  */
@@ -17,6 +17,7 @@ import { createCommandProcessAdapter } from '../../../../packages/core/src/adapt
 import { createLocalOwnerPrincipal } from '../../../../packages/core/src/ports/authorization.ts';
 import { DATABASE_FILE_NAME } from '../../../../packages/core/src/ports/path-service.ts';
 import { migrateSqliteStorage } from '../../../../packages/core/src/adapters/sqlite/migrator.ts';
+import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite/migrations.ts';
 import { openSqliteStorageSession } from '../../../../packages/core/src/adapters/sqlite/session.ts';
 import {
   BINDING_NOW,
@@ -87,39 +88,61 @@ async function seedPassedEvidence(fixture: BindingFixture): Promise<{ attemptId:
   }
 }
 
-/** 还原 P04-8（v32）形态：移除 P04-9 新增结构与迁移记录，既有数据行不动。 */
-function downgradeToP04_8(path: string): void {
+/** 用历史迁移建立真实 v32 库，仅复制该版本支持的列。 */
+async function copyToP04_8(fixture: BindingFixture, path: string): Promise<void> {
   const session = openSqliteStorageSession({ path });
-  session.database.pragma('foreign_keys = OFF');
   try {
-    session.transactWrite('F-010.downgrade-to-p04-8', () => {
-      session.database.exec([
-        'DROP TABLE IF EXISTS execution_slot_claims;',
-        'DROP TABLE IF EXISTS run_dispatch_claims;',
-        'DROP TABLE IF EXISTS run_dispatch_intents;',
-        // P05-1/P05-2 v35/v37 的规划上下文和 Feature DAG 也必须移除，才能真实还原 P04-8 v32。
-        'DROP TABLE IF EXISTS planning_contexts;',
-        'DROP TABLE IF EXISTS feature_dependencies;',
-        'DROP TRIGGER IF EXISTS execution_batches_scope_member_anchor_check;',
-        'DROP TRIGGER IF EXISTS execution_batches_scope_members_insert;',
-        'DROP TRIGGER IF EXISTS execution_batch_members_immutable_update;',
-        'DROP TRIGGER IF EXISTS execution_batch_members_immutable_delete;',
-        'DROP INDEX IF EXISTS execution_batch_members_batch_feature_unique;',
-        'DROP INDEX IF EXISTS execution_batch_members_batch_ordinal_unique;',
-        'DROP INDEX IF EXISTS execution_batch_members_project_id_id_unique;',
-        'DROP INDEX IF EXISTS execution_batch_members_batch_index;',
-        'ALTER TABLE execution_batch_members RENAME TO execution_batch_members_p04_legacy;',
-        'CREATE UNIQUE INDEX execution_batch_members_p04_legacy_scope_unique ON execution_batch_members_p04_legacy (project_id, batch_id, feature_id);',
-        // v39 已把资源键索引改为普通索引，回退到 v32 要恢复 v38 的唯一索引，供 v39 正常重放。
-        'DROP INDEX IF EXISTS workspace_leases_resource_key_index;',
-        'CREATE UNIQUE INDEX workspace_leases_resource_key_unique ON workspace_leases (resource_key);',
-        'DELETE FROM schema_migrations WHERE version >= 33;',
-      ].join('\n'));
+    await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.filter(migration => migration.version <= 32) });
+    const tables = (session.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations'")
+      .all() as { name: string }[]).map(row => row.name);
+    session.transactWrite('F-010.copy-v32-facts', db => {
+      db.exec('PRAGMA defer_foreign_keys = ON');
+      const pending = new Set(tables);
+      while (pending.size > 0) {
+        let progressed = false;
+        const failures = new Map<string, string>();
+        for (const table of pending) {
+          db.exec('SAVEPOINT copy_table');
+          try {
+            const columns = (db.prepare(`PRAGMA table_xinfo(${table})`).all() as { name: string; hidden: number }[])
+              .filter(column => column.hidden === 0).map(column => column.name);
+            const rows = fixture.session.database.prepare(`SELECT ${columns.join(',')} FROM ${table}`).all() as Record<string, string | number | null>[];
+            for (const row of rows) {
+              // Fixture conversion precedes migration: v32 only supports Context v1-v3.
+              if (table === 'attempts') {
+                const snapshot = JSON.parse(row.input_snapshot as string) as Record<string, unknown>;
+                snapshot.schemaVersion = 3;
+                delete snapshot.profile;
+                delete snapshot.knowledge;
+                row.input_snapshot = JSON.stringify(snapshot);
+              }
+              const terminalFields = ['actual_commit', 'actual_tree', 'exit_code', 'duration_ms', 'reason_code',
+                'receipt', 'delivery_status', 'settled_at'];
+              const inserted = table === 'git_operations' ? { ...row, status: 'pending',
+                ...Object.fromEntries(terminalFields.map(field => [field, null])) } : row;
+              db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`)
+                .run(...columns.map(column => inserted[column]));
+              if (table === 'git_operations' && row.status !== 'pending') {
+                const fields = ['status', ...terminalFields];
+                db.prepare(`UPDATE git_operations SET ${fields.map(field => `${field} = ?`).join(',')} WHERE id = ?`)
+                  .run(...fields.map(field => row[field]), row.id);
+              }
+            }
+            db.exec('RELEASE copy_table');
+            pending.delete(table);
+            progressed = true;
+          } catch (error) {
+            db.exec('ROLLBACK TO copy_table');
+            db.exec('RELEASE copy_table');
+            failures.set(table, String(error));
+          }
+        }
+        if (!progressed) throw new Error(`Unable to copy v32 tables: ${JSON.stringify(Object.fromEntries(failures))}`);
+      }
     });
     expect(session.database.prepare('SELECT max(version) AS version FROM schema_migrations').get())
       .toEqual({ version: 32 });
   } finally {
-    session.database.pragma('foreign_keys = ON');
     session.close();
   }
 }
@@ -127,6 +150,7 @@ function downgradeToP04_8(path: string): void {
 describe('P04-9 F-010 P04-8 旧数据升级后的查询', () => {
   it('[case:p04-8-upgrade-queries] 升级保留 Run/Attempt/Git/通过证据，生产查询端口仍可读取', async () => {
     const fixture = await openBindingFixture({
+      confirmProjectProfile: true,
       deliveryPolicy: {
         commitMode: 'task_and_feature',
         gitIdentity: { name: 'Confirmed Owner', email: 'owner@example.test', confirmed: true },
@@ -141,25 +165,29 @@ describe('P04-9 F-010 P04-8 旧数据升级后的查询', () => {
       batch: row(fixture, 'SELECT * FROM verification_batches WHERE task_id = ?', 't-1'),
     };
 
-    // 独立沙箱 + 事务一致副本；随后删除原夹具也不影响升级演练。
+    // 执行器已关闭，复制稳定事实；随后删除原夹具也不影响升级演练。
     const sandbox = createTempSandbox('shiploop-p049-f010-upgrade-');
     sandboxes.push(sandbox);
     const dataRoot = join(sandbox.path, 'data-root');
     mkdirSync(dataRoot, { recursive: true, mode: 0o700 });
     const dbPath = join(dataRoot, DATABASE_FILE_NAME);
-    fixture.session.database.prepare('VACUUM INTO ?').run(dbPath);
+    await copyToP04_8(fixture, dbPath);
     fixture.close();
     fixtures.splice(fixtures.indexOf(fixture), 1);
 
-    downgradeToP04_8(dbPath);
     const migrating = openSqliteStorageSession({ path: dbPath });
     let appliedVersions: readonly number[];
     try {
+      const historicalAttempt = migrating.database.prepare('SELECT * FROM attempts WHERE id = ?')
+        .get(evidence.attemptId) as Record<string, string | number | null>;
       appliedVersions = (await migrateSqliteStorage(migrating)).appliedVersions;
+      expect(migrating.database.prepare(`SELECT ${Object.keys(historicalAttempt).join(',')} FROM attempts WHERE id = ?`)
+        .get(evidence.attemptId)).toEqual(historicalAttempt);
+      expect(migrating.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {
       migrating.close();
     }
-    expect(appliedVersions).toEqual([33, 34, 35, 36, 37, 38, 39]);
+    expect(appliedVersions).toEqual(SQLITE_MIGRATIONS.filter(migration => migration.version > 32).map(migration => migration.version));
 
     const core = await openCoreApplication({
       dataRoot,

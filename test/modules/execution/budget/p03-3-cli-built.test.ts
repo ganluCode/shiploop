@@ -197,11 +197,15 @@ describe('F-014 built CLI acceptance', () => {
       const repo = join(env.sandboxRoot, 'project');
       initGitRepo(repo);
       writeFileSync(join(repo, 'README.md'), '# F-014 temporary project\n');
+      writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'budget-fixture', private: true }));
       commitAll(repo, 'initial', { home: env.childEnv().HOME as string });
       const host = await startHost();
       const registered = await ok<{ result: { project: { id: string } } }>(['project', 'register', repo, '--name', 'F-014']);
       const project = registered.result.project.id;
       const projectArgs = ['--project', project];
+      const detectedProfile = await ok<{ result: { profile: { version: number } } }>(['project', 'profile', 'detect', project, '--confirm']);
+      await ok(['project', 'profile', 'confirm', project, '--revision', String(detectedProfile.result.profile.version),
+        '--input', file('project-profile.json', detectedProfile.result.profile), '--confirm']);
       const config = file('config.json', {
         schemaVersion: 2,
         strategies: {

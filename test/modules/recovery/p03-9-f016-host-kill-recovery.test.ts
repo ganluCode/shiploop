@@ -14,11 +14,12 @@
  */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createArtifactFileStore } from '../../../packages/core/src/adapters/fs/artifact-files.ts';
+import { deriveArtifactFinalRelativePath } from '../../../packages/core/src/ports/artifact-files.ts';
 import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
 import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
 import { createSqliteAttemptLifecycleStore } from '../../../packages/core/src/adapters/sqlite/attempt-lifecycle-store.ts';
@@ -428,7 +429,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     expect(runtimeStarts(markerDir)).toHaveLength(1);
   }, 90_000);
 
-  it('after a verifier-boundary kill preserves the durable prefix but refuses resume without a published Manifest', async () => {
+  it('after a verifier-boundary kill preserves the durable prefix but refuses resume with a missing Manifest body', async () => {
     const entry = setup();
     const { fixture, markerDir, probe } = await prepareFixture(entry);
     const initial = budget(probe);
@@ -447,6 +448,13 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     await killHost(first);
     // Verifier 等待边界强杀：结果已产生但未验收/未提交，Task 不得自动通过。
     expect(q(probe, 'SELECT status FROM tasks')).toEqual({ status: 'running' });
+    // The current Recorder publishes before verification. Lose only the temporary
+    // final Manifest body to exercise the same missing-evidence recovery gate.
+    const manifest = q(probe, 'SELECT manifest_ref FROM recording_manifests WHERE attempt_id = ? AND finalized = 1 AND manifest_ref IS NOT NULL ORDER BY version DESC LIMIT 1', verified.id) as { manifest_ref: string };
+    expect(manifest).toBeDefined();
+    const manifestPath = join(fixture.box.dataRoot, deriveArtifactFinalRelativePath({ projectId: fixture.projectId, artifactId: manifest.manifest_ref }));
+    expect(existsSync(manifestPath)).toBe(true);
+    unlinkSync(manifestPath);
     const restart = await spawnHost(entry.env, config, 'f016-host-resume');
     entry.children.push(restart);
     await waitFor(() => attemptRows(probe)[0]?.status === 'interrupted', '遗留 Attempt 被 fence');
@@ -459,7 +467,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     const diagnostic = await diagnosticOf(fixture, probe, verified.id);
     expect(diagnostic).toMatchObject({ kind: 'work-recovery-reconciliation', status: 'quarantined' });
     expect(diagnostic.gaps).toEqual(expect.arrayContaining([
-      'recording_manifest_unpublished', 'recording_manifest_incomplete', 'recording_resume_unsupported',
+      'recording_artifact_corrupt', 'recording_resume_unsupported',
     ]));
     expect(q(probe, "SELECT status FROM tasks WHERE status = 'passed'")).toBeUndefined();
     expect(lateResult(probe, fixture, verified)).toMatchObject({ disposition: 'ignored', reason: 'stale_execution_identity' });
