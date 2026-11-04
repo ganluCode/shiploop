@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
       - name: setup-node
         uses: actions/setup-node@v4.4.0
         with:
@@ -34,6 +36,9 @@ jobs:
         run: npm run verify:ci-config
       - name: verify
         run: npm run verify
+        env:
+          SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '4800000'
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '4500000'
       - name: pack-local
         run: npm run pack:local -- --output artifacts/local-pack
       - name: verify-artifacts

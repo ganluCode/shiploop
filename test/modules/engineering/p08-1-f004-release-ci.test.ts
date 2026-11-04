@@ -364,6 +364,23 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
     });
   });
 
+  it('[case:history-and-test-budgets] requires full Git history and bounded nested test budgets', () => {
+    const real = readRealWorkflow();
+    for (const depth of ['1', '2']) {
+      withFixture('ci-shallow-', { workflowText: real.replace('fetch-depth: 0', `fetch-depth: ${depth}`) }, root => {
+        expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'script-wiring');
+      });
+    }
+    for (const replacement of ["'0'", "'86400000'"]) {
+      withFixture('ci-budget-', { workflowText: real.replace("'4500000'", replacement) }, root => {
+        expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'no-publish-side-effects');
+      });
+    }
+    withFixture('ci-unknown-env-', { workflowText: real.replace('        env:\n', '        env:\n          EXTRA: value\n') }, root => {
+      expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'no-publish-side-effects');
+    });
+  });
+
   it('[case:step-order] 缺少 npm ci 或步骤乱序失败', () => {
     const real = readRealWorkflow();
     const noInstall = real.replace(stepBlock('npm-ci', 'npm ci'), '');

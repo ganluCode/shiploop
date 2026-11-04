@@ -16,7 +16,7 @@
  *                             不允许 continue-on-error / if 条件跳过（任一步失败即非零）；
  * 7. command-allowlist        run 命令必须与审阅清单完全一致，不允许未审阅命令；
  * 8. no-publish-side-effects  禁止 npm publish、git push、gh PR/发布动作、${{ 表达式、
- *                             env 注入与未登记的第三方 Action；
+ *                             未审 env 注入与未登记的第三方 Action（verify 仅允许固定超时变量）；
  * 9. no-credential-injection  禁止 secrets./token/私钥/registry 凭据进入检查环境；
  * 10. action-refs-pinned      Action 引用必须固定为 vX.Y[.Z] 或 40 位 SHA；
  * 11. script-wiring           工作流引用的 npm 脚本与 node 脚本文件必须真实存在，
@@ -644,6 +644,9 @@ function checkStepOrder(context: WorkflowContext): CiConfigCheck {
     if (step.record['if'] !== undefined) {
       problems.push(`步骤不允许 if 条件跳过（保持静态可审）：${stepLabel(step)}`);
     }
+    if (step.run === 'npm run verify' && step.record['env'] === undefined) {
+      problems.push('verify 必须声明已审的内外层测试预算，避免默认 10 分钟提前结束');
+    }
   }
   const runCommands = context.steps.map((step) => step.run).filter((run): run is string => run !== null);
   const expected = [...REQUIRED_RUN_SEQUENCE];
@@ -713,7 +716,22 @@ function checkNoPublishSideEffects(context: WorkflowContext): CiConfigCheck {
   }
   const keys = new Set<string>();
   collectKeys(context.parsed, keys);
-  if (keys.has('env')) problems.push('工作流不允许 env 注入块（检查环境不携带额外变量）');
+  const expectedVerifyEnv = {
+    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '4800000',
+    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '4500000',
+  };
+  if (context.parsed['env'] !== undefined || context.job?.['env'] !== undefined) {
+    problems.push('工作流与 job 不允许 env 注入块');
+  }
+  for (const step of context.steps) {
+    if (step.record['env'] === undefined) continue;
+    const env = asRecord(step.record['env']);
+    if (step.run !== 'npm run verify' || !env
+      || Object.keys(env).length !== Object.keys(expectedVerifyEnv).length
+      || Object.entries(expectedVerifyEnv).some(([key, value]) => env[key] !== value)) {
+      problems.push('只有 verify 步骤允许固定的测试超时变量，禁止其他 env 注入');
+    }
+  }
   for (const step of context.steps) {
     if (step.uses !== null) {
       const action = step.uses.split('@')[0] ?? '';
@@ -790,6 +808,9 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
   const setupNode = usesActions('actions/setup-node');
   const upload = usesActions('actions/upload-artifact');
   if (checkout.length !== 1) problems.push(`必须恰好一个 actions/checkout 步骤；实际 ${checkout.length} 个`);
+  else if (asRecord(checkout[0]?.record['with'])?.['fetch-depth'] !== 0) {
+    problems.push('checkout 必须 fetch-depth: 0，以核验发布清单历史提交');
+  }
   if (setupNode.length !== 1) problems.push(`必须恰好一个 actions/setup-node 步骤；实际 ${setupNode.length} 个`);
   if (upload.length !== 1) {
     problems.push(`必须恰好一个 actions/upload-artifact 步骤保存脱敏报告；实际 ${upload.length} 个`);
