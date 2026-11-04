@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Readable } from 'node:stream';
 import { CommandProcessError } from '../../ports/command-process.js';
 import type {
   CommandProcessPort, CommandProcessRequest, CommandProcessIdentity, CommandProcessOutput,
@@ -21,6 +22,18 @@ const DEFAULT_STOP_CONFIRM_MS = 5_000;
 const GROUP_POLL_MS = 50;
 const STOP_GRACE_BOUNDS: readonly [number, number] = [100, DEFAULT_STOP_GRACE_MS];
 const STOP_CONFIRM_BOUNDS: readonly [number, number] = [100, DEFAULT_STOP_CONFIRM_MS];
+
+/** Internal pipe reader: capacity bounds retained bytes without consuming an oversized chunk. */
+export function readCommandPipeChunk(stream: Readable, capacity: number): Buffer | null {
+  if (stream.readableLength === 0) {
+    // EOF can arrive after the last data read. A zero-byte read advances end/close
+    // without taking data or exceeding queue capacity.
+    stream.read(0);
+    return null;
+  }
+  if (capacity === 0) return null;
+  return stream.read(Math.min(stream.readableLength, capacity)) as Buffer | null;
+}
 
 function validate(input: unknown): CommandProcessRequest {
   const bad = (): never => { throw new CommandProcessError('invalid_input'); };
@@ -303,15 +316,14 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
         pumping = true;
         try {
           for (const [index, stream] of streams.entries()) {
-            while (stream.readableLength > 0) {
+            for (;;) {
               const available = BUFFER_LIMIT - buffered;
-              if (state === 'running' && available === 0) return;
               // Pull only what the queue can hold; a fast producer is not an overflow.
               // Read one byte beyond the total budget to detect a real limit breach.
               const size = state === 'running'
-                ? Math.min(stream.readableLength, available, request.maxOutputBytes - outputBytes + 1)
-                : Math.min(stream.readableLength, BUFFER_LIMIT);
-              const chunk = stream.read(size) as Buffer | null;
+                ? Math.min(available, request.maxOutputBytes - outputBytes + 1)
+                : BUFFER_LIMIT;
+              const chunk = readCommandPipeChunk(stream, size);
               if (chunk === null) break;
               capture(index === 0 ? 'stdout' : 'stderr', chunk);
             }

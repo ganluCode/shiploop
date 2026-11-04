@@ -54,8 +54,7 @@ async function setup() {
 
 describe('baseline bounded redacted evidence', () => {
   it('publishes large real output with bounded tail, actual execution identity and no credentials in any file', async () => fixture(async (f) => {
-    // This tests output integrity, not latency; hosted runners need room to drain and persist output.
-    const request = { ...f.request, timeoutMs: 30_000, argv: [process.execPath, '-e', `process.stdout.write('x'.repeat(300000));process.stdout.write(process.env.TOKEN);process.stderr.write('Authorization: Bearer unknown-synthetic-secret\\n错误\\n')`] };
+    const request = { ...f.request, argv: [process.execPath, '-e', `process.stdout.write('x'.repeat(300000));process.stdout.write(process.env.TOKEN);process.stderr.write('Authorization: Bearer unknown-synthetic-secret\\n错误\\n')`] };
     const handle = await createCommandProcessAdapter().start(request, async (i) => ({ launchId: i.launchId }));
     const collector = createBaselineEvidenceCollector({ artifacts: f.artifacts, files: f.files });
     const evidence = await collector.collect({ ...f.input, request, handle });

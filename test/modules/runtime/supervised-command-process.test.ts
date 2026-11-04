@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
+import { createCommandProcessAdapter, readCommandPipeChunk } from '../../../packages/core/src/adapters/process/command-process.ts';
 import type { CommandProcessHandle, CommandProcessRequest, CommandProcessIdentity } from '../../../packages/core/src/ports/command-process.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
@@ -45,6 +46,26 @@ function barrier<T>() {
 }
 
 describe('macOS supervised command port', () => {
+  it('consumes EOF after the pipe data was drained before the final readable event', async () => {
+    const stream = new Readable({ read() {} });
+    resources.push(() => { stream.destroy(); });
+    const received: Buffer[] = [];
+    let ended = false;
+    stream.on('end', () => { ended = true; });
+    stream.on('readable', () => {
+      let chunk: Buffer | null;
+      while ((chunk = readCommandPipeChunk(stream, 65_536)) !== null) received.push(chunk);
+    });
+    stream.push(Buffer.from('complete'));
+    await nextTurn();
+    expect(Buffer.concat(received).toString()).toBe('complete');
+    expect(ended).toBe(false);
+    stream.push(null);
+    await nextTurn();
+    expect(ended).toBe(true);
+    expect(stream.readableEnded).toBe(true);
+  });
+
   it('commits the Core execution identity before releasing any script', async () => {
     const root = sandbox();
     const sentinel = join(root, 'released');
