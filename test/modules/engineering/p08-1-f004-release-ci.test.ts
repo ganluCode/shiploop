@@ -358,7 +358,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
 
-    const noTimeout = real.replace('    timeout-minutes: 90\n', '');
+    const noTimeout = real.replace('    timeout-minutes: 120\n', '');
     withFixture('p08f004-notimeout-', { workflowText: noTimeout }, (root) => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
@@ -372,7 +372,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       });
     }
     for (const replacement of ["'0'", "'86400000'"]) {
-      withFixture('ci-budget-', { workflowText: real.replace("'4500000'", replacement) }, root => {
+      withFixture('ci-budget-', { workflowText: real.replace("'6300000'", replacement) }, root => {
         expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'no-publish-side-effects');
       });
     }

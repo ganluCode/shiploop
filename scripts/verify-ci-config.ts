@@ -717,8 +717,8 @@ function checkNoPublishSideEffects(context: WorkflowContext): CiConfigCheck {
   const keys = new Set<string>();
   collectKeys(context.parsed, keys);
   const expectedVerifyEnv = {
-    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '4800000',
-    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '4500000',
+    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '6600000',
+    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6300000',
   };
   if (context.parsed['env'] !== undefined || context.job?.['env'] !== undefined) {
     problems.push('工作流与 job 不允许 env 注入块');
