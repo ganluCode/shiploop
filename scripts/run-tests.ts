@@ -151,11 +151,12 @@ if (!grouped) {
     }
     if (!selected.some(plan => plan.files.length)) fail('selected stage contains no tests');
     const outcomes = executeTestStages(selected, timeoutMs, (plan, remainingMs) => {
-      process.stdout.write(`run-tests: RUN ${plan.stage} (${plan.files.length} files, maxWorkers=4, remaining=${remainingMs}ms)\n`);
+      const maxWorkers = plan.stage === 'heavy' ? 1 : 4;
+      process.stdout.write(`run-tests: RUN ${plan.stage} (${plan.files.length} files, maxWorkers=${maxWorkers}, remaining=${remainingMs}ms)\n`);
       // Exclude the complement as well: Vitest positional filters are substring matches.
       const excluded = plans.flatMap(other => other.stage === plan.stage ? [] : other.files)
         .flatMap(file => ['--exclude', file]);
-      const result = spawnSync(process.execPath, [binaryPath, 'run', ...plan.files, ...excluded], {
+      const result = spawnSync(process.execPath, [binaryPath, 'run', ...plan.files, ...excluded, '--maxWorkers', String(maxWorkers)], {
         cwd: repoRoot, stdio: 'inherit', timeout: remainingMs,
         env: { ...process.env, SHIPLOOP_TEST_EXPLICIT_FILTERS: '[]' },
       });
