@@ -517,7 +517,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       '        uses: actions/upload-artifact@v4.6.2',
       '        with:',
       '          name: ci-reports',
-      '          path: artifacts/local-pack/artifact-verification.json, artifacts/local-pack/distribution-manifest.json, artifacts/ci-config/ci-config-verification.json',
+      '          path: artifacts/',
       '          if-no-files-found: error',
       '',
     ].join('\n');

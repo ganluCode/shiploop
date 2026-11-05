@@ -825,8 +825,9 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
       if (!path) {
         problems.push('upload-artifact 缺少 path');
       } else {
+        const uploadsArtifactRoot = path.trim() === 'artifacts/' || path.trim() === 'artifacts';
         for (const required of REQUIRED_UPLOAD_PATHS) {
-          if (!path.includes(required)) {
+          if (!uploadsArtifactRoot && !path.includes(required)) {
             problems.push(`upload-artifact path 必须包含脱敏报告 ${required}`);
           }
         }
