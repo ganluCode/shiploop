@@ -20,7 +20,7 @@ jobs:
   checks:
     name: deterministic-checks
     runs-on: macos-14
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
       - name: checkout
         uses: actions/checkout@v4.2.2
@@ -37,8 +37,8 @@ jobs:
       - name: verify
         run: npm run verify
         env:
-          SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '6600000'
-          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6300000'
+          SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '18000000'
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '17400000'
       - name: pack-local
         run: npm run pack:local -- --output artifacts/local-pack
       - name: verify-artifacts

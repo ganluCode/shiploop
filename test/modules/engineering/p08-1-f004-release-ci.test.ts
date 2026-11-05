@@ -372,7 +372,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       });
     }
     for (const replacement of ["'0'", "'86400000'"]) {
-      withFixture('ci-budget-', { workflowText: real.replace("'6300000'", replacement) }, root => {
+      withFixture('ci-budget-', { workflowText: real.replace("'17400000'", replacement) }, root => {
         expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'no-publish-side-effects');
       });
     }

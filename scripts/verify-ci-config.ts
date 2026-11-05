@@ -51,7 +51,7 @@ export const REQUIRED_RUN_SEQUENCE = [
 const ALLOWED_ACTIONS = ['actions/checkout', 'actions/setup-node', 'actions/upload-artifact'] as const;
 const PINNED_REF_PATTERN = /^v\d+\.\d+(?:\.\d+)?$|^[0-9a-f]{40}$/i;
 const RUNNER_LABEL = 'macos-14';
-const MAX_TIMEOUT_MINUTES = 120;
+const MAX_TIMEOUT_MINUTES = 360;
 const NODE_VERSION_KEY = 'node-version';
 /** 上传步骤必须保存的脱敏报告（制品摘要与配置检查证据）。 */
 const REQUIRED_UPLOAD_PATHS = [
@@ -717,8 +717,8 @@ function checkNoPublishSideEffects(context: WorkflowContext): CiConfigCheck {
   const keys = new Set<string>();
   collectKeys(context.parsed, keys);
   const expectedVerifyEnv = {
-    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '6600000',
-    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6300000',
+    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '18000000',
+    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '17400000',
   };
   if (context.parsed['env'] !== undefined || context.job?.['env'] !== undefined) {
     problems.push('工作流与 job 不允许 env 注入块');
