@@ -358,7 +358,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
 
-    const noTimeout = real.replace('    timeout-minutes: 120\n', '');
+    const noTimeout = real.replace('    timeout-minutes: 360\n', '');
     withFixture('p08f004-notimeout-', { workflowText: noTimeout }, (root) => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
