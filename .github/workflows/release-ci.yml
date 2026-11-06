@@ -70,6 +70,7 @@ jobs:
         with:
           node-version: 22.19.0
       - run: npm ci
+      - run: node scripts/build-host-lock.ts
       - run: node scripts/run-tests.ts --stage heavy --shard 1/4 --stage-report artifacts/ci-tests/heavy-1.json
         env:
           SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
@@ -93,6 +94,7 @@ jobs:
         with:
           node-version: 22.19.0
       - run: npm ci
+      - run: node scripts/build-host-lock.ts
       - run: node scripts/run-tests.ts --stage heavy --shard 2/4 --stage-report artifacts/ci-tests/heavy-2.json
         env:
           SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
@@ -116,6 +118,7 @@ jobs:
         with:
           node-version: 22.19.0
       - run: npm ci
+      - run: node scripts/build-host-lock.ts
       - run: node scripts/run-tests.ts --stage heavy --shard 3/4 --stage-report artifacts/ci-tests/heavy-3.json
         env:
           SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
@@ -139,6 +142,7 @@ jobs:
         with:
           node-version: 22.19.0
       - run: npm ci
+      - run: node scripts/build-host-lock.ts
       - run: node scripts/run-tests.ts --stage heavy --shard 4/4 --stage-report artifacts/ci-tests/heavy-4.json
         env:
           SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'

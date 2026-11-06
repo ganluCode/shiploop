@@ -58,10 +58,10 @@ const MAX_TIMEOUT_MINUTES = 360;
 const NODE_VERSION_KEY = 'node-version';
 // Additional execution jobs are fixed reviewed structures, including dependencies and evidence upload.
 const EXTRA_JOB_HASHES: Readonly<Record<string, string>> = {
-  'heavy-1': 'c34e5a96cf3124b4e717e9e3c4f17b8bc9b6b98508da858fc251876b8633af6d',
-  'heavy-2': '2f9cf5af9021a311d6739652c468f835bc36939a28d67631c632ba3e8e06911a',
-  'heavy-3': '0a0b8e9c151a52e32e09c0148bfff001baed18650916ef065261c26735aa582d',
-  'heavy-4': 'e6dc7cb8b37d1ad479bfb49218fc69915d4f652cb1915f9a438361ad7e4f9f58',
+  'heavy-1': 'eccff6e1c60d7e61090dfbe6b13caaa3ba9bdbcdda62cd87003bb549854457e3',
+  'heavy-2': 'd24b3894457d606a55d7f22694c477c881166b7322d366c24d82817b123e43ca',
+  'heavy-3': '1186c5b35f9afef68dff21d7443a6da602a6101d843db16a825cc92b515a636e',
+  'heavy-4': 'aec46469110a668147676e9013b456504257f5f92cedbf73dc509eed9b85598a',
   'release-gate': '57e34aea3a5405c5478d847f91475b9d88ad4311dd2bcffc1eb6f35ea8b27a01',
 };
 /** 上传步骤必须保存的脱敏报告（制品摘要与配置检查证据）。 */

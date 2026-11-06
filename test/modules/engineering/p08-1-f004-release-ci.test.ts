@@ -295,6 +295,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       real.replace('  heavy-1:\n', '  unreviewed-job:\n'),
       real.replace('    needs: checks', '    needs: release-gate'),
       real.replace('--shard 1/4', '--shard 1/3'),
+      real.replace('      - run: node scripts/build-host-lock.ts\n', ''),
       real.replace('    if: always()\n    needs:', '    if: success()\n    needs:'),
       real.replace('CI_JOB_RESULTS: ${{ toJSON(needs) }}', 'CI_JOB_RESULTS: success'),
       real.replace('      - heavy-4\n', ''),

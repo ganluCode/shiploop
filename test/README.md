@@ -264,6 +264,7 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
 
 GitHub `release-ci` 在上述主检查通过后，将 heavy 组按 `test/ci-timings.json`
 记录的历史文件耗时均衡分成四片，每片使用独立 macos-15 runner 和一个 Vitest worker。
+每片 npm ci 后显式执行 `node scripts/build-host-lock.ts`，不依赖其他测试先生成原生锁模块。
 新文件默认进入 heavy，并以 30 秒估计纳入分片；历史耗时只影响负载分配，不决定测试是否执行。
 分片首个失败即退出，仍上传阶段报告和真实 Vitest JSON；最终 `deterministic-checks`
 核对五个前置 Job 均成功、四份报告与提交相符、实际测试文件集合完整且无重复。
