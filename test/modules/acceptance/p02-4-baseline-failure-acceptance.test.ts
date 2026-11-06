@@ -43,6 +43,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { expectOnlyOfficialSkillsAdded } from '../../helpers/shiploop-skills.ts';
 import {
   existsSync,
   mkdirSync,
@@ -379,7 +380,7 @@ describe('P02-FR2-BASELINE-FAILURE 确定性失败命令真实闭环', () => {
     const timeoutMs = 60_000;
 
     // 仓库快照（失败不得修复/改动仓库）。
-    const before = f.snapshotRepository(repoPath);
+    let before = f.snapshotRepository(repoPath);
 
     // CLI A：正式 init 注册受检仓库（首个应用命令自动启动 Host）。
     const init = await f.runDistCli(
@@ -387,6 +388,9 @@ describe('P02-FR2-BASELINE-FAILURE 确定性失败命令真实闭环', () => {
       { label: 'client-a-init' },
     );
     expect(init.exitCode, init.stderr).toBe(0);
+    const initialized = f.snapshotRepository(repoPath);
+    expectOnlyOfficialSkillsAdded(repoPath, before, initialized);
+    before = initialized;
     const projectId = (
       (singleEnvelope(init).result as { registration: { projectId: string } }).registration
     ).projectId;
@@ -493,7 +497,7 @@ describe('P02-FR2-BASELINE-FAILURE 确定性失败命令真实闭环', () => {
       expect(authorization).toBeDefined();
       expect(authorization!.head_commit).toBe(headCommit);
       expect(authorization!.working_tree_digest).toMatch(/^[0-9a-f]{64}$/);
-      expect(authorization!.has_uncommitted_changes).toBe(0);
+      expect(authorization!.has_uncommitted_changes).toBe(1);
       expect(JSON.parse(authorization!.plan_json)).toEqual({ checks: [failureCheck] });
 
       // 事件序列：注册 → 授权 → 启动 → 检查完成 → 完成（失败也是 completed 事件，
@@ -716,7 +720,7 @@ describe('P02-FR2-BASELINE-FAILURE 拒绝授权与缺命令/未知脚本', () =>
     const f = useFixture();
     const root = f.dataRoot();
     const repoPath = f.repos.withHead;
-    const before = f.snapshotRepository(repoPath);
+    let before = f.snapshotRepository(repoPath);
     const packageJsonBefore = readFileSync(join(repoPath, 'package.json'), 'utf8');
 
     const init = await f.runDistCli(
@@ -724,6 +728,9 @@ describe('P02-FR2-BASELINE-FAILURE 拒绝授权与缺命令/未知脚本', () =>
       { label: 'client-a-init' },
     );
     expect(init.exitCode, init.stderr).toBe(0);
+    const initialized = f.snapshotRepository(repoPath);
+    expectOnlyOfficialSkillsAdded(repoPath, before, initialized);
+    before = initialized;
     const projectId = (
       (singleEnvelope(init).result as { registration: { projectId: string } }).registration
     ).projectId;

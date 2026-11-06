@@ -98,10 +98,13 @@ describe('test stages preserve the entire collection and fail early', () => {
     const f = fixture();
     const report = join(f.root, 'report.json');
     const result = f.run(['--stage', 'all', '--stage-report', report]);
+    expect(f.calls().map(call => call.args.slice(-2))).toEqual([
+      ['--maxWorkers', '4'], ['--maxWorkers', '4'], ['--maxWorkers', '1'],
+    ]);
     expect(result.status, result.stderr).toBe(0);
     expect(f.calls().map(call => call.args[1])).toEqual(['test/a.test.ts', 'test/b.test.ts', 'test/new.test.ts']);
     expect(f.calls().every(call => call.explicit === '[]')).toBe(true);
-    expect(f.calls()[0].args).toEqual(['run', 'test/a.test.ts', '--exclude', 'test/b.test.ts', '--exclude', 'test/new.test.ts']);
+    expect(f.calls()[0].args).toEqual(['run', 'test/a.test.ts', '--exclude', 'test/b.test.ts', '--exclude', 'test/new.test.ts', '--maxWorkers', '4']);
     expect(JSON.parse(readFileSync(report, 'utf8'))).toMatchObject({ scope: 'all', passed: true });
     expect(f.run(['--stage', 'all', '--stage-report', report]).status).toBe(1);
     expect(f.calls()).toHaveLength(3);

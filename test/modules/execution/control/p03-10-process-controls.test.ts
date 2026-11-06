@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { withP03AcceptanceFixture, type P03Fixture } from '../../../helpers/p03-10/acceptance-fixture.ts';
 
-const logs = '/Users/ganlu/Documents/my-dev/code/ai-coding/shiploop-harness/workspace/features/2026-10-11-17-45-49_p03-10-p03/verifications/F-014/runtime-logs';
+const logs = process.env.SHIPLOOP_P03_PROCESS_EVIDENCE_DIR ??
+  mkdtempSync(join(tmpdir(), 'shiploop-p03-process-evidence-'));
 const writer = fileURLToPath(new URL('../../../helpers/p03-10/controlled-writer.mjs', import.meta.url));
 function evidence(name: string) {
   mkdirSync(logs, { recursive: true });

@@ -44,6 +44,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_PATH = /^(?!\.)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+const OFFICIAL_SKILL_PATH = /^\.(?:agents|claude)\/skills\/shiploop\/(?:SKILL\.md|references\/(?:project-init|providers|execution|diagnostics|cli|host)\.md)$/;
 const SNAPSHOT_KEYS = [
   'schemaVersion', 'kind', 'repository', 'headCommit', 'headTree',
   'workingTree', 'files', 'checks', 'knownFailures', 'notRun',
@@ -184,7 +185,7 @@ function safeId(value: unknown, field: string): string {
 }
 
 function safePath(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !SAFE_PATH.test(value)) fail('snapshot_path_invalid', field);
+  if (typeof value !== 'string' || (!SAFE_PATH.test(value) && !OFFICIAL_SKILL_PATH.test(value))) fail('snapshot_path_invalid', field);
   return value;
 }
 

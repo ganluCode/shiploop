@@ -324,7 +324,10 @@ describe('F-004 进程身份提交放行', () => {
         },
       }, request);
       // 提交挂起期间：命令未放行，sentinel 不存在，事件流尚无 tool_started。
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await expect.poll(() => observedIdentity, {
+        timeout: 5_000,
+        message: 'supervisor identity reached the blocked Core commit callback',
+      }).toBeDefined();
       expect(existsSync(sentinel)).toBe(false);
       expect(observedIdentity).toBeDefined();
       expect(observedIdentity?.launchId).toMatch(/^[0-9a-f-]{36}$/);

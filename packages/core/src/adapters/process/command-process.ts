@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Readable } from 'node:stream';
 import { CommandProcessError } from '../../ports/command-process.js';
 import type {
   CommandProcessPort, CommandProcessRequest, CommandProcessIdentity, CommandProcessOutput,
@@ -21,6 +22,18 @@ const DEFAULT_STOP_CONFIRM_MS = 5_000;
 const GROUP_POLL_MS = 50;
 const STOP_GRACE_BOUNDS: readonly [number, number] = [100, DEFAULT_STOP_GRACE_MS];
 const STOP_CONFIRM_BOUNDS: readonly [number, number] = [100, DEFAULT_STOP_CONFIRM_MS];
+
+/** Internal pipe reader: capacity bounds retained bytes without consuming an oversized chunk. */
+export function readCommandPipeChunk(stream: Readable, capacity: number): Buffer | null {
+  if (stream.readableLength === 0) {
+    // EOF can arrive after the last data read. A zero-byte read advances end/close
+    // without taking data or exceeding queue capacity.
+    stream.read(0);
+    return null;
+  }
+  if (capacity === 0) return null;
+  return stream.read(Math.min(stream.readableLength, capacity)) as Buffer | null;
+}
 
 function validate(input: unknown): CommandProcessRequest {
   const bad = (): never => { throw new CommandProcessError('invalid_input'); };
@@ -269,7 +282,8 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
       let consumerTaken = false;
       const wake = () => { waiter?.(); waiter = undefined; };
       const streams = [child.stdout!, child.stderr!];
-      const resume = () => streams.forEach((s) => s.resume());
+      let pumping = false;
+      const resume = () => pumpOutput();
       const stop = (why: CommandProcessReason) => {
         // First stop reason wins: user cancel vs timed_out stay distinct through the
         // shared path; late/old handle requests are idempotent no-ops.
@@ -286,9 +300,7 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
         if (finished) return;
         const remaining = Math.max(0, request.maxOutputBytes - outputBytes);
         const available = Math.max(0, BUFFER_LIMIT - buffered);
-        // A data callback may contain more than the queue budget. Retain only
-        // the bounded prefix; while running, turn the unrepresentable remainder
-        // into a controlled overflow instead of keeping a second hidden buffer.
+        // During stop, drain pipes but retain only the bounded prefix.
         const keep = Math.min(chunk.length, remaining, available);
         droppedOutputBytes += chunk.length - keep;
         if (keep > 0) {
@@ -297,11 +309,28 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
           outputBytes += keep;
           wake();
         }
-        if (chunk.length > remaining || (state === 'running' && chunk.length > available)) stop('output_overflow');
-        if (state === 'running' && buffered >= BUFFER_LIMIT) streams.forEach((s) => s.pause());
+        if (chunk.length > remaining) stop('output_overflow');
       };
-      child.stdout!.on('data', (chunk: Buffer) => capture('stdout', chunk));
-      child.stderr!.on('data', (chunk: Buffer) => capture('stderr', chunk));
+      const pumpOutput = () => {
+        if (pumping || finished) return;
+        pumping = true;
+        try {
+          for (const [index, stream] of streams.entries()) {
+            for (;;) {
+              const available = BUFFER_LIMIT - buffered;
+              // Pull only what the queue can hold; a fast producer is not an overflow.
+              // Read one byte beyond the total budget to detect a real limit breach.
+              const size = state === 'running'
+                ? Math.min(available, request.maxOutputBytes - outputBytes + 1)
+                : BUFFER_LIMIT;
+              const chunk = readCommandPipeChunk(stream, size);
+              if (chunk === null) break;
+              capture(index === 0 ? 'stdout' : 'stderr', chunk);
+            }
+          }
+        } finally { pumping = false; }
+      };
+      streams.forEach(stream => stream.on('readable', pumpOutput));
       child.stdin!.on('error', () => {}); // EPIPE is reflected by command result, not an unhandled event.
       const abort = () => {
         if (!released) startupFailure.reject(new CommandProcessError('start_aborted'));

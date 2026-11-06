@@ -58,7 +58,15 @@ describe('baseline bounded redacted evidence', () => {
     const handle = await createCommandProcessAdapter().start(request, async (i) => ({ launchId: i.launchId }));
     const collector = createBaselineEvidenceCollector({ artifacts: f.artifacts, files: f.files });
     const evidence = await collector.collect({ ...f.input, request, handle });
-    expect(evidence.eligibleForPass).toBe(true);
+    expect(evidence.eligibleForPass, JSON.stringify({
+      integrity: evidence.integrity,
+      exitCode: evidence.exitCode,
+      signal: evidence.signal,
+      processReason: evidence.processReason,
+      stopConfirmed: evidence.stopConfirmed,
+      timedOut: evidence.timedOut,
+      durationMs: evidence.durationMs,
+    })).toBe(true);
     expect(evidence.integrity.complete).toBe(true);
     expect(evidence.output!.sizeBytes).toBeGreaterThan(300_000);
     expect(Buffer.byteLength(evidence.tail)).toBeLessThanOrEqual(16_384);

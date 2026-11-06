@@ -144,6 +144,7 @@ describe('F-007 composed Work failure routing', () => {
   }, 25_000);
 
   it('[case:root-preflight-passed] keeps isolated probe usage outside Work counters and probes the selected backup', async () => {
+    // Setup, three bounded 8s settlement polls and verified cleanup must fit the outer budget.
     const f = await fixture({ probe: 'passed' });
     try {
       await f.run();
@@ -158,7 +159,7 @@ describe('F-007 composed Work failure routing', () => {
       expect(f.probe).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'Reply with OK.', maxRetries: 0, maxOutputTokens: 32 }));
       expect(f.query('SELECT runtime_starts, attempts_created FROM execution_batches')).toEqual({ runtime_starts: 2, attempts_created: 2 });
     } finally { await f.cleanup(); }
-  }, 25_000);
+  }, 60_000);
 
   it.each(['failed', 'backup-failed'] as const)('[case:root-preflight-%s] denies dispatch before acquiring the next Attempt', async probe => {
     const f = await fixture({ probe });

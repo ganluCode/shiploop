@@ -219,7 +219,7 @@ describe('F-019 操作说明示例纵向（文档顺序可复跑）', () => {
     );
     expect(preview.projectId).toBe(projectId);
     expect(typeof preview.previewDigest).toBe('string');
-    expect((preview.codeIdentity as Record<string, unknown>).hasUncommittedChanges).toBe(false);
+    expect((preview.codeIdentity as Record<string, unknown>).hasUncommittedChanges).toBe(true);
     expect((preview.checks as Record<string, unknown>[])[0].argv).toEqual(['/bin/echo', 'baseline ok']);
 
     // 6) 显式授权并等待终态：completed + 全 required passed → 退出码 0。

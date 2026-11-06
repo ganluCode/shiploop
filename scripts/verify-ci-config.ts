@@ -9,14 +9,14 @@
  * 3. trigger-scope            触发范围只能是 push/pull_request 且 branches 恰为 main；
  *                             schedule、pull_request_target、通配分支等拒绝；
  * 4. permissions-minimal      顶层必须显式 contents: read；任何更大权限拒绝；
- * 5. runner-toolchain         单一 macOS runner（macos-14）、有界 timeout、
+ * 5. runner-toolchain         主检查与四分片固定 macOS runner（macos-15）、有界 timeout、
  *                             setup-node 固定发布基线；engines 可为已审兼容范围；
  * 6. required-step-order      必需步骤按固定顺序执行（npm ci -> verify:ci-config ->
- *                             verify -> pack:local -> verify:artifacts -> ci-summary）；
+ *                             typecheck -> light/standard -> build -> pack:local -> verify:artifacts -> ci-summary）；
  *                             不允许 continue-on-error / if 条件跳过（任一步失败即非零）；
  * 7. command-allowlist        run 命令必须与审阅清单完全一致，不允许未审阅命令；
- * 8. no-publish-side-effects  禁止 npm publish、git push、gh PR/发布动作、${{ 表达式、
- *                             env 注入与未登记的第三方 Action；
+ * 8. no-publish-side-effects  禁止 npm publish、git push、gh PR/发布动作、未登记表达式、
+ *                             未审 env 注入与未登记的第三方 Action（仅允许固定测试预算/结果表达式）；
  * 9. no-credential-injection  禁止 secrets./token/私钥/registry 凭据进入检查环境；
  * 10. action-refs-pinned      Action 引用必须固定为 vX.Y[.Z] 或 40 位 SHA；
  * 11. script-wiring           工作流引用的 npm 脚本与 node 脚本文件必须真实存在，
@@ -42,7 +42,10 @@ const ALLOWED_WORKFLOW_FILES = ['release-ci.yml'] as const;
 export const REQUIRED_RUN_SEQUENCE = [
   'npm ci',
   'npm run verify:ci-config',
-  'npm run verify',
+  'npm run typecheck',
+  'node scripts/run-tests.ts --stage light',
+  'node scripts/run-tests.ts --stage standard',
+  'npm run build',
   'npm run pack:local -- --output artifacts/local-pack',
   'npm run verify:artifacts',
   'node scripts/ci-summary.ts',
@@ -50,9 +53,17 @@ export const REQUIRED_RUN_SEQUENCE = [
 
 const ALLOWED_ACTIONS = ['actions/checkout', 'actions/setup-node', 'actions/upload-artifact'] as const;
 const PINNED_REF_PATTERN = /^v\d+\.\d+(?:\.\d+)?$|^[0-9a-f]{40}$/i;
-const RUNNER_LABEL = 'macos-14';
-const MAX_TIMEOUT_MINUTES = 120;
+const RUNNER_LABEL = 'macos-15';
+const MAX_TIMEOUT_MINUTES = 360;
 const NODE_VERSION_KEY = 'node-version';
+// Additional execution jobs are fixed reviewed structures, including dependencies and evidence upload.
+const EXTRA_JOB_HASHES: Readonly<Record<string, string>> = {
+  'heavy-1': 'eccff6e1c60d7e61090dfbe6b13caaa3ba9bdbcdda62cd87003bb549854457e3',
+  'heavy-2': 'd24b3894457d606a55d7f22694c477c881166b7322d366c24d82817b123e43ca',
+  'heavy-3': '1186c5b35f9afef68dff21d7443a6da602a6101d843db16a825cc92b515a636e',
+  'heavy-4': 'aec46469110a668147676e9013b456504257f5f92cedbf73dc509eed9b85598a',
+  'release-gate': '57e34aea3a5405c5478d847f91475b9d88ad4311dd2bcffc1eb6f35ea8b27a01',
+};
 /** 上传步骤必须保存的脱敏报告（制品摘要与配置检查证据）。 */
 const REQUIRED_UPLOAD_PATHS = [
   'artifacts/local-pack/artifact-verification.json',
@@ -409,7 +420,7 @@ export function verifyCiConfig(options: VerifyCiConfigOptions): CiConfigVerifica
     jobs = asRecord(parsed['jobs']);
     if (jobs) {
       const ids = Object.keys(jobs);
-      jobId = ids.length === 1 ? (ids[0] as string) : null;
+      jobId = ids.includes('checks') ? 'checks' : null;
       job = jobId ? asRecord(jobs[jobId]) : null;
       const rawSteps = job ? asArray(job['steps']) : null;
       if (rawSteps) {
@@ -493,8 +504,19 @@ function structuralGuard(context: WorkflowContext, problems: string[]): boolean 
     return false;
   }
   if (!context.jobs || !context.job || context.jobId === null) {
-    problems.push('工作流必须恰好包含一个 job；当前结构无法确定唯一 job');
+    problems.push('工作流必须包含 checks 主检查 job');
     return false;
+  }
+  const expected = ['checks', ...Object.keys(EXTRA_JOB_HASHES)].sort();
+  if (JSON.stringify(Object.keys(context.jobs).sort()) !== JSON.stringify(expected)) {
+    problems.push('工作流必须包含主检查、四个分片和最终汇总，不能缺少或增加 job');
+    return false;
+  }
+  for (const [id, hash] of Object.entries(EXTRA_JOB_HASHES)) {
+    if (sha256Hex(JSON.stringify(context.jobs[id])) !== hash) {
+      problems.push(`未审阅的分片/汇总 job 变更：${id}`);
+      return false;
+    }
   }
   return true;
 }
@@ -508,7 +530,7 @@ function checkWorkflowFileSet(listed: readonly string[], workflowDir: string): C
   const missing = [...allowed].filter((name) => !listed.includes(name));
   const problems: string[] = [];
   if (listed.includes(matrix) && sha256Hex(readFileSync(join(workflowDir, matrix), 'utf8')) !==
-    'a06c7c967ecb81c2a7ffa44df355e5a672244dc059e1e38875f746edd394e69a') {
+    'c66e65e633abcedeee0e9b4b94d399093257b5b6f4875f2c090058638608eb81') {
     problems.push('Node compatibility workflow differs from reviewed configuration');
   }
   if (listed.length === 0) problems.push(`${WORKFLOW_DIRECTORY} 下没有任何工作流文件，最小发布 CI 未登记`);
@@ -644,6 +666,9 @@ function checkStepOrder(context: WorkflowContext): CiConfigCheck {
     if (step.record['if'] !== undefined) {
       problems.push(`步骤不允许 if 条件跳过（保持静态可审）：${stepLabel(step)}`);
     }
+    if (step.run === 'node scripts/run-tests.ts --stage standard' && step.record['env'] === undefined) {
+      problems.push('standard 必须声明已审测试预算');
+    }
   }
   const runCommands = context.steps.map((step) => step.run).filter((run): run is string => run !== null);
   const expected = [...REQUIRED_RUN_SEQUENCE];
@@ -708,12 +733,26 @@ function checkNoPublishSideEffects(context: WorkflowContext): CiConfigCheck {
   for (const token of FORBIDDEN_TEXT_TOKENS) {
     if (lower.includes(token)) problems.push(`工作流包含禁止的发布/远端副作用标记：${JSON.stringify(token.trim())}`);
   }
-  if (context.codeText.includes('${{')) {
-    problems.push('工作流不允许 ${{ }} 动态表达式（保持静态可审；表达式可访问 secrets 上下文）');
+  if (context.codeText.replace('CI_JOB_RESULTS: ${{ toJSON(needs) }}', '').includes('${{')) {
+    problems.push('工作流仅允许汇总 job 的固定 needs 结果表达式');
   }
   const keys = new Set<string>();
   collectKeys(context.parsed, keys);
-  if (keys.has('env')) problems.push('工作流不允许 env 注入块（检查环境不携带额外变量）');
+  const expectedVerifyEnv = {
+    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '1200000',
+  };
+  if (context.parsed['env'] !== undefined || context.job?.['env'] !== undefined) {
+    problems.push('工作流与 job 不允许 env 注入块');
+  }
+  for (const step of context.steps) {
+    if (step.record['env'] === undefined) continue;
+    const env = asRecord(step.record['env']);
+    if (step.run !== 'node scripts/run-tests.ts --stage standard' || !env
+      || Object.keys(env).length !== Object.keys(expectedVerifyEnv).length
+      || Object.entries(expectedVerifyEnv).some(([key, value]) => env[key] !== value)) {
+      problems.push('只有 standard 步骤允许固定的测试超时变量，禁止其他 env 注入');
+    }
+  }
   for (const step of context.steps) {
     if (step.uses !== null) {
       const action = step.uses.split('@')[0] ?? '';
@@ -772,6 +811,7 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
         problems.push(`工作流要求 npm 脚本 ${JSON.stringify(name)}，但 package.json 未声明`);
         continue;
       }
+      if (name === 'typecheck' && value === 'tsc -p tsconfig.json') continue;
       const nodeFile = /^node (\S+)/.exec(value);
       if (!nodeFile) {
         problems.push(`npm 脚本 ${JSON.stringify(name)} 必须由本地 node 脚本执行；实际：${JSON.stringify(value)}`);
@@ -779,9 +819,13 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
       }
       problems.push(...assertScriptFile(context, nodeFile[1] as string, `npm 脚本 ${JSON.stringify(name)}`));
     } else {
-      const direct = /^node (\S+)$/.exec(command);
+      const direct = /^node (\S+)(?: .*)?$/.exec(command);
       if (direct) problems.push(...assertScriptFile(context, direct[1] as string, 'run 步骤'));
     }
+  }
+
+  for (const file of ['scripts/ci-shard-gate.ts', 'scripts/test-stages.ts', 'test/ci-timings.json']) {
+    problems.push(...assertScriptFile(context, file, '分片汇总'));
   }
 
   const usesActions = (action: string): WorkflowStep[] =>
@@ -790,6 +834,9 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
   const setupNode = usesActions('actions/setup-node');
   const upload = usesActions('actions/upload-artifact');
   if (checkout.length !== 1) problems.push(`必须恰好一个 actions/checkout 步骤；实际 ${checkout.length} 个`);
+  else if (asRecord(checkout[0]?.record['with'])?.['fetch-depth'] !== 0) {
+    problems.push('checkout 必须 fetch-depth: 0，以核验发布清单历史提交');
+  }
   if (setupNode.length !== 1) problems.push(`必须恰好一个 actions/setup-node 步骤；实际 ${setupNode.length} 个`);
   if (upload.length !== 1) {
     problems.push(`必须恰好一个 actions/upload-artifact 步骤保存脱敏报告；实际 ${upload.length} 个`);
@@ -804,8 +851,9 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
       if (!path) {
         problems.push('upload-artifact 缺少 path');
       } else {
+        const uploadsArtifactRoot = path.trim() === 'artifacts/' || path.trim() === 'artifacts';
         for (const required of REQUIRED_UPLOAD_PATHS) {
-          if (!path.includes(required)) {
+          if (!uploadsArtifactRoot && !path.includes(required)) {
             problems.push(`upload-artifact path 必须包含脱敏报告 ${required}`);
           }
         }

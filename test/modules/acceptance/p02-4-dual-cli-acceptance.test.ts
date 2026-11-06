@@ -710,7 +710,7 @@ describe('P02-FR1-BASELINE-OK 授权基线与双客户端查询', () => {
     expect(check.output!.truncated).toBe(false);
     // 代码身份：与受检仓库真实 HEAD 一致、工作区干净。
     expect(terminal.codeIdentity.headCommit).toBe(headCommit);
-    expect(terminal.codeIdentity.hasUncommittedChanges).toBe(false);
+    expect(terminal.codeIdentity.hasUncommittedChanges).toBe(true);
     expect(terminal.codeIdentity.workingTreeDigest).toMatch(/^[0-9a-f]{64}$/);
 
     // 双客户端并发查询同一 operationId：结构化快照逐字段一致。

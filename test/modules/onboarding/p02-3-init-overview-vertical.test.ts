@@ -1031,7 +1031,7 @@ describe('F-006 project init/overview CLI 纵向（真实 Host 子进程 + SQLit
   it('恶意仓库：预览与确认注册都不执行脚本（哨兵不存在、源文件摘要不变）', async () => {
     const repos = fixture!.repos;
     const root = useRoot('malicious');
-    const before = digestWorkingTree(repos.malicious);
+    const before = digestWorkingTree(repos.malicious, { excludeDirs: ['.git', '.agents', '.claude'] });
     const preview = await runApp(['project', 'init', repos.malicious, '--data-root', root, '--json']);
     expect(preview.result.exitCode, preview.stderr).toBe(0);
     const confirmed = await runApp([
@@ -1048,7 +1048,9 @@ describe('F-006 project init/overview CLI 纵向（真实 Host 子进程 + SQLit
     const confirmedResult = successResult(confirmed, 'project.init');
     expect((confirmedResult.registration as { status: string }).status).toBe('registered');
     expect(existsSync(repos.maliciousSentinelPath)).toBe(false);
-    expect(digestWorkingTree(repos.malicious)).toEqual(before);
+    expect(digestWorkingTree(repos.malicious, { excludeDirs: ['.git', '.agents', '.claude'] })).toEqual(before);
+    expect(existsSync(join(repos.malicious, '.agents', 'skills', 'shiploop', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(repos.malicious, '.claude', 'skills', 'shiploop', 'SKILL.md'))).toBe(true);
     expect(repos.headOf('malicious')).not.toBeNull();
   });
 

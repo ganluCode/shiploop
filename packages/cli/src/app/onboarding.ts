@@ -139,6 +139,7 @@ export function formatInitPreview(
     `  既有项目：${existing}`,
     `  注册确认内容：${describeRequestLine(request)}`,
     '  注册动作：未带 --confirm 时不会注册（静态预览，退出码 0）。',
+    '  Skill 同步：--confirm 成功后覆盖 .agents/skills/shiploop 和 .claude/skills/shiploop；其他文件保留。',
     '',
   ].join('\n');
 }
@@ -204,7 +205,8 @@ export function buildInitConfirmationNotice(): string {
   return [
     '注册确认（与运行基线确认分开）：',
     '  --confirm 是显式非交互授权，只覆盖上面展示的这一次注册请求（project.register）。',
-    '  确认注册也只提交注册命令：不执行仓库脚本、不安装依赖、不运行基线；基线需要 baseline run 的独立确认。',
+    '  确认注册后同步官方操作 Skill，仅覆盖 .agents/skills/shiploop 和 .claude/skills/shiploop。',
+    '  不执行仓库脚本、不安装依赖、不运行基线；基线需要 baseline run 的独立确认。',
     '  无输入或非交互模式不默认同意：未显式 --confirm 不会注册；取消确认得到 not_run（未注册，绝不伪装成功）。',
     '',
   ].join('\n');

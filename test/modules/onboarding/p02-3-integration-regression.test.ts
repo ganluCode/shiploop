@@ -726,7 +726,8 @@ describe('F-018 FR-1：静态接入注册（真实仓库变体 + 只读 SQLite �
   it('注册矩阵：有 HEAD/无 HEAD/脏/双 clone/别名/恶意仓库 → 项目/绑定行、HEAD、文件字节与哨兵', async () => {
     const repos = fixture.repos;
     const root = dataRootOf('fr1-matrix');
-    const dirtyStatusBefore = gitOf(repos.dirty, ['status', '--porcelain']);
+    const sourceStatusArgs = ['status', '--porcelain', '--', '.', ':(exclude).agents/skills/shiploop', ':(exclude).claude/skills/shiploop'];
+    const dirtyStatusBefore = gitOf(repos.dirty, sourceStatusArgs);
     const dirtyTrackedBefore = readFileSync(repos.dirtyTrackedFile);
     const dirtyUntrackedBefore = readFileSync(repos.dirtyUntrackedFile);
     const withHeadTreeBefore = readdirSync(join(repos.withHead, 'src'), { recursive: true }).sort();
@@ -820,8 +821,17 @@ describe('F-018 FR-1：静态接入注册（真实仓库变体 + 只读 SQLite �
       client.close();
     }
 
-    // 脏工作区：tracked/untracked 文件字节不变、git 状态原样（不 stash/reset/commit）。
-    expect(gitOf(repos.dirty, ['status', '--porcelain'])).toBe(dirtyStatusBefore);
+    // 只允许官方 Skill 新增；原有 tracked/untracked 文件与其余 Git 状态不变。
+    expect(gitOf(repos.dirty, sourceStatusArgs)).toBe(dirtyStatusBefore);
+    for (const harness of ['.agents', '.claude']) {
+      const officialRoot = join(repoRoot, 'packages/cli/skills/shiploop');
+      const installedRoot = join(repos.dirty, harness, 'skills/shiploop');
+      const files = readdirSync(officialRoot, { recursive: true, encoding: 'utf8' }).sort();
+      expect(readdirSync(installedRoot, { recursive: true, encoding: 'utf8' }).sort()).toEqual(files);
+      for (const relative of files.filter((file) => file.endsWith('.md'))) {
+        expect(readFileSync(join(installedRoot, relative))).toEqual(readFileSync(join(officialRoot, relative)));
+      }
+    }
     expect(readFileSync(repos.dirtyTrackedFile)).toEqual(dirtyTrackedBefore);
     expect(readFileSync(repos.dirtyUntrackedFile)).toEqual(dirtyUntrackedBefore);
     expect(gitOf(repos.dirty, ['stash', 'list'])).toBe('');

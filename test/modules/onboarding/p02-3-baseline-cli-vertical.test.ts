@@ -263,7 +263,7 @@ describe('F-016 基线 CLI 纵向（实际 dist CLI + 临时仓库/数据根 + H
     expect(preview.previewDigest).toMatch(/^[0-9a-f]{64}$/);
     expect(preview.policyRevision).toMatch(/^[0-9a-f]{64}$/);
     expect((preview.codeIdentity as { headCommit: string }).headCommit).toBe(repos.headOf('withHead'));
-    expect((preview.codeIdentity as { hasUncommittedChanges: boolean }).hasUncommittedChanges).toBe(false);
+    expect((preview.codeIdentity as { hasUncommittedChanges: boolean }).hasUncommittedChanges).toBe(true);
     expect((preview.checks as { argv: string[] }[])[0]?.argv).toEqual([
       process.execPath,
       '-e',

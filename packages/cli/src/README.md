@@ -13,6 +13,11 @@ CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host �
 
 当前状态：
 
+- `shiploop-skills.ts` 是 `app-execute.ts` 专用的执行模块，不经公共 barrel 导出。
+  project init 确认注册后，将包内官方 Skill 同步到项目的
+  `.agents/skills/shiploop` 与 `.claude/skills/shiploop`；仅这两个专用目录允许覆盖。
+  它允许本地文件系统操作，不读取业务数据库、不启动 Host 或模型；只读预览不调用同步。
+
 - F-011 纯面层（经 `index.ts` 公共出口）：`host/args.ts`（`host start/status/stop`
   纯解析）、`host/help.ts`（帮助）、`host/output.ts`（§13.3 JSON 信封与四档退出码）；
   加载无副作用，解析失败不发生任何 I/O。

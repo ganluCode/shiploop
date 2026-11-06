@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { expectOfficialSkills, SOURCE_STATUS_ARGS } from '../../helpers/shiploop-skills.ts';
 import { runAppCli, type AppCliIo, type AppCliRunResult } from '../../../packages/cli/src/app-execute.ts';
 import { startHost, connectToHost, type HostClient, type RunningHost } from '../../../packages/host/src/index.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
@@ -83,6 +84,7 @@ describe('P06-7 F-003 brownfield onboarding and baseline vertical flow', () => {
     try {
       await start();
       const before = fixture.dirtyBaseline();
+      const sourceStatus = execFileSync('git', SOURCE_STATUS_ARGS, { cwd: fixture.todoRepositoryPath, encoding: 'utf8', env: fixture.childEnv() });
       const inspection = await client!.inspectRepository(fixture.todoRepositoryPath);
       expect(inspection).toMatchObject({
         schemaVersion: 3,
@@ -220,7 +222,10 @@ describe('P06-7 F-003 brownfield onboarding and baseline vertical flow', () => {
       expect((await client!.getProjectSettings(projectId)).revision).toBe(1);
       expect((await client!.listBaselines(projectId, { limit: 10 })).records).toHaveLength(3);
       expect((await client!.getProjectOverview(projectId)).registration).toEqual({ status: 'registered' });
-      expect(fixture.compareDirtyBaseline(before)).toEqual({ matches: true, differences: [] });
+      expectOfficialSkills(fixture.todoRepositoryPath);
+      expect(execFileSync('git', SOURCE_STATUS_ARGS, { cwd: fixture.todoRepositoryPath, encoding: 'utf8', env: fixture.childEnv() })).toBe(sourceStatus);
+      const currentStatus = execFileSync('git', ['status', '--porcelain=v1'], { cwd: fixture.todoRepositoryPath, encoding: 'utf8', env: fixture.childEnv() });
+      expect(fixture.compareDirtyBaseline({ ...before, statusPorcelain: currentStatus })).toEqual({ matches: true, differences: [] });
       expect(readFileSync(join(fixture.todoRepositoryPath, 'docs', 'getting-started.md'), 'utf8')).toContain('ShipLoop P06 存量接入验收使用的 Todo 应用');
       expect(existsSync(fixture.maliciousSentinelPath)).toBe(false);
       expect(existsSync(join(fixture.todoRepositoryPath, 'node_modules'))).toBe(false);

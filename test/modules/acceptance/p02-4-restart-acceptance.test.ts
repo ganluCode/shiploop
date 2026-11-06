@@ -425,7 +425,7 @@ describe('P02-FR2-CLIENT-EXIT 客户端退出/观察中断闭环', () => {
     const artifactId = check.output!.artifactId;
     expect(artifactId).toMatch(UUID_V4_PATTERN);
     expect(terminal.codeIdentity.headCommit).toBe(headCommit);
-    expect(terminal.codeIdentity.hasUncommittedChanges).toBe(false);
+    expect(terminal.codeIdentity.hasUncommittedChanges).toBe(true);
     expect(terminal.codeIdentity.workingTreeDigest).toMatch(/^[0-9a-f]{64}$/);
 
     // 输出制品正文可校验（新进程/新连接查询）。
@@ -892,7 +892,7 @@ describe('P02-FR1-RESTART-QUERY Host 安全停止/重启与持久身份查询', 
     expect(statusDView).toMatchObject({
       status: 'completed',
       state: 'passed',
-      codeIdentity: { headCommit, hasUncommittedChanges: false },
+      codeIdentity: { headCommit, hasUncommittedChanges: true },
     });
     expect(statusDView.checks[0]).toMatchObject({
       checkKey: 'p02-4-restart-baseline',

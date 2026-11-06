@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
+import { createCommandProcessAdapter, readCommandPipeChunk } from '../../../packages/core/src/adapters/process/command-process.ts';
 import type { CommandProcessHandle, CommandProcessRequest, CommandProcessIdentity } from '../../../packages/core/src/ports/command-process.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
@@ -45,6 +46,26 @@ function barrier<T>() {
 }
 
 describe('macOS supervised command port', () => {
+  it('consumes EOF after the pipe data was drained before the final readable event', async () => {
+    const stream = new Readable({ read() {} });
+    resources.push(() => { stream.destroy(); });
+    const received: Buffer[] = [];
+    let ended = false;
+    stream.on('end', () => { ended = true; });
+    stream.on('readable', () => {
+      let chunk: Buffer | null;
+      while ((chunk = readCommandPipeChunk(stream, 65_536)) !== null) received.push(chunk);
+    });
+    stream.push(Buffer.from('complete'));
+    await nextTurn();
+    expect(Buffer.concat(received).toString()).toBe('complete');
+    expect(ended).toBe(false);
+    stream.push(null);
+    await nextTurn();
+    expect(ended).toBe(true);
+    expect(stream.readableEnded).toBe(true);
+  });
+
   it('commits the Core execution identity before releasing any script', async () => {
     const root = sandbox();
     const sentinel = join(root, 'released');
@@ -204,6 +225,24 @@ describe('macOS supervised command port', () => {
       env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', APPROVED: 'yes' }, input: 'hello' });
     expect((await handle.result).exitCode).toBe(0);
     expect(existsSync(join(root, 'forbidden'))).toBe(false);
+  });
+
+  it('backpressures both output pipes without dropping an in-budget burst for a delayed consumer', async () => {
+    const root = sandbox();
+    const handle = await start(request(root,
+      "process.stdout.write('x'.repeat(300000));process.stderr.write('y'.repeat(90000))",
+      { maxOutputBytes: 400_000 }));
+    await expect.poll(() => handle.query().bufferedOutputBytes).toBeGreaterThan(0);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const sizes = { stdout: 0, stderr: 0 };
+    for await (const chunk of handle.output) {
+      sizes[chunk.stream] += chunk.bytes.length;
+      expect(handle.query().bufferedOutputBytes).toBeLessThanOrEqual(65_536);
+      await nextTurn();
+    }
+    expect(sizes).toEqual({ stdout: 300_000, stderr: 90_000 });
+    expect(await handle.result).toMatchObject({ exitCode: 0, reason: null, droppedOutputBytes: 0,
+      outputBytes: 390_000, stop: { confirmed: true } });
   });
 
   it('bounds output and buffering for a slow consumer without accumulating the full stream', async () => {

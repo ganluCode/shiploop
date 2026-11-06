@@ -126,6 +126,17 @@ if (reportIndex !== -1) {
   passthroughArgs.splice(reportIndex, 2);
 }
 const grouped = stageIndex !== -1 || list || passthroughArgs.length === 0;
+let shard: { index: number; total: number } | undefined;
+const shardIndex = passthroughArgs.indexOf('--shard');
+if (shardIndex !== -1) {
+  const match = /^(\d+)\/(\d+)$/.exec(passthroughArgs[shardIndex + 1] ?? '');
+  if (!match || stage !== 'heavy' || !grouped || !reportPath || passthroughArgs.lastIndexOf('--shard') !== shardIndex) {
+    fail('--shard requires --stage heavy --stage-report and an index/total');
+  }
+  shard = { index: Number(match[1]), total: Number(match[2]) };
+  if (shard.index < 1 || shard.index > shard.total || shard.total > 16) fail('invalid shard index/total');
+  passthroughArgs.splice(shardIndex, 2);
+}
 const timeoutMs = resolveRunTimeoutMs();
 if (!grouped) {
   if (reportPath) fail('--stage-report requires --stage for a filtered invocation');
@@ -140,22 +151,27 @@ if (!grouped) {
   process.exit(result.status ?? 1);
 } else {
   // Dynamic import preserves the missing-tool diagnostic in standalone launcher fixtures.
-  const { loadTestStages, executeTestStages } = await import('./test-stages.ts');
+  const { loadTestStages, loadHeavyShards, executeTestStages } = await import('./test-stages.ts');
   try {
     if (passthroughArgs.length) fail('--stage cannot be combined with Vitest filters/options; use a focused invocation instead');
     const plans = loadTestStages(repoRoot);
-    const selected = plans.filter(plan => stage === 'all' || plan.stage === stage);
+    const selected = plans.filter(plan => stage === 'all' || plan.stage === stage)
+      .map(plan => shard ? { ...plan, files: loadHeavyShards(repoRoot, shard.total)[shard.index - 1]! } : plan);
+    if (shard && reportPath) mkdirSync(dirname(reportPath), { recursive: true });
     if (list) {
       process.stdout.write(`${JSON.stringify({ scope: stage, plans: selected }, null, 2)}\n`);
       process.exit(0);
     }
     if (!selected.some(plan => plan.files.length)) fail('selected stage contains no tests');
     const outcomes = executeTestStages(selected, timeoutMs, (plan, remainingMs) => {
-      process.stdout.write(`run-tests: RUN ${plan.stage} (${plan.files.length} files, maxWorkers=4, remaining=${remainingMs}ms)\n`);
+      const maxWorkers = plan.stage === 'heavy' ? 1 : 4;
+      process.stdout.write(`run-tests: RUN ${plan.stage} (${plan.files.length} files, maxWorkers=${maxWorkers}, remaining=${remainingMs}ms)\n`);
       // Exclude the complement as well: Vitest positional filters are substring matches.
-      const excluded = plans.flatMap(other => other.stage === plan.stage ? [] : other.files)
+      const selectedFiles = new Set(plan.files);
+      const excluded = plans.flatMap(other => other.files.filter(file => !selectedFiles.has(file)))
         .flatMap(file => ['--exclude', file]);
-      const result = spawnSync(process.execPath, [binaryPath, 'run', ...plan.files, ...excluded], {
+      const shardArgs = shard ? ['--bail', '1', '--reporter=default', '--reporter=json', `--outputFile=${reportPath}.vitest.json`] : [];
+      const result = spawnSync(process.execPath, [binaryPath, 'run', ...plan.files, ...excluded, ...shardArgs, '--maxWorkers', String(maxWorkers)], {
         cwd: repoRoot, stdio: 'inherit', timeout: remainingMs,
         env: { ...process.env, SHIPLOOP_TEST_EXPLICIT_FILTERS: '[]' },
       });
@@ -165,7 +181,10 @@ if (!grouped) {
     if (reportPath) {
       mkdirSync(dirname(reportPath), { recursive: true });
       const temp = `${reportPath}.${process.pid}.tmp`;
+      const commit = shard ? spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: repoRoot, encoding: 'utf8', timeout: 10_000 }) : undefined;
+      if (shard && (commit?.status !== 0 || !/^[a-f0-9]{40}$/.test(commit.stdout.trim()))) fail('cannot identify shard commit');
       writeFileSync(temp, JSON.stringify({ schemaVersion: 1, scope: stage, fullSuiteRequested: stage === 'all',
+        ...(shard ? { shard, commit: commit!.stdout.trim() } : {}),
         passed: outcomes.every(row => row.status === 'pass'), outcomes }, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
       // Publish without replacing another run's report, even if it appeared while tests ran.
       try { linkSync(temp, reportPath); }

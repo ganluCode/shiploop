@@ -83,6 +83,10 @@ for (const scenario of ['normal', 'required-gap', 'best-effort-gap', 'disk'] as 
         expect(text).toContain('stop_observed_confirmed');
         for (const secret of ['/private', f.box.dataRoot, 'credential', 'SQL secret', 'locator']) expect(text).not.toContain(secret);
 
+        // Background notification scans legitimately update their cursor. Drain
+        // them before comparing the entire database for query side effects.
+        host.core.notificationRuntime.enterQuiesce();
+        expect(await host.core.notificationRuntime.awaitQuiesce(10_000)).toMatchObject({ confirmed: true, pending: [] });
         const snapshot = () => (f.session.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[])
           .map(({ name }) => [name, f.session.database.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}" ORDER BY rowid`).all()]);
         const before = snapshot();

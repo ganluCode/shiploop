@@ -1,5 +1,5 @@
 # P08-1 F-004 最小发布 CI：仅确定性检查。
-# 固定顺序：npm ci -> verify:ci-config -> verify -> pack:local -> verify:artifacts -> 摘要与报告上传。
+# 预检查/打包通过后，四台独立 runner 单 worker 分片；最终汇总核对无遗漏、无重复。
 # 本工作流不执行 npm publish、git push、自动合并、PR 创建、真实模型调用或跨仓操作；
 # 公开发布需要负责人独立批准与身份确认。
 # 配置策略由 scripts/verify-ci-config.ts 与
@@ -18,12 +18,14 @@ permissions:
 
 jobs:
   checks:
-    name: deterministic-checks
-    runs-on: macos-14
-    timeout-minutes: 90
+    name: preflight-and-package
+    runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - name: checkout
         uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
       - name: setup-node
         uses: actions/setup-node@v4.4.0
         with:
@@ -32,8 +34,16 @@ jobs:
         run: npm ci
       - name: verify-ci-config
         run: npm run verify:ci-config
-      - name: verify
-        run: npm run verify
+      - name: typecheck
+        run: npm run typecheck
+      - name: light-tests
+        run: node scripts/run-tests.ts --stage light
+      - name: standard-tests
+        run: node scripts/run-tests.ts --stage standard
+        env:
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '1200000'
+      - name: build
+        run: npm run build
       - name: pack-local
         run: npm run pack:local -- --output artifacts/local-pack
       - name: verify-artifacts
@@ -44,5 +54,126 @@ jobs:
         uses: actions/upload-artifact@v4.6.2
         with:
           name: ci-reports
-          path: artifacts/local-pack/artifact-verification.json, artifacts/local-pack/distribution-manifest.json, artifacts/ci-config/ci-config-verification.json
+          path: artifacts/
           if-no-files-found: error
+
+  heavy-1:
+    name: heavy-tests-1
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - run: npm ci
+      - run: node scripts/build-host-lock.ts
+      - run: node scripts/run-tests.ts --stage heavy --shard 1/4 --stage-report artifacts/ci-tests/heavy-1.json
+        env:
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: ci-heavy-1
+          path: artifacts/ci-tests/
+          if-no-files-found: error
+
+  heavy-2:
+    name: heavy-tests-2
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - run: npm ci
+      - run: node scripts/build-host-lock.ts
+      - run: node scripts/run-tests.ts --stage heavy --shard 2/4 --stage-report artifacts/ci-tests/heavy-2.json
+        env:
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: ci-heavy-2
+          path: artifacts/ci-tests/
+          if-no-files-found: error
+
+  heavy-3:
+    name: heavy-tests-3
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - run: npm ci
+      - run: node scripts/build-host-lock.ts
+      - run: node scripts/run-tests.ts --stage heavy --shard 3/4 --stage-report artifacts/ci-tests/heavy-3.json
+        env:
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: ci-heavy-3
+          path: artifacts/ci-tests/
+          if-no-files-found: error
+
+  heavy-4:
+    name: heavy-tests-4
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - run: npm ci
+      - run: node scripts/build-host-lock.ts
+      - run: node scripts/run-tests.ts --stage heavy --shard 4/4 --stage-report artifacts/ci-tests/heavy-4.json
+        env:
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: '6600000'
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: ci-heavy-4
+          path: artifacts/ci-tests/
+          if-no-files-found: error
+
+  release-gate:
+    name: deterministic-checks
+    if: always()
+    needs:
+      - checks
+      - heavy-1
+      - heavy-2
+      - heavy-3
+      - heavy-4
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          pattern: ci-heavy-*
+          path: artifacts/ci-tests/
+          merge-multiple: true
+      - run: node scripts/ci-shard-gate.ts
+        env:
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
