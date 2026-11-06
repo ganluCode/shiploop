@@ -16,8 +16,8 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { startFakeHost } from '../../../packages/host/src/testing.ts';
@@ -164,6 +164,16 @@ async function openSeededCase(): Promise<SeededApprovalWaitingState> {
     .toEqual([]);
   const closed = await host.core.workExecution.close();
   expect(closed.closed).toBe(true);
+  // A real commit slower than the default 10s HTTP timeout must not trigger
+  // overlapping continuation requests against the same pending Git intent.
+  const workspace = fixture.session.database.prepare('SELECT canonical_path FROM managed_workspaces').get() as { canonical_path: string };
+  writeFileSync(join(workspace.canonical_path, 'approval-result.txt'), 'verified change\n');
+  const hooks = join(fixture.box.root, 'slow-commit-hooks');
+  mkdirSync(hooks);
+  const hook = join(hooks, 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nprintf "commit\\n" >> "$0.calls"\n/bin/sleep 12\n');
+  chmodSync(hook, 0o755);
+  execFileSync('git', ['config', 'core.hooksPath', hooks], { cwd: workspace.canonical_path });
   return seedApprovalWaitingVerification({
     fixture,
     completion: host.core.taskVerificationCompletion,
@@ -227,6 +237,9 @@ describe('F-014 正式构建入口：回执重放/过期摘要/越权主体/重�
     expect(continued.display).toBe('completed');
     expect(continued.evidenceReused).toBe(true);
     expect(continued.execution).toMatchObject({ runtimeCalled: false, started: false });
+    const hookCalls = join(fixture!.box.root, 'slow-commit-hooks/pre-commit.calls');
+    expect(readFileSync(hookCalls, 'utf8')).toBe('commit\n');
+    expect(db.prepare("SELECT status FROM git_operations WHERE operation_type = 'task_commit'").all()).toEqual([{ status: 'succeeded' }]);
 
     /* 显式继续复用有效证据时零新增编码调用：代码额度与 Runtime 启动计数不变。 */
     const codeAfter = (
@@ -243,6 +256,7 @@ describe('F-014 正式构建入口：回执重放/过期摘要/越权主体/重�
       replayed: boolean;
     };
     expect(continueReplay.replayed).toBe(true);
+    expect(readFileSync(hookCalls, 'utf8')).toBe('commit\n');
     const duplicate = await runBuiltCli([
       'task', 'continue', 't-1', '--project', fixture!.projectId,
       '--attempt', seeded.attemptId, '--batch', seeded.batchId,

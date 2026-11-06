@@ -4658,9 +4658,10 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
 
   // P03-5 / F-012：workspace.discard 确认在服务端包含 Git 删除与整组停止证明
   //（固有有界等待，实测约 13s），默认 10s 单请求预算会无谓落入响应丢失路径；
-  // 本命令使用受界放大预算（仍有限：60s 单请求 / 120s 总预算），显式注入逐字段优先。
+  // task.continue 同样同步核对现场并受控提交（含项目 Git hooks）；10s 超时后
+  // 重发可能撞上尚未结算的 pending 提交。两类长操作均使用有限预算，注入逐字段优先。
   const commandTimeouts: HostClientTimeouts | undefined =
-    command.commandId === 'workspace.discard'
+    command.commandId === 'workspace.discard' || command.commandId === 'task.continue'
       ? { appRequestMs: 60_000, submitBudgetMs: 120_000, ...(options.timeouts ?? {}) }
       : options.timeouts;
 
