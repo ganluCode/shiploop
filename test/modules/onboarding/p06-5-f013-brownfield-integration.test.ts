@@ -10,6 +10,7 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { expectOfficialSkills, SOURCE_STATUS_ARGS } from '../../helpers/shiploop-skills.ts';
 import { openCoreApplication } from '../../../packages/core/src/adapters/composition.ts';
 import {
   createLocalOwnerPrincipal,
@@ -220,7 +221,8 @@ describe('P06-5 F-013 brownfield integration by responsibility', () => {
     expect(readFileSync(join(nezhaDir, 'legacy.json'), 'utf8')).toBe(beforeNezha);
     expect(readFileSync(join(repo, 'README.md'), 'utf8')).toBe(beforeReadme);
     expect(readFileSync(todoPath, 'utf8')).toContain('resolved item');
-    expect(gitStatus(repo)).toBe(' M README.md\nAM TODO.md\n?? .nezha/\n');
+    expectOfficialSkills(repo);
+    expect(git(SOURCE_STATUS_ARGS, repo)).toBe(' M README.md\nAM TODO.md\n?? .nezha/\n');
     expect(existsSync(join(repo, 'node_modules'))).toBe(false);
   }, 90_000);
 

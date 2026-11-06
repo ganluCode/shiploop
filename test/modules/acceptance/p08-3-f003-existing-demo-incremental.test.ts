@@ -20,6 +20,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { expectOfficialSkills } from '../../helpers/shiploop-skills.ts';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -207,7 +208,7 @@ describe('P08-3 F-003 存量仓库真实跨层增量变更', () => {
 
     // --- 初始化前事实 ---
     const beforeSnapshot = legacy.snapshot();
-    const beforePorcelain = porcelainLines(repositoryPath);
+    let beforePorcelain = porcelainLines(repositoryPath);
     const beforeUnrelatedDigest = fileDigest(legacy.unrelatedStatePath);
     expect(beforeSnapshot.headCommit).toMatch(/^[a-f0-9]{40}$/);
 
@@ -222,12 +223,18 @@ describe('P08-3 F-003 存量仓库真实跨层增量变更', () => {
     expect(projectId).toMatch(/^[0-9a-f-]{36}$/);
     expect(initializedEnvelope.health).toMatchObject({ status: 'not_run', reasonCode: 'no_baseline' });
 
-    // 初始化后原仓库字节一致：文件摘要、脏文件、HEAD、porcelain、无关旧状态全部不变。
+    // 原文件、HEAD、暂存状态和旧数据不变；仅新增逐字节匹配包内资源的官方 Skills。
     const afterInitSnapshot = legacy.snapshot();
     expect(afterInitSnapshot.headCommit).toBe(beforeSnapshot.headCommit);
-    expect(afterInitSnapshot.files).toEqual(beforeSnapshot.files);
-    expect(afterInitSnapshot.workingTree.dirtyFiles).toEqual(beforeSnapshot.workingTree.dirtyFiles);
-    expect(porcelainLines(repositoryPath)).toEqual(beforePorcelain);
+    const added = expectOfficialSkills(repositoryPath);
+    const sortPaths = <T extends { readonly path: string }>(entries: readonly T[]) =>
+      [...entries].sort((a, b) => a.path.localeCompare(b.path));
+    expect(afterInitSnapshot.files).toEqual(sortPaths([...beforeSnapshot.files,
+      ...added.map(entry => ({ path: entry.relativePath, digest: entry.digest }))]));
+    expect(afterInitSnapshot.workingTree.dirtyFiles).toEqual(sortPaths([...beforeSnapshot.workingTree.dirtyFiles,
+      ...added.map(entry => ({ path: entry.relativePath, digest: entry.digest, state: 'untracked' as const }))]));
+    expect(porcelainLines(repositoryPath)).toEqual([...beforePorcelain, ...added.map(entry => `?? ${entry.relativePath}`)].sort());
+    beforePorcelain = porcelainLines(repositoryPath);
     expect(fileDigest(legacy.unrelatedStatePath)).toBe(beforeUnrelatedDigest);
     expect(legacy.stateIsolation()).toMatchObject({ status: 'isolated' });
 
@@ -308,7 +315,7 @@ describe('P08-3 F-003 存量仓库真实跨层增量变更', () => {
     // 预存脏文件与原文件保持字节一致；porcelain 只新增演示需求文件一项。
     const afterChangeSnapshot = legacy.snapshot();
     expect(afterChangeSnapshot.headCommit).toBe(beforeSnapshot.headCommit);
-    const beforeFileMap = new Map(beforeSnapshot.files.map(file => [file.path, file.digest]));
+    const beforeFileMap = new Map(afterInitSnapshot.files.map(file => [file.path, file.digest]));
     for (const file of afterChangeSnapshot.files) {
       if (file.path === 'src/archive.mjs') continue;
       expect(beforeFileMap.get(file.path), `pre-existing file changed: ${file.path}`).toBe(file.digest);

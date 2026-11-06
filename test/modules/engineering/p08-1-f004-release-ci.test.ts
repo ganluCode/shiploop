@@ -2,7 +2,7 @@
  * P08-1 / F-004 最小发布 CI 配置验收（真实仓库配置 + 临时夹具变异，非 mock 断言）。
  *
  * 覆盖（F-004 验收点）：
- * - 正向：真实仓库工作流通过全部检查；固定顺序 npm ci → verify:ci-config → verify →
+ * - 正向：真实仓库工作流通过全部检查；固定顺序 npm ci → verify:ci-config → typecheck/测试/build →
  *   pack:local → verify:artifacts → 摘要；实际 CI 运行、macOS 原生模块与独立安装保持
  *   Phase 集成 not_run，不折算为通过；
  * - YAML 子集解析：支持本工作流使用的结构，拒绝锚点/别名/流式/多行标量等未审语法；
@@ -70,7 +70,7 @@ function referencedScriptFiles(workflowText: string, pkg: Record<string, unknown
       const nodeFile = typeof value === 'string' ? /^node (\S+)/.exec(value) : null;
       if (nodeFile) files.add(nodeFile[1] as string);
     } else {
-      const direct = /^node (\S+)$/.exec(command);
+      const direct = /^node (\S+)(?: .*)?$/.exec(command);
       if (direct) files.add(direct[1] as string);
     }
   }
@@ -99,6 +99,11 @@ function buildFixture(prefix: string, options: FixtureOptions = {}): string {
     const target = join(root, file);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, '// fixture stub\n', 'utf8');
+  }
+  for (const file of ['scripts/ci-shard-gate.ts', 'scripts/test-stages.ts', 'test/ci-timings.json']) {
+    const target = join(root, file);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, '{}', 'utf8');
   }
   return root;
 }
@@ -196,7 +201,10 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
     // 夹具变异所依赖的缩进契约与真实文件一致。
     for (const [name, run] of [
       ['npm-ci', 'npm ci'],
-      ['verify', 'npm run verify'],
+      ['typecheck', 'npm run typecheck'],
+      ['light-tests', 'node scripts/run-tests.ts --stage light'],
+      ['standard-tests', 'node scripts/run-tests.ts --stage standard'],
+      ['build', 'npm run build'],
       ['pack-local', 'npm run pack:local -- --output artifacts/local-pack'],
       ['verify-artifacts', 'npm run verify:artifacts'],
     ] as const) {
@@ -248,9 +256,9 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
     const on = real['on'] as Record<string, unknown>;
     expect((on['push'] as Record<string, unknown>)['branches']).toEqual(['main']);
     const jobs = real['jobs'] as Record<string, unknown>;
-    expect(Object.keys(jobs)).toEqual(['checks']);
+    expect(Object.keys(jobs)).toEqual(['checks', 'heavy-1', 'heavy-2', 'heavy-3', 'heavy-4', 'release-gate']);
     const steps = (jobs['checks'] as Record<string, unknown>)['steps'] as unknown[];
-    expect(steps.length).toBe(9);
+    expect(steps.length).toBe(12);
 
     expect(() => parseYamlSubset('a: &anchor value\n')).toThrow();
     expect(() => parseYamlSubset('a: *alias\n')).toThrow();
@@ -277,6 +285,23 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
         const report = verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT });
         if (modified) expectFailed(report, 'workflow-file-set');
         else expect(report.passed).toBe(true);
+      });
+    }
+  });
+
+  it('[case:shard-dependencies] rejects missing shards, skipped gates and weakened shard commands', () => {
+    const real = readRealWorkflow();
+    for (const text of [
+      real.replace('  heavy-1:\n', '  unreviewed-job:\n'),
+      real.replace('    needs: checks', '    needs: release-gate'),
+      real.replace('--shard 1/4', '--shard 1/3'),
+      real.replace('    if: always()\n    needs:', '    if: success()\n    needs:'),
+      real.replace('CI_JOB_RESULTS: ${{ toJSON(needs) }}', 'CI_JOB_RESULTS: success'),
+      real.replace('      - heavy-4\n', ''),
+    ]) {
+      expect(text).not.toBe(real);
+      withFixture('ci-shard-drift-', { workflowText: text }, root => {
+        expect(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }).passed).toBe(false);
       });
     }
   });
@@ -363,7 +388,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
 
-    const noTimeout = real.replace('    timeout-minutes: 360\n', '');
+    const noTimeout = real.replace('    timeout-minutes: 30\n', '');
     withFixture('p08f004-notimeout-', { workflowText: noTimeout }, (root) => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
@@ -377,7 +402,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       });
     }
     for (const replacement of ["'0'", "'86400000'"]) {
-      withFixture('ci-budget-', { workflowText: real.replace("'17400000'", replacement) }, root => {
+      withFixture('ci-budget-', { workflowText: real.replace("'1200000'", replacement) }, root => {
         expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'no-publish-side-effects');
       });
     }
@@ -405,16 +430,16 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
   it('[case:continue-on-error] 必需步骤 continue-on-error 或条件跳过失败', () => {
     const real = readRealWorkflow();
     const softened = real.replace(
-      stepBlock('verify', 'npm run verify'),
-      `${stepBlock('verify', 'npm run verify')}        continue-on-error: true\n`,
+      stepBlock('typecheck', 'npm run typecheck'),
+      `${stepBlock('typecheck', 'npm run typecheck')}        continue-on-error: true\n`,
     );
     withFixture('p08f004-coe-', { workflowText: softened }, (root) => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'required-step-order');
     });
 
     const conditional = real.replace(
-      stepBlock('verify', 'npm run verify'),
-      `${stepBlock('verify', 'npm run verify')}        if: always()\n`,
+      stepBlock('typecheck', 'npm run typecheck'),
+      `${stepBlock('typecheck', 'npm run typecheck')}        if: always()\n`,
     );
     withFixture('p08f004-ifalways-', { workflowText: conditional }, (root) => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'required-step-order');
@@ -510,9 +535,9 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       },
     );
 
-    withFixture('p08f004-nofile-', { omitScriptFiles: ['scripts/verify.ts'] }, (root) => {
+    withFixture('p08f004-nofile-', { omitScriptFiles: ['scripts/run-tests.ts'] }, (root) => {
       const problems = expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'script-wiring');
-      expect(problems.join('\n')).toContain('scripts/verify.ts');
+      expect(problems.join('\n')).toContain('scripts/run-tests.ts');
     });
 
     // 缺少制品摘要上传接线（upload 步骤被移除）同样失败。

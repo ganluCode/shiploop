@@ -253,7 +253,7 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   `npm run verify:ci-config`，以及 `scripts/ci-summary.ts` 摘要渲染）。
   覆盖受限 YAML 子集解析（锚点/别名/流式/多行标量拒绝）、触发范围恰为 main 的
   push/pull_request、显式 contents: read 最小权限、macos-15 runner 与 Node 22.19.0
-  工具链绑定、固定顺序必需步骤（npm ci → verify:ci-config → verify → pack:local →
+  工具链绑定、固定顺序必需步骤（npm ci → verify:ci-config → typecheck → light/standard → build → pack:local →
   verify:artifacts → ci-summary）且禁止 continue-on-error/if 跳过、run 命令白名单、
   禁止 npm publish/git push/gh/PR/合并与 ${{ 表达式、secrets/env 凭据注入隔离、
   Action 引用固定 vX.Y[.Z]/SHA 与白名单、npm 脚本/node 脚本文件接线与制品摘要
@@ -261,6 +261,15 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   负例含额外工作流、无法解析 YAML、触发/权限/runner 漂移、乱序、未审命令、第三方
   Action、凭据注入与 CI 退出码/报告落盘语义。实际 GitHub Actions 运行、CI 环境
   原生模块加载与独立安装保持 Phase 集成 not_run；CI 不发布、不推送、不建 PR。
+
+GitHub `release-ci` 在上述主检查通过后，将 heavy 组按 `test/ci-timings.json`
+记录的历史文件耗时均衡分成四片，每片使用独立 macos-15 runner 和一个 Vitest worker。
+新文件默认进入 heavy，并以 30 秒估计纳入分片；历史耗时只影响负载分配，不决定测试是否执行。
+分片首个失败即退出，仍上传阶段报告和真实 Vitest JSON；最终 `deterministic-checks`
+核对五个前置 Job 均成功、四份报告与提交相符、实际测试文件集合完整且无重复。
+失败、取消、跳过或缺证据均不放行。`npm test` / `npm run verify` 的本地全量语义不变。
+排障时可运行：`node scripts/run-tests.ts --stage heavy --shard 1/4 --stage-report /tmp/heavy-1.json`；
+报告路径必须尚不存在，按需要显式配置 `SHIPLOOP_TEST_RUN_TIMEOUT_MS`。
 
 - `index/phases/P08/features/P08-2/tasks/F-001.json`：Todo CLI 演示需求输入与验收契约冻结。
   覆盖 `acceptance/p08.todo-requirements.json` 的九类行为目录（新增/列表/完成/删除/

@@ -54,6 +54,30 @@ export function loadTestStages(root: string): TestStagePlan[] {
   return planTestStages(discoverTestFiles(root), JSON.parse(readFileSync(join(root, 'test/stages.json'), 'utf8')));
 }
 
+/** Longest-first scheduling with deterministic ties; new files get a conservative default. */
+export function planTestShards(files: readonly string[], count: number, durations: Readonly<Record<string, number>>): string[][] {
+  if (!Number.isInteger(count) || count < 1 || count > 16 || files.length < count || new Set(files).size !== files.length) {
+    throw new Error('无效测试分片数量或文件集合');
+  }
+  if (Object.values(durations).some(ms => !Number.isFinite(ms) || ms <= 0)) throw new Error('无效测试耗时');
+  const weight = (file: string) => durations[file] ?? 30_000;
+  const shards = Array.from({ length: count }, () => ({ files: [] as string[], duration: 0 }));
+  for (const file of [...files].sort((a, b) => weight(b) - weight(a) || (a < b ? -1 : a > b ? 1 : 0))) {
+    const target = shards.reduce((best, shard) => shard.duration < best.duration ? shard : best);
+    target.files.push(file);
+    target.duration += weight(file);
+  }
+  return shards.map(shard => shard.files.sort());
+}
+
+export function loadHeavyShards(root: string, count: number): string[][] {
+  const timing = JSON.parse(readFileSync(join(root, 'test/ci-timings.json'), 'utf8')) as { schemaVersion: number; durationsMs: Record<string, number> };
+  if (timing.schemaVersion !== 1 || !timing.durationsMs || Array.isArray(timing.durationsMs) || typeof timing.durationsMs !== 'object') {
+    throw new Error('无效 CI 测试耗时清单');
+  }
+  return planTestShards(loadTestStages(root).find(plan => plan.stage === 'heavy')!.files, count, timing.durationsMs);
+}
+
 export interface StageOutcome {
   stage: TestStage;
   status: 'pass' | 'fail' | 'not_run';

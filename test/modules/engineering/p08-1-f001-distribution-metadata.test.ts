@@ -217,13 +217,13 @@ describe('P08-1 / F-001 分发元数据与兼容声明', () => {
   });
 
   describe('dist 入口与 CLI bin 约定可解析', () => {
-    it('exports/main/types 全部指向 ./dist/ 且映射到真实 src 源文件；files 只含 dist', () => {
+    it('exports/main/types 全部指向 ./dist/；CLI 同时包含官方 skills 资源', () => {
       for (const [packageDir, manifest] of [
         ['packages/core', coreManifest],
         ['packages/host', hostManifest],
         ['packages/cli', cliManifest],
       ] as const) {
-        expect(manifest['files']).toEqual(['dist']);
+        expect(manifest['files']).toEqual(packageDir === 'packages/cli' ? ['dist', 'skills'] : ['dist']);
         const exportsMap = manifest['exports'];
         if (exportsMap && typeof exportsMap === 'object') {
           for (const [subpath, entry] of Object.entries(exportsMap as Record<string, unknown>)) {

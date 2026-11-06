@@ -9,14 +9,14 @@
  * 3. trigger-scope            触发范围只能是 push/pull_request 且 branches 恰为 main；
  *                             schedule、pull_request_target、通配分支等拒绝；
  * 4. permissions-minimal      顶层必须显式 contents: read；任何更大权限拒绝；
- * 5. runner-toolchain         单一 macOS runner（macos-15）、有界 timeout、
+ * 5. runner-toolchain         主检查与四分片固定 macOS runner（macos-15）、有界 timeout、
  *                             setup-node 固定发布基线；engines 可为已审兼容范围；
  * 6. required-step-order      必需步骤按固定顺序执行（npm ci -> verify:ci-config ->
- *                             verify -> pack:local -> verify:artifacts -> ci-summary）；
+ *                             typecheck -> light/standard -> build -> pack:local -> verify:artifacts -> ci-summary）；
  *                             不允许 continue-on-error / if 条件跳过（任一步失败即非零）；
  * 7. command-allowlist        run 命令必须与审阅清单完全一致，不允许未审阅命令；
- * 8. no-publish-side-effects  禁止 npm publish、git push、gh PR/发布动作、${{ 表达式、
- *                             未审 env 注入与未登记的第三方 Action（verify 仅允许固定超时变量）；
+ * 8. no-publish-side-effects  禁止 npm publish、git push、gh PR/发布动作、未登记表达式、
+ *                             未审 env 注入与未登记的第三方 Action（仅允许固定测试预算/结果表达式）；
  * 9. no-credential-injection  禁止 secrets./token/私钥/registry 凭据进入检查环境；
  * 10. action-refs-pinned      Action 引用必须固定为 vX.Y[.Z] 或 40 位 SHA；
  * 11. script-wiring           工作流引用的 npm 脚本与 node 脚本文件必须真实存在，
@@ -42,7 +42,10 @@ const ALLOWED_WORKFLOW_FILES = ['release-ci.yml'] as const;
 export const REQUIRED_RUN_SEQUENCE = [
   'npm ci',
   'npm run verify:ci-config',
-  'npm run verify',
+  'npm run typecheck',
+  'node scripts/run-tests.ts --stage light',
+  'node scripts/run-tests.ts --stage standard',
+  'npm run build',
   'npm run pack:local -- --output artifacts/local-pack',
   'npm run verify:artifacts',
   'node scripts/ci-summary.ts',
@@ -53,6 +56,14 @@ const PINNED_REF_PATTERN = /^v\d+\.\d+(?:\.\d+)?$|^[0-9a-f]{40}$/i;
 const RUNNER_LABEL = 'macos-15';
 const MAX_TIMEOUT_MINUTES = 360;
 const NODE_VERSION_KEY = 'node-version';
+// Additional execution jobs are fixed reviewed structures, including dependencies and evidence upload.
+const EXTRA_JOB_HASHES: Readonly<Record<string, string>> = {
+  'heavy-1': 'c34e5a96cf3124b4e717e9e3c4f17b8bc9b6b98508da858fc251876b8633af6d',
+  'heavy-2': '2f9cf5af9021a311d6739652c468f835bc36939a28d67631c632ba3e8e06911a',
+  'heavy-3': '0a0b8e9c151a52e32e09c0148bfff001baed18650916ef065261c26735aa582d',
+  'heavy-4': 'e6dc7cb8b37d1ad479bfb49218fc69915d4f652cb1915f9a438361ad7e4f9f58',
+  'release-gate': '57e34aea3a5405c5478d847f91475b9d88ad4311dd2bcffc1eb6f35ea8b27a01',
+};
 /** 上传步骤必须保存的脱敏报告（制品摘要与配置检查证据）。 */
 const REQUIRED_UPLOAD_PATHS = [
   'artifacts/local-pack/artifact-verification.json',
@@ -409,7 +420,7 @@ export function verifyCiConfig(options: VerifyCiConfigOptions): CiConfigVerifica
     jobs = asRecord(parsed['jobs']);
     if (jobs) {
       const ids = Object.keys(jobs);
-      jobId = ids.length === 1 ? (ids[0] as string) : null;
+      jobId = ids.includes('checks') ? 'checks' : null;
       job = jobId ? asRecord(jobs[jobId]) : null;
       const rawSteps = job ? asArray(job['steps']) : null;
       if (rawSteps) {
@@ -493,8 +504,19 @@ function structuralGuard(context: WorkflowContext, problems: string[]): boolean 
     return false;
   }
   if (!context.jobs || !context.job || context.jobId === null) {
-    problems.push('工作流必须恰好包含一个 job；当前结构无法确定唯一 job');
+    problems.push('工作流必须包含 checks 主检查 job');
     return false;
+  }
+  const expected = ['checks', ...Object.keys(EXTRA_JOB_HASHES)].sort();
+  if (JSON.stringify(Object.keys(context.jobs).sort()) !== JSON.stringify(expected)) {
+    problems.push('工作流必须包含主检查、四个分片和最终汇总，不能缺少或增加 job');
+    return false;
+  }
+  for (const [id, hash] of Object.entries(EXTRA_JOB_HASHES)) {
+    if (sha256Hex(JSON.stringify(context.jobs[id])) !== hash) {
+      problems.push(`未审阅的分片/汇总 job 变更：${id}`);
+      return false;
+    }
   }
   return true;
 }
@@ -644,8 +666,8 @@ function checkStepOrder(context: WorkflowContext): CiConfigCheck {
     if (step.record['if'] !== undefined) {
       problems.push(`步骤不允许 if 条件跳过（保持静态可审）：${stepLabel(step)}`);
     }
-    if (step.run === 'npm run verify' && step.record['env'] === undefined) {
-      problems.push('verify 必须声明已审的内外层测试预算，避免默认 10 分钟提前结束');
+    if (step.run === 'node scripts/run-tests.ts --stage standard' && step.record['env'] === undefined) {
+      problems.push('standard 必须声明已审测试预算');
     }
   }
   const runCommands = context.steps.map((step) => step.run).filter((run): run is string => run !== null);
@@ -711,14 +733,13 @@ function checkNoPublishSideEffects(context: WorkflowContext): CiConfigCheck {
   for (const token of FORBIDDEN_TEXT_TOKENS) {
     if (lower.includes(token)) problems.push(`工作流包含禁止的发布/远端副作用标记：${JSON.stringify(token.trim())}`);
   }
-  if (context.codeText.includes('${{')) {
-    problems.push('工作流不允许 ${{ }} 动态表达式（保持静态可审；表达式可访问 secrets 上下文）');
+  if (context.codeText.replace('CI_JOB_RESULTS: ${{ toJSON(needs) }}', '').includes('${{')) {
+    problems.push('工作流仅允许汇总 job 的固定 needs 结果表达式');
   }
   const keys = new Set<string>();
   collectKeys(context.parsed, keys);
   const expectedVerifyEnv = {
-    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '18000000',
-    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '17400000',
+    SHIPLOOP_TEST_RUN_TIMEOUT_MS: '1200000',
   };
   if (context.parsed['env'] !== undefined || context.job?.['env'] !== undefined) {
     problems.push('工作流与 job 不允许 env 注入块');
@@ -726,10 +747,10 @@ function checkNoPublishSideEffects(context: WorkflowContext): CiConfigCheck {
   for (const step of context.steps) {
     if (step.record['env'] === undefined) continue;
     const env = asRecord(step.record['env']);
-    if (step.run !== 'npm run verify' || !env
+    if (step.run !== 'node scripts/run-tests.ts --stage standard' || !env
       || Object.keys(env).length !== Object.keys(expectedVerifyEnv).length
       || Object.entries(expectedVerifyEnv).some(([key, value]) => env[key] !== value)) {
-      problems.push('只有 verify 步骤允许固定的测试超时变量，禁止其他 env 注入');
+      problems.push('只有 standard 步骤允许固定的测试超时变量，禁止其他 env 注入');
     }
   }
   for (const step of context.steps) {
@@ -790,6 +811,7 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
         problems.push(`工作流要求 npm 脚本 ${JSON.stringify(name)}，但 package.json 未声明`);
         continue;
       }
+      if (name === 'typecheck' && value === 'tsc -p tsconfig.json') continue;
       const nodeFile = /^node (\S+)/.exec(value);
       if (!nodeFile) {
         problems.push(`npm 脚本 ${JSON.stringify(name)} 必须由本地 node 脚本执行；实际：${JSON.stringify(value)}`);
@@ -797,9 +819,13 @@ function checkScriptWiring(context: WorkflowContext, manifest: Record<string, un
       }
       problems.push(...assertScriptFile(context, nodeFile[1] as string, `npm 脚本 ${JSON.stringify(name)}`));
     } else {
-      const direct = /^node (\S+)$/.exec(command);
+      const direct = /^node (\S+)(?: .*)?$/.exec(command);
       if (direct) problems.push(...assertScriptFile(context, direct[1] as string, 'run 步骤'));
     }
+  }
+
+  for (const file of ['scripts/ci-shard-gate.ts', 'scripts/test-stages.ts', 'test/ci-timings.json']) {
+    problems.push(...assertScriptFile(context, file, '分片汇总'));
   }
 
   const usesActions = (action: string): WorkflowStep[] =>
