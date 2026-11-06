@@ -9,7 +9,7 @@
  * 3. trigger-scope            触发范围只能是 push/pull_request 且 branches 恰为 main；
  *                             schedule、pull_request_target、通配分支等拒绝；
  * 4. permissions-minimal      顶层必须显式 contents: read；任何更大权限拒绝；
- * 5. runner-toolchain         单一 macOS runner（macos-14）、有界 timeout、
+ * 5. runner-toolchain         单一 macOS runner（macos-15）、有界 timeout、
  *                             setup-node 固定发布基线；engines 可为已审兼容范围；
  * 6. required-step-order      必需步骤按固定顺序执行（npm ci -> verify:ci-config ->
  *                             verify -> pack:local -> verify:artifacts -> ci-summary）；
@@ -50,7 +50,7 @@ export const REQUIRED_RUN_SEQUENCE = [
 
 const ALLOWED_ACTIONS = ['actions/checkout', 'actions/setup-node', 'actions/upload-artifact'] as const;
 const PINNED_REF_PATTERN = /^v\d+\.\d+(?:\.\d+)?$|^[0-9a-f]{40}$/i;
-const RUNNER_LABEL = 'macos-14';
+const RUNNER_LABEL = 'macos-15';
 const MAX_TIMEOUT_MINUTES = 360;
 const NODE_VERSION_KEY = 'node-version';
 /** 上传步骤必须保存的脱敏报告（制品摘要与配置检查证据）。 */
@@ -508,7 +508,7 @@ function checkWorkflowFileSet(listed: readonly string[], workflowDir: string): C
   const missing = [...allowed].filter((name) => !listed.includes(name));
   const problems: string[] = [];
   if (listed.includes(matrix) && sha256Hex(readFileSync(join(workflowDir, matrix), 'utf8')) !==
-    'a06c7c967ecb81c2a7ffa44df355e5a672244dc059e1e38875f746edd394e69a') {
+    'c66e65e633abcedeee0e9b4b94d399093257b5b6f4875f2c090058638608eb81') {
     problems.push('Node compatibility workflow differs from reviewed configuration');
   }
   if (listed.length === 0) problems.push(`${WORKFLOW_DIRECTORY} 下没有任何工作流文件，最小发布 CI 未登记`);

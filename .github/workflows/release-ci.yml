@@ -19,7 +19,7 @@ permissions:
 jobs:
   checks:
     name: deterministic-checks
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 360
     steps:
       - name: checkout

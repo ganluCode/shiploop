@@ -252,7 +252,7 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   （`.github/workflows/release-ci.yml`、`scripts/verify-ci-config.ts`、
   `npm run verify:ci-config`，以及 `scripts/ci-summary.ts` 摘要渲染）。
   覆盖受限 YAML 子集解析（锚点/别名/流式/多行标量拒绝）、触发范围恰为 main 的
-  push/pull_request、显式 contents: read 最小权限、macos-14 runner 与 Node 22.19.0
+  push/pull_request、显式 contents: read 最小权限、macos-15 runner 与 Node 22.19.0
   工具链绑定、固定顺序必需步骤（npm ci → verify:ci-config → verify → pack:local →
   verify:artifacts → ci-summary）且禁止 continue-on-error/if 跳过、run 命令白名单、
   禁止 npm publish/git push/gh/PR/合并与 ${{ 表达式、secrets/env 凭据注入隔离、

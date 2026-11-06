@@ -353,8 +353,13 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
 
-    const linux = real.replace('    runs-on: macos-14', '    runs-on: ubuntu-latest');
+    const linux = real.replace('    runs-on: macos-15', '    runs-on: ubuntu-latest');
     withFixture('p08f004-linux-', { workflowText: linux }, (root) => {
+      expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
+    });
+
+    const retired = real.replace('    runs-on: macos-15', '    runs-on: macos-14');
+    withFixture('p08f004-retired-runner-', { workflowText: retired }, (root) => {
       expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'runner-toolchain');
     });
 
