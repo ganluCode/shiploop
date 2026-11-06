@@ -6,9 +6,6 @@
 # test/modules/engineering/p08-1-f004-release-ci.test.ts 本地核对。
 name: release-ci
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main

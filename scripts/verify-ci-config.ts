@@ -3,10 +3,10 @@
  *
  * 输入：仓库内的 GitHub Actions 工作流（.github/workflows/*.yml）与根 package.json、
  * package-lock.json。检查（任一不满足即失败，不缩小检查范围放行）：
- * 1. workflow-file-set        仅允许 release-ci.yml 与摘要固定的兼容矩阵；多余工作流拒绝；
+ * 1. workflow-file-set        PR 全量检查/兼容矩阵及 main 冒烟受控；多余工作流拒绝；
  * 2. workflow-parseable       受限 YAML 子集解析；锚点/别名/流式/多行标量/制表符等
  *                             未审语法直接失败（fail-closed，不猜测降级）；
- * 3. trigger-scope            触发范围只能是 push/pull_request 且 branches 恰为 main；
+ * 3. trigger-scope            release/兼容矩阵仅 main 的 pull_request；冒烟仅 main push；
  *                             schedule、pull_request_target、通配分支等拒绝；
  * 4. permissions-minimal      顶层必须显式 contents: read；任何更大权限拒绝；
  * 5. runner-toolchain         主检查与四分片固定 macOS runner（macos-15）、有界 timeout、
@@ -524,14 +524,18 @@ function structuralGuard(context: WorkflowContext, problems: string[]): boolean 
 function checkWorkflowFileSet(listed: readonly string[], workflowDir: string): CiConfigCheck {
   const check = baseCheck('workflow-file-set', '工作流文件集合受控', [WORKFLOW_DIRECTORY]);
   const allowed = new Set<string>(ALLOWED_WORKFLOW_FILES);
-  // The matrix uses expressions outside the release YAML subset; pin its reviewed content.
-  const matrix = 'node-compatibility.yml';
-  const extra = listed.filter((name) => !allowed.has(name) && name !== matrix);
+  // Auxiliary workflows have fixed reviewed triggers, commands and minimum permissions.
+  const auxiliary: Readonly<Record<string, string>> = {
+    'node-compatibility.yml': 'd0bfa451fabd43ad27791bd8b7f00914b2f888bc804fdc536751d36396ac5e45',
+    'main-smoke.yml': 'dffd7571549a6430dff2a5f311f99dcc5d5f6bf506cdf695717980b80288bbb4',
+  };
+  const extra = listed.filter((name) => !allowed.has(name) && !(name in auxiliary));
   const missing = [...allowed].filter((name) => !listed.includes(name));
   const problems: string[] = [];
-  if (listed.includes(matrix) && sha256Hex(readFileSync(join(workflowDir, matrix), 'utf8')) !==
-    'c66e65e633abcedeee0e9b4b94d399093257b5b6f4875f2c090058638608eb81') {
-    problems.push('Node compatibility workflow differs from reviewed configuration');
+  for (const [name, hash] of Object.entries(auxiliary)) {
+    if (listed.includes(name) && sha256Hex(readFileSync(join(workflowDir, name), 'utf8')) !== hash) {
+      problems.push(`辅助工作流偏离已审配置：${name}`);
+    }
   }
   if (listed.length === 0) problems.push(`${WORKFLOW_DIRECTORY} 下没有任何工作流文件，最小发布 CI 未登记`);
   for (const name of extra) problems.push(`未登记的工作流文件：${WORKFLOW_DIRECTORY}/${name}`);
@@ -551,7 +555,7 @@ function checkParseable(fileExists: boolean, parseError: string | null, context:
 }
 
 function checkTriggerScope(context: WorkflowContext): CiConfigCheck {
-  const check = baseCheck('trigger-scope', '触发范围固定为 main 的 push/pull_request', [CI_WORKFLOW_FILE]);
+  const check = baseCheck('trigger-scope', '全量检查仅触发 main 的 pull_request', [CI_WORKFLOW_FILE]);
   const problems: string[] = [];
   if (!structuralGuard(context, problems)) return check.fail(problems);
   const on = asRecord((context.parsed as Record<string, unknown>)['on']);
@@ -560,9 +564,9 @@ function checkTriggerScope(context: WorkflowContext): CiConfigCheck {
     return check.fail(problems);
   }
   const keys = Object.keys(on);
-  const allowed = ['push', 'pull_request'];
+  const allowed = ['pull_request'];
   for (const key of keys) {
-    if (!allowed.includes(key)) problems.push(`不允许的触发事件：${key}（只允许 push/pull_request）`);
+    if (!allowed.includes(key)) problems.push(`不允许的触发事件：${key}（全量检查只允许 pull_request）`);
   }
   for (const event of allowed) {
     const value = asRecord(on[event]);

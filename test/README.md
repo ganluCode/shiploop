@@ -252,7 +252,7 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   （`.github/workflows/release-ci.yml`、`scripts/verify-ci-config.ts`、
   `npm run verify:ci-config`，以及 `scripts/ci-summary.ts` 摘要渲染）。
   覆盖受限 YAML 子集解析（锚点/别名/流式/多行标量拒绝）、触发范围恰为 main 的
-  push/pull_request、显式 contents: read 最小权限、macos-15 runner 与 Node 22.19.0
+  pull_request（目标 main）、显式 contents: read 最小权限、macos-15 runner 与 Node 22.19.0
   工具链绑定、固定顺序必需步骤（npm ci → verify:ci-config → typecheck → light/standard → build → pack:local →
   verify:artifacts → ci-summary）且禁止 continue-on-error/if 跳过、run 命令白名单、
   禁止 npm publish/git push/gh/PR/合并与 ${{ 表达式、secrets/env 凭据注入隔离、
@@ -262,7 +262,13 @@ F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档�
   Action、凭据注入与 CI 退出码/报告落盘语义。实际 GitHub Actions 运行、CI 环境
   原生模块加载与独立安装保持 Phase 集成 not_run；CI 不发布、不推送、不建 PR。
 
-GitHub `release-ci` 在上述主检查通过后，将 heavy 组按 `test/ci-timings.json`
+GitHub `release-ci` 和 `node-compatibility` 仅在目标 main 的 PR 更新时执行。
+合并后的 main push 仅运行 `main-smoke`：安装锁定依赖、配置校验、类型检查、
+`pack:local`（包含实际构建及 Core/Host/CLI 生命周期冒烟）、制品校验和报告上传。
+main 不重复运行单元/集成全量及 Node 版本矩阵；直接 push main 也只有冒烟，
+因此应通过已完成 PR 门禁的变更合并。main 冒烟成功不代表又完成了一次全量测试。
+
+`release-ci` 在上述主检查通过后，将 heavy 组按 `test/ci-timings.json`
 记录的历史文件耗时均衡分成四片，每片使用独立 macos-15 runner 和一个 Vitest worker。
 每片 npm ci 后显式执行 `node scripts/build-host-lock.ts`，不依赖其他测试先生成原生锁模块。
 新文件默认进入 heavy，并以 30 秒估计纳入分片；历史耗时只影响负载分配，不决定测试是否执行。

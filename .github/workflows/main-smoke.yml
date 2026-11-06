@@ -1,0 +1,42 @@
+# Full regression and Node compatibility are PR gates; main validates the merged artifact.
+name: main-smoke
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: main-build-and-smoke
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - name: setup-node
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22.19.0
+      - name: npm-ci
+        run: npm ci
+      - name: verify-ci-config
+        run: npm run verify:ci-config
+      - name: typecheck
+        run: npm run typecheck
+      - name: pack-and-smoke
+        run: npm run pack:local -- --output artifacts/local-pack
+      - name: verify-artifacts
+        run: npm run verify:artifacts
+      - name: ci-summary
+        run: node scripts/ci-summary.ts
+      - name: upload-ci-reports
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: main-smoke-reports
+          path: artifacts/
+          if-no-files-found: error

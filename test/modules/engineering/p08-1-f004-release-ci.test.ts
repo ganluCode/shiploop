@@ -225,6 +225,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expect(entry.reason.length).toBeGreaterThan(0);
     }
     expect(report.inputs.workflows).toEqual([
+      { label: '.github/workflows/main-smoke.yml', sha256: sha256Hex(readFileSync(join(repoRoot, '.github/workflows/main-smoke.yml'), 'utf8')) },
       { label: '.github/workflows/node-compatibility.yml', sha256: sha256Hex(readFileSync(join(repoRoot, '.github/workflows/node-compatibility.yml'), 'utf8')) },
       { label: CI_WORKFLOW_FILE, sha256: sha256Hex(workflowText) },
     ]);
@@ -254,7 +255,8 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
 
     const real = parseYamlSubset(readRealWorkflow()) as Record<string, unknown>;
     const on = real['on'] as Record<string, unknown>;
-    expect((on['push'] as Record<string, unknown>)['branches']).toEqual(['main']);
+    expect(Object.keys(on)).toEqual(['pull_request']);
+    expect((on['pull_request'] as Record<string, unknown>)['branches']).toEqual(['main']);
     const jobs = real['jobs'] as Record<string, unknown>;
     expect(Object.keys(jobs)).toEqual(['checks', 'heavy-1', 'heavy-2', 'heavy-3', 'heavy-4', 'release-gate']);
     const steps = (jobs['checks'] as Record<string, unknown>)['steps'] as unknown[];
@@ -285,6 +287,34 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
         const report = verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT });
         if (modified) expectFailed(report, 'workflow-file-set');
         else expect(report.passed).toBe(true);
+      });
+    }
+  });
+
+  it('[case:main-smoke-scope] main push runs artifact smoke only; PR keeps the full suite and Node matrix', () => {
+    const smokeText = readFileSync(join(repoRoot, '.github/workflows/main-smoke.yml'), 'utf8');
+    const smoke = parseYamlSubset(smokeText) as Record<string, any>;
+    expect(smoke.on).toEqual({ push: { branches: ['main'] } });
+    const steps = smoke.jobs.smoke.steps as Record<string, any>[];
+    expect(steps.filter(step => step.run).map(step => step.run)).toEqual([
+      'npm ci', 'npm run verify:ci-config', 'npm run typecheck',
+      'npm run pack:local -- --output artifacts/local-pack', 'npm run verify:artifacts', 'node scripts/ci-summary.ts',
+    ]);
+    expect(smoke.permissions).toEqual({ contents: 'read' });
+    expect(smokeText).not.toMatch(/run-tests|--shard|npm test|npm run verify\n/);
+    const matrix = readFileSync(join(repoRoot, '.github/workflows/node-compatibility.yml'), 'utf8');
+    expect(matrix).toContain('  pull_request:');
+    expect(matrix).not.toContain('  push:');
+    const pushFullSuite = readRealWorkflow().replace('on:\n', 'on:\n  push:\n    branches:\n      - main\n');
+    withFixture('ci-push-full-', { workflowText: pushFullSuite }, root => {
+      expectFailed(verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT }), 'trigger-scope');
+    });
+    for (const modified of [smokeText, smokeText.replace('  push:', '  pull_request:'),
+      smokeText.replace('run: npm run typecheck', 'run: npm test')]) {
+      withFixture('ci-main-smoke-', { extraWorkflows: [{ name: 'main-smoke.yml', text: modified }] }, root => {
+        const report = verifyCiConfig({ repoRoot: root, environment: ENVIRONMENT });
+        if (modified === smokeText) expect(report.passed).toBe(true);
+        else expectFailed(report, 'workflow-file-set');
       });
     }
   });
@@ -333,9 +363,6 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
     const real = readRealWorkflow();
     const triggerBlock = [
       'on:',
-      '  push:',
-      '    branches:',
-      '      - main',
       '  pull_request:',
       '    branches:',
       '      - main',
@@ -579,7 +606,7 @@ describe('P08-1 F-004 最小发布 CI 配置', () => {
       expect(good.status).toBe(0);
       const saved = JSON.parse(readFileSync(goodReport, 'utf8')) as CiConfigVerificationReport;
       expect(saved.passed).toBe(true);
-      expect(saved.inputs.workflows.map(row => row.label)).toEqual(['.github/workflows/node-compatibility.yml', CI_WORKFLOW_FILE]);
+      expect(saved.inputs.workflows.map(row => row.label)).toEqual(['.github/workflows/main-smoke.yml', '.github/workflows/node-compatibility.yml', CI_WORKFLOW_FILE]);
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
