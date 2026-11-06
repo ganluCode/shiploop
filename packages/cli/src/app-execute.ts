@@ -18,6 +18,7 @@
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
 import { randomUUID } from 'node:crypto';
+import { syncShiploopSkills } from './shiploop-skills.js';
 import { closeSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import {
   ensureHostRunning,
@@ -1094,12 +1095,24 @@ async function executeProjectInit(
     // 全部为同步命令，accepted 属协议异常（fail-closed，不折算成功/失败）。
     throw new Error('unexpected_accepted_receipt');
   }
-  const result = buildInitCliResult(request, inspection, initRegistrationOutcome(receipt));
+  const registration = initRegistrationOutcome(receipt);
+  let skills;
+  try {
+    skills = syncShiploopSkills(inspection.canonicalPath);
+  } catch {
+    return emitFailure(io, command.json, {
+      exitCode: 1, command: command.commandId, code: 'io_error',
+      message: '项目已注册，但 ShipLoop Skills 同步失败；修复目录权限或符号链接后重新执行 init --confirm。',
+      commandId: receipt.commandId,
+      details: { reason: 'shiploop_skills_sync_failed', ...(registration.status === 'not_run' ? {} : { projectId: registration.projectId }) },
+    });
+  }
+  const result = { ...buildInitCliResult(request, inspection, registration), skills };
   return emitOnboardingResult(
     io,
     command,
     result,
-    `${previewText}${formatInitCliResult(result)}`,
+    `${previewText}${formatInitCliResult(result)}ShipLoop Skills 已同步到 .agents/skills/shiploop 和 .claude/skills/shiploop。\n`,
     [],
   );
 }
