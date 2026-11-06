@@ -285,11 +285,12 @@ describe('Host and CLI entry behaviour boundaries', () => {
     const allSources = readSourceTree('packages/cli/src');
     expect(allSources.length, 'packages/cli/src must contain the CLI surface').toBeGreaterThanOrEqual(6);
     // F-012 执行层文件：bin.ts（唯一 argv/env/exit 入口）、host/execute.ts
-    // （生命周期 I/O 编排）与 app-execute.ts（F-015 应用命令 I/O 编排）。
+    // （生命周期 I/O 编排）、app-execute.ts（应用命令）及 shiploop-skills.ts（官方 Skill 同步）。
     const isExecutionFile = (file: string): boolean =>
       file.endsWith(`${sep}bin.ts`) ||
       file.includes(`${sep}host${sep}execute.ts`) ||
-      file.endsWith(`${sep}app-execute.ts`);
+      file.endsWith(`${sep}app-execute.ts`) ||
+      file.endsWith(`${sep}shiploop-skills.ts`);
     const pureSources = allSources.filter(({ file }) => !isExecutionFile(file));
     expect(pureSources.length, '纯面层至少包含 index/host barrel/args/help/output').toBeGreaterThanOrEqual(5);
     for (const { file, code } of pureSources) {
@@ -316,23 +317,24 @@ describe('Host and CLI entry behaviour boundaries', () => {
         expect(codeWithoutComments, `${file} must not use ${token}`).not.toContain(token);
       }
     }
-    // F-012 执行层同样只允许 shiploop-host 公共面，且不直接做 HTTP/spawn/文件系统。
+    // 执行层不直接做 HTTP/spawn；显式输入读取与官方 Skill 同步允许文件系统。
     const executionSources = allSources.filter(({ file }) => isExecutionFile(file));
     expect(executionSources.map(({ file }) => file.split(sep).pop()).sort()).toEqual([
       'app-execute.ts',
       'bin.ts',
       'execute.ts',
+      'shiploop-skills.ts',
     ]);
     for (const { file, code } of executionSources) {
       const specifiers = extractModuleSpecifiers(code);
       // F-016：app-execute.ts 是 config `--input <file>` 的显式输入文件读取层，
       // 因此允许 node:fs（只读用户显式指定的请求输入，不打开状态库、不做 HTTP/spawn）；
-      // host/execute.ts 与 bin.ts 仍禁用 node:fs。
-      const allowsInputFileRead = file.endsWith(`${sep}app-execute.ts`);
+      // project init 的 shiploop-skills.ts 仅同步官方资源；host/execute.ts 与 bin.ts 仍禁用 fs。
+      const allowsFileAccess = file.endsWith(`${sep}app-execute.ts`) || file.endsWith(`${sep}shiploop-skills.ts`);
       const bannedBuiltins = [
         'node:child_process',
         'node:net',
-        ...(allowsInputFileRead ? [] : ['node:fs']),
+        ...(allowsFileAccess ? [] : ['node:fs']),
       ];
       for (const banned of [...skeletonBannedModules, ...bannedBuiltins, 'shiploop-core']) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
@@ -353,7 +355,7 @@ describe('Host and CLI entry behaviour boundaries', () => {
     expect(cliPkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
     // 公共 barrel 不得 re-export 执行层（import 公共面不得装入 runHostCli）；
     // 只检查 import/export 语句，不禁注释对 F-012 边界的说明。
-    const entryImportPattern = /(?:from|import)\s+['"][^'\"]*(?:execute|bin)\.js['"]/;
+    const entryImportPattern = /(?:from|import)\s+['"][^'\"]*(?:execute|bin|shiploop-skills)\.js['"]/;
     expect(readText('packages/cli/src/index.ts')).not.toMatch(entryImportPattern);
     expect(readText('packages/cli/src/host/index.ts')).not.toMatch(entryImportPattern);
   });

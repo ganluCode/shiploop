@@ -34,6 +34,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { git } from '../../helpers/git-repo.ts';
+import { digestWorkingTree, type TreeDigestEntry } from '../../helpers/p02-3/process-tools.ts';
 import {
   assertDistCliBuilt,
   createAcceptanceFixture,
@@ -144,6 +145,8 @@ async function pollTerminalOperation(
  * ------------------------------------------------------------------ */
 
 interface RepoState {
+  readonly sourceStatus: string;
+  readonly contentEntries: readonly TreeDigestEntry[];
   /** 仓库证据快照（HEAD、`status --porcelain` 原文、tracked/untracked 字节摘要）。 */
   readonly snapshot: RepositorySnapshot;
   /** 索引状态（`git diff --cached --name-status` 原文；staged 变更的直接证据）。 */
@@ -168,6 +171,8 @@ function listRepoFiles(repoDir: string): string[] {
 function captureRepoState(fixture: AcceptanceFixture, repoPath: string): RepoState {
   const home = fixture.homeDir;
   return {
+    sourceStatus: git(['status', '--porcelain', '--', '.', ':(exclude).agents/skills/shiploop', ':(exclude).claude/skills/shiploop'], repoPath, { home }),
+    contentEntries: digestWorkingTree(repoPath).entries,
     snapshot: fixture.snapshotRepository(repoPath),
     indexChanges: git(['diff', '--cached', '--name-status'], repoPath, { home }),
     stashList: git(['stash', 'list'], repoPath, { home }),
@@ -176,15 +181,26 @@ function captureRepoState(fixture: AcceptanceFixture, repoPath: string): RepoSta
   };
 }
 
-/** 接入前后逐项一致：HEAD / 索引 / Git 状态 / 全部文件字节摘要 / 文件清单。 */
+/** 仅允许新增逐字节匹配包内资源的官方 Skills；原有文件、索引、HEAD 和其余 Git 状态保持。 */
 function expectRepoPreserved(before: RepoState, after: RepoState): void {
+  const official = digestWorkingTree(join(REPO_ROOT, 'packages/cli/skills/shiploop')).entries;
+  expect(official).toHaveLength(7);
+  const additions = ['.agents', '.claude'].flatMap((harness) => official.map((entry) => ({
+    ...entry, relativePath: `${harness}/skills/shiploop/${entry.relativePath}`,
+  })));
+  const byPath = <T extends { readonly relativePath: string }>(entries: readonly T[]): T[] =>
+    [...entries].sort((a, b) => a.relativePath < b.relativePath ? -1 : a.relativePath > b.relativePath ? 1 : 0);
+  const addedListing = additions.flatMap(({ relativePath }) => {
+    const parts = relativePath.split('/');
+    return parts.map((_, index) => parts.slice(0, index + 1).join('/'));
+  });
   expect(after.snapshot.headCommit).toBe(before.snapshot.headCommit);
   expect(after.indexChanges).toBe(before.indexChanges);
-  expect(after.snapshot.statusPorcelain).toBe(before.snapshot.statusPorcelain);
+  expect(after.sourceStatus).toBe(before.sourceStatus);
   expect(after.snapshot.tracked).toEqual(before.snapshot.tracked);
-  expect(after.snapshot.untracked).toEqual(before.snapshot.untracked);
-  expect(after.snapshot.treeDigest).toBe(before.snapshot.treeDigest);
-  expect(after.listing).toEqual(before.listing);
+  expect(byPath(after.snapshot.untracked)).toEqual(byPath([...before.snapshot.untracked, ...additions]));
+  expect(byPath(after.contentEntries)).toEqual(byPath([...before.contentEntries, ...additions]));
+  expect(after.listing).toEqual([...new Set([...before.listing, ...addedListing])].sort());
   // 无自动 stash/reset/commit。
   expect(after.stashList.trim()).toBe('');
   expect(after.commitCount).toBe(before.commitCount);

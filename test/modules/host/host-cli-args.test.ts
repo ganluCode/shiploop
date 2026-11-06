@@ -610,11 +610,11 @@ describe('F-011 JSON 信封与 §13.3 退出码', () => {
 
 describe('F-011 纯面层边界 + F-012 执行层接线（解析/执行分离、零副作用公共面）', () => {
   // F-011 纯面层：只含解析/帮助/输出，import 无 argv/env/网络/进程副作用。
-  // F-012 新增的 execute.ts/bin.ts 是执行层/入口，不适用纯面层约束。
+  // execute.ts/bin.ts 与 project init 的官方 Skill 同步模块是执行层，不适用纯面层约束。
   const pureLayerFiles = (): string[] =>
     listTsFiles(CLI_SRC_DIR).filter((file) => {
       const relative = file.slice(CLI_SRC_DIR.length + 1);
-      return relative === 'index.ts' || (!relative.includes('bin.ts') && !relative.includes('execute.ts'));
+      return relative === 'index.ts' || (!relative.includes('bin.ts') && !relative.includes('execute.ts') && relative !== 'shiploop-skills.ts');
     });
 
   it('F-012 显式执行入口 bin.ts 存在（shebang），package.json 声明 bin 且仅依赖 shiploop-host', () => {
