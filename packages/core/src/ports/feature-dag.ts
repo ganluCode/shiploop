@@ -10,6 +10,8 @@ import {
   isPlainObject,
   rejectUnknownKeys,
   requirePlainObject,
+  validatePositiveInteger,
+  validateSha256Digest,
   validateStableId,
   validationError,
 } from './validation.js';
@@ -20,9 +22,16 @@ export const FEATURE_DAG_REASONS = [
   'dependency_pending',
   'dependency_failed',
   'integration_not_ready',
+  'integration_stale',
+  'integration_blocked',
+  'integration_drift',
   'invalid_graph',
 ] as const;
 export type FeatureDagReason = (typeof FEATURE_DAG_REASONS)[number];
+
+/** 权威 integration plan 状态在 DAG 证据上的稳定投影。 */
+export const FEATURE_INTEGRATION_EVIDENCE_STATUSES = ['passed', 'pending', 'stale', 'blocked', 'drift'] as const;
+export type FeatureIntegrationEvidenceStatus = (typeof FEATURE_INTEGRATION_EVIDENCE_STATUSES)[number];
 
 export const FEATURE_DEPENDENCY_COMPLETION = ['complete', 'pending', 'failed'] as const;
 export type FeatureDependencyCompletion = (typeof FEATURE_DEPENDENCY_COMPLETION)[number];
@@ -34,6 +43,16 @@ export interface FeatureIntegrationEvidence {
   readonly commitSha?: string;
   /** 可选的目标基线身份。 */
   readonly targetBaseline?: string;
+  /** F-004：交付/验证证据摘要（sha256），来自权威 integration plan 投影。 */
+  readonly evidenceDigest?: string;
+  /** F-004：投影时的 integration plan revision；与证据同一一致读视图取得。 */
+  readonly planRevision?: number;
+  /** 证据可用性；缺省视为通过事实（旧版调用方兼容）。 */
+  readonly status?: FeatureIntegrationEvidenceStatus;
+  /** 证据过期/漂移的稳定原因。 */
+  readonly staleReasons?: readonly string[];
+  /** 计划阻塞的稳定原因。 */
+  readonly blockReasons?: readonly string[];
 }
 
 export interface FeatureDagNodeInput {
@@ -42,6 +61,8 @@ export interface FeatureDagNodeInput {
   readonly phaseId: string;
   /** 仅用于依赖完成投影；Task 状态不在此结构中解释。 */
   readonly status?: string;
+  /** F-004：Feature 持久 revision，随同一一致读视图透出。 */
+  readonly revision?: number;
   /** 成功交付不自动生成此证据，缺失时 integrationReady 必须为 false。 */
   readonly integrationEvidence?: FeatureIntegrationEvidence | null;
 }
@@ -54,6 +75,13 @@ export interface FeatureDependencyInput {
   readonly dependsOnId: string;
   /** 依赖边关联的固定基线引用，不等同于集成已通过。 */
   readonly codeBaselineRef?: string | null;
+  /** 依赖边持久 revision；候选边输入不得携带。 */
+  readonly revision?: number;
+  /**
+   * F-004：按后继权威 integration plan 投影的边级集成证据。只在持久读取面
+   * 填充；候选边携带该字段是结构错误。
+   */
+  readonly integrationEvidence?: FeatureIntegrationEvidence | null;
 }
 
 export interface FeatureDagInput {
@@ -73,6 +101,10 @@ export interface FeatureDependencyRecord {
   readonly featureId: string;
   readonly dependsOnId: string;
   readonly codeBaselineRef: string | null;
+  /** F-004：依赖边持久 revision（同一一致读视图）。 */
+  readonly revision?: number;
+  /** F-004：边级集成证据投影；undefined 表示未投影（候选边），null 表示无证据。 */
+  readonly integrationEvidence?: FeatureIntegrationEvidence | null;
 }
 
 export interface FeatureDagGraph {
@@ -95,6 +127,10 @@ export interface FeatureDagReadiness {
   /** 可作为执行候选的外层结果，依赖完成和前置集成均满足。 */
   readonly ready: boolean;
   readonly reason: FeatureDagReason;
+  /** F-004：前置证据过期/漂移的稳定原因（排序去重）。 */
+  readonly dependencyStaleReasons: readonly string[];
+  /** F-004：前置计划阻塞的稳定原因（排序去重）。 */
+  readonly dependencyBlockReasons: readonly string[];
 }
 
 export interface FeatureDagEvaluation extends FeatureDagGraph {
@@ -129,6 +165,10 @@ function sortedIds(values: Iterable<string>): string[] {
   return [...values].sort(compareIds);
 }
 
+const GIT_OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const EVIDENCE_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+const MAX_EVIDENCE_REASONS = 16;
+
 function validateOptionalText(value: unknown, context: ValidationContext, field: string): string | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > 512) {
@@ -137,19 +177,69 @@ function validateOptionalText(value: unknown, context: ValidationContext, field:
   return value;
 }
 
+function validateOptionalGitSha(value: unknown, context: ValidationContext, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !GIT_OID_PATTERN.test(value)) {
+    throw validationError(context, field, '必须是 40 或 64 位小写十六进制成果 SHA', value);
+  }
+  return value;
+}
+
+function validateEvidenceReasons(
+  value: unknown,
+  context: ValidationContext,
+  field: string,
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_EVIDENCE_REASONS) {
+    throw validationError(context, field, `必须是最多 ${MAX_EVIDENCE_REASONS} 项的字符串数组`, value);
+  }
+  const reasons = value.map((item) => {
+    if (typeof item !== 'string' || !EVIDENCE_REASON_PATTERN.test(item)) {
+      throw validationError(context, field, '必须是稳定的 snake_case 原因标识', item);
+    }
+    return item;
+  });
+  return [...new Set(reasons)].sort(compareIds);
+}
+
 function validateEvidence(value: unknown, context: ValidationContext, field: string): FeatureIntegrationEvidence | null {
   if (value === undefined || value === null) return null;
   const object = requirePlainObject(value, context, field);
-  rejectUnknownKeys(object, ['integrationId', 'commitSha', 'targetBaseline'], context, field);
+  rejectUnknownKeys(object, [
+    'integrationId', 'commitSha', 'targetBaseline', 'evidenceDigest',
+    'planRevision', 'status', 'staleReasons', 'blockReasons',
+  ], context, field);
   const integrationId = validateOptionalText(object.integrationId, context, `${field}.integrationId`);
-  const commitSha = validateOptionalText(object.commitSha, context, `${field}.commitSha`);
-  const targetBaseline = validateOptionalText(object.targetBaseline, context, `${field}.targetBaseline`);
-  if (integrationId === null && commitSha === null && targetBaseline === null) {
+  const commitSha = validateOptionalGitSha(object.commitSha, context, `${field}.commitSha`);
+  const targetBaseline = validateOptionalGitSha(object.targetBaseline, context, `${field}.targetBaseline`);
+  const evidenceDigest = object.evidenceDigest === undefined || object.evidenceDigest === null
+    ? null : validateSha256Digest(object.evidenceDigest, context, `${field}.evidenceDigest`);
+  const planRevision = object.planRevision === undefined || object.planRevision === null
+    ? undefined : validatePositiveInteger(object.planRevision, context, `${field}.planRevision`);
+  const status = object.status === undefined || object.status === null
+    ? undefined : (() => {
+      if (typeof object.status !== 'string'
+        || !(FEATURE_INTEGRATION_EVIDENCE_STATUSES as readonly string[]).includes(object.status)) {
+        throw validationError(context, `${field}.status`, '必须是稳定的集成证据状态', object.status);
+      }
+      return object.status as FeatureIntegrationEvidenceStatus;
+    })();
+  const staleReasons = validateEvidenceReasons(object.staleReasons, context, `${field}.staleReasons`);
+  const blockReasons = validateEvidenceReasons(object.blockReasons, context, `${field}.blockReasons`);
+  if (integrationId === null && commitSha === null && targetBaseline === null && evidenceDigest === null) {
     throw validationError(context, field, '集成证据至少需要一个固定身份字段');
   }
-  return { ...(integrationId === null ? {} : { integrationId }),
+  return {
+    ...(integrationId === null ? {} : { integrationId }),
     ...(commitSha === null ? {} : { commitSha }),
-    ...(targetBaseline === null ? {} : { targetBaseline }) };
+    ...(targetBaseline === null ? {} : { targetBaseline }),
+    ...(evidenceDigest === null ? {} : { evidenceDigest }),
+    ...(planRevision === undefined ? {} : { planRevision }),
+    ...(status === undefined ? {} : { status }),
+    ...(staleReasons === undefined ? {} : { staleReasons }),
+    ...(blockReasons === undefined ? {} : { blockReasons }),
+  };
 }
 
 function validateNode(raw: unknown, index: number, root: { projectId: string; phaseId: string }): FeatureDagNodeInput {
@@ -168,22 +258,30 @@ function validateNode(raw: unknown, index: number, root: { projectId: string; ph
   if (phaseId !== root.phaseId) fail('cross_phase', { featureId: id });
   const status = object.status === undefined ? 'draft' : typeof object.status === 'string'
     ? object.status : (() => { throw validationError(context, `${field}.status`, '必须是字符串', object.status); })();
+  const revision = object.revision === undefined || object.revision === null
+    ? undefined : validatePositiveInteger(object.revision, context, `${field}.revision`);
   const integrationEvidence = validateEvidence(object.integrationEvidence, context, `${field}.integrationEvidence`);
-  return { id, projectId, phaseId, status, integrationEvidence };
+  return {
+    id, projectId, phaseId, status,
+    ...(revision === undefined ? {} : { revision }),
+    integrationEvidence,
+  };
 }
 
 function validateEdge(
   raw: unknown,
   index: number,
   root: { projectId: string; phaseId: string },
+  options: { readonly evidence: boolean },
 ): FeatureDependencyRecord {
   const context: ValidationContext = { operation: OPERATION };
   const field = `edges[${index}]`;
   const object = requirePlainObject(raw, context, field);
-  rejectUnknownKeys(object, [
-    'id', 'projectId', 'phaseId', 'featureId', 'dependsOnId', 'codeBaselineRef',
-    'revision', 'createdAtUtcMs', 'updatedAtUtcMs',
-  ], context, field);
+  rejectUnknownKeys(object, options.evidence
+    ? ['id', 'projectId', 'phaseId', 'featureId', 'dependsOnId', 'codeBaselineRef',
+      'revision', 'createdAtUtcMs', 'updatedAtUtcMs', 'integrationEvidence']
+    : ['id', 'projectId', 'phaseId', 'featureId', 'dependsOnId', 'codeBaselineRef',
+      'revision', 'createdAtUtcMs', 'updatedAtUtcMs'], context, field);
   const featureId = validateStableId(object.featureId, context, `${field}.featureId`);
   const dependsOnId = validateStableId(object.dependsOnId, context, `${field}.dependsOnId`);
   const projectId = object.projectId === undefined ? root.projectId
@@ -193,9 +291,18 @@ function validateEdge(
   const id = object.id === undefined || object.id === null ? null
     : validateStableId(object.id, context, `${field}.id`);
   const codeBaselineRef = validateOptionalText(object.codeBaselineRef, context, `${field}.codeBaselineRef`);
+  const revision = object.revision === undefined || object.revision === null
+    ? undefined : validatePositiveInteger(object.revision, context, `${field}.revision`);
+  const integrationEvidence = options.evidence && object.integrationEvidence !== undefined
+    ? validateEvidence(object.integrationEvidence, context, `${field}.integrationEvidence`)
+    : undefined;
   if (projectId !== root.projectId) fail('cross_project', { featureId, dependsOnFeatureId: dependsOnId });
   if (phaseId !== root.phaseId) fail('cross_phase', { featureId, dependsOnFeatureId: dependsOnId });
-  return { id, projectId, phaseId, featureId, dependsOnId, codeBaselineRef };
+  return {
+    id, projectId, phaseId, featureId, dependsOnId, codeBaselineRef,
+    ...(revision === undefined ? {} : { revision }),
+    ...(integrationEvidence === undefined ? {} : { integrationEvidence }),
+  };
 }
 
 function topologicalOrder(
@@ -269,7 +376,10 @@ export function validateFeatureDag(value: unknown): FeatureDagGraph {
   if (!Array.isArray(existing) || !Array.isArray(candidates) || existing.length + candidates.length > MAX_EDGES) {
     throw validationError(context, 'input.edges', `必须是最多 ${MAX_EDGES} 条边的数组`);
   }
-  const edges = [...existing, ...candidates].map((raw, index) => validateEdge(raw, index, { projectId, phaseId }));
+  const edges = [
+    ...existing.map((raw, index) => validateEdge(raw, index, { projectId, phaseId }, { evidence: true })),
+    ...candidates.map((raw, index) => validateEdge(raw, existing.length + index, { projectId, phaseId }, { evidence: false })),
+  ];
   const featureSet = new Set(featureIds);
   const edgeKeys = new Set<string>();
   for (const edge of edges) {
@@ -294,28 +404,64 @@ export function validateFeatureDag(value: unknown): FeatureDagGraph {
   };
 }
 
+type EvidenceStatus = FeatureIntegrationEvidenceStatus | 'missing';
+
+function evidenceStatusOf(evidence: FeatureIntegrationEvidence | null | undefined): EvidenceStatus {
+  if (evidence === null || evidence === undefined) return 'missing';
+  return evidence.status ?? 'passed';
+}
+
+function aggregateReasons(
+  evidences: readonly (FeatureIntegrationEvidence | null | undefined)[],
+  statuses: readonly EvidenceStatus[],
+  field: 'staleReasons' | 'blockReasons',
+  included: readonly EvidenceStatus[],
+): readonly string[] {
+  const reasons = new Set<string>();
+  evidences.forEach((evidence, index) => {
+    if (!included.includes(statuses[index]!)) return;
+    for (const reason of evidence?.[field] ?? []) reasons.add(reason);
+  });
+  return sortedIds(reasons);
+}
+
+const STALE_EVIDENCE_STATUSES: readonly EvidenceStatus[] = ['stale', 'drift'];
+
 export function deriveFeatureDagReadiness(graph: FeatureDagGraph): readonly FeatureDagReadiness[] {
   const byId = new Map(graph.features.map((feature) => [feature.id, feature] as const));
-  const dependencies = new Map(graph.features.map((feature) => [feature.id, [] as FeatureDagNodeInput[]] as const));
-  for (const edge of graph.edges) dependencies.get(edge.featureId)!.push(byId.get(edge.dependsOnId)!);
+  const incoming = new Map<string, { edge: FeatureDependencyRecord; parent: FeatureDagNodeInput }[]>();
+  for (const id of byId.keys()) incoming.set(id, []);
+  for (const edge of graph.edges) {
+    const parent = byId.get(edge.dependsOnId)!;
+    incoming.get(edge.featureId)!.push({ edge, parent });
+  }
   return graph.features.map((feature) => {
-    const parents = dependencies.get(feature.id)!;
+    const links = incoming.get(feature.id)!;
+    const parents = links.map((link) => link.parent);
     const failed = parents.some((parent) => ['failed', 'cancelled', 'skipped'].includes(parent.status ?? 'draft'));
     const dependencyCompleted = parents.every((parent) => parent.status === 'completed');
-    const dependencyIntegrationReady = parents.every((parent) => parent.integrationEvidence !== null
-      && parent.integrationEvidence !== undefined);
-    const integrationReady = feature.integrationEvidence !== null && feature.integrationEvidence !== undefined;
+    // 边级证据优先；未投影证据的持久边回退节点级证据（旧调用方兼容）。
+    const evidences = links.map((link) => link.edge.integrationEvidence !== undefined
+      ? link.edge.integrationEvidence
+      : link.parent.integrationEvidence ?? null);
+    const statuses = evidences.map(evidenceStatusOf);
+    const dependencyIntegrationReady = statuses.every((status) => status === 'passed');
     const reason: FeatureDagReason = failed ? 'dependency_failed'
       : !dependencyCompleted ? 'dependency_pending'
-        : !dependencyIntegrationReady ? 'integration_not_ready' : 'ready';
+        : statuses.includes('drift') ? 'integration_drift'
+          : statuses.includes('stale') ? 'integration_stale'
+            : statuses.includes('blocked') ? 'integration_blocked'
+              : dependencyIntegrationReady ? 'ready' : 'integration_not_ready';
     return {
       featureId: feature.id,
       dependencyCompleted,
       dependencyCompletion: failed ? 'failed' : dependencyCompleted ? 'complete' : 'pending',
-      integrationReady,
+      integrationReady: feature.integrationEvidence !== null && feature.integrationEvidence !== undefined,
       dependencyIntegrationReady,
       ready: reason === 'ready',
       reason,
+      dependencyStaleReasons: aggregateReasons(evidences, statuses, 'staleReasons', STALE_EVIDENCE_STATUSES),
+      dependencyBlockReasons: aggregateReasons(evidences, statuses, 'blockReasons', ['blocked']),
     };
   });
 }
@@ -330,6 +476,11 @@ export function evaluateFeatureDag(value: unknown): FeatureDagEvaluation {
 export const validateFeatureDagInput = validateFeatureDag;
 export const validateFeatureDependencyGraph = validateFeatureDag;
 export const evaluateFeatureDependencyGraph = evaluateFeatureDag;
+
+/** F-004：边级集成证据的稳定键（featureId \u0000 dependsOnId），供只读投影与消费方共用。 */
+export function featureDagEdgeEvidenceKey(featureId: string, dependsOnId: string): string {
+  return `${featureId}\u0000${dependsOnId}`;
+}
 
 /** 与 TaskDagStore 对称的只读 Core 端口；实现可在后续 SQLite/query Feature 中注入。 */
 export interface FeatureDagStore {

@@ -112,6 +112,7 @@ import type {
 } from '../ports/queries.js';
 import type { StateEventReadStore } from '../ports/events.js';
 import { evaluateFeatureDag } from '../ports/feature-dag.js';
+import { featureDagEdgeEvidenceKey } from '../ports/feature-dag.js';
 import type { FeatureDagEvaluation } from '../ports/feature-dag.js';
 import { isStorageError } from '../ports/errors.js';
 import type { SettingsScope } from '../ports/settings-schema.js';
@@ -1458,13 +1459,16 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
             projectId: feature.projectId,
             phaseId: feature.phaseId,
             status: feature.status,
-            // integrationEvidence is intentionally absent from the Feature row. A completed
-            // Feature therefore never becomes integration-ready by implication.
-            integrationEvidence: null,
+            revision: feature.revision,
+            // F-004（P07 DAG）：证据由视图在同一事务内投影；未投影时 fail-closed 为 null。
+            integrationEvidence: view.nodeIntegrationEvidence?.get(feature.id) ?? null,
           })),
           existingEdges: view.dependencies.filter((edge) =>
             featureIds.has(edge.featureId) && featureIds.has(edge.dependsOnId),
-          ),
+          ).map((edge) => ({
+            ...edge,
+            integrationEvidence: view.edgeIntegrationEvidence?.get(featureDagEdgeEvidenceKey(edge.featureId, edge.dependsOnId)) ?? null,
+          })),
         });
         const readinessById = new Map(evaluation.readiness.map((item) => [item.featureId, item] as const));
         const activeFeatureIds = new Set(view.activeFeatureIds);

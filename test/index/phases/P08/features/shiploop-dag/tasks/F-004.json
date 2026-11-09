@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/feature-dag-integration-evidence.test.ts",
+          "level": "unit",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/feature-dag-store-evidence.test.ts",
+          "level": "integration",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/feature-dag-diamond-evidence.test.ts",
+          "level": "integration",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

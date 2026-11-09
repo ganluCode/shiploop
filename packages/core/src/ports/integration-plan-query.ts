@@ -92,6 +92,12 @@ export interface IntegrationPlanQueryResult {
 export interface IntegrationPlanQueryReadStore {
   /** 不存在或跨项目目标返回 undefined；损坏持久行必须抛 corrupt。 */
   readIntegrationPlanView(projectId: unknown, integrationId: unknown): IntegrationPlanQueryView | undefined;
+  /**
+   * F-004（P07 DAG）：同 Phase 计划视图列表（按 integrationId 稳定排序）。
+   * 用于阶段级集成状态展示与 Feature DAG 证据核对；跨项目/跨 Phase 目标返回空列表，
+   * 损坏持久行必须抛 corrupt。
+   */
+  listIntegrationPlanViewsByPhase(projectId: unknown, phaseId: unknown): readonly IntegrationPlanQueryView[];
 }
 
 const SECRET_KEY = /(token|secret|password|credential|private.?key|api.?key|access.?key|authorization|cookie)/i;

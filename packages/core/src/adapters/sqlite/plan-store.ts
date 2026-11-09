@@ -60,6 +60,8 @@ import { normalizeTaskLanguages } from '../../ports/task-languages.js';
 import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
 import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
 import { validateFeatureDag, evaluateFeatureDag } from '../../ports/feature-dag.js';
+import { featureDagEdgeEvidenceKey } from '../../ports/feature-dag.js';
+import { readFeatureDagIntegrationEvidenceInView } from './feature-dag-integration-projection.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
 import { assertPrincipalVisibility, PLAN_LIST_MAX_LIMIT } from '../../ports/queries.js';
 import type {
@@ -2131,6 +2133,14 @@ export function createSqlitePlanAccess(
         .all(validProjectId, validPhaseId, ...activeStatuses) as { feature_id: string }[];
       const taskCounts: Record<string, number> = {};
       for (const row of countRows) taskCounts[row.feature_id] = row.count;
+      // F-004（P07 DAG）：同事务投影边级/节点级集成证据（含 plan revision 与摘要核对）。
+      const evidence = readFeatureDagIntegrationEvidenceInView(db, {
+        projectId: validProjectId,
+        phaseId: validPhaseId,
+        operation,
+        featureIds: new Set(featureRows.map((row) => row.id)),
+        edges: edgeRows.map((row) => ({ featureId: row.feature_id, dependsOnId: row.depends_on_id })),
+      });
       return {
         phase: phaseFromRow(phaseRow),
         features: featureRows.map(featureFromRow),
@@ -2141,9 +2151,13 @@ export function createSqlitePlanAccess(
           featureId: row.feature_id,
           dependsOnId: row.depends_on_id,
           codeBaselineRef: row.code_baseline_ref,
+          revision: row.revision,
+          integrationEvidence: evidence.edgeEvidence.get(featureDagEdgeEvidenceKey(row.feature_id, row.depends_on_id)) ?? null,
         })),
         taskCounts,
         activeFeatureIds: activeRows.map((row) => row.feature_id),
+        nodeIntegrationEvidence: evidence.nodeEvidence,
+        edgeIntegrationEvidence: evidence.edgeEvidence,
       };
     });
   }
@@ -2549,9 +2563,19 @@ export function createSqlitePlanAccess(
           'FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
       ).all(validProjectId, phaseId) as FeatureDependencySqlRow[];
       const features = featureRows.map(featureFromRow);
+      // F-004（P07 DAG）：预览与调度读取同一套权威集成证据投影（同事务、fail-closed）。
+      const previewEvidence = readFeatureDagIntegrationEvidenceInView(db, {
+        projectId: validProjectId,
+        phaseId,
+        operation,
+        featureIds: new Set(featureRows.map((row) => row.id)),
+        edges: edgeRows.map((row) => ({ featureId: row.feature_id, dependsOnId: row.depends_on_id })),
+      });
       const featureEdges: FeatureDependencyRecord[] = edgeRows.map((row) => ({
         id: row.id, projectId: row.project_id, phaseId: row.phase_id,
         featureId: row.feature_id, dependsOnId: row.depends_on_id, codeBaselineRef: row.code_baseline_ref,
+        revision: row.revision,
+        integrationEvidence: previewEvidence.edgeEvidence.get(featureDagEdgeEvidenceKey(row.feature_id, row.depends_on_id)) ?? null,
       }));
       const graph = evaluateFeatureDag({
         projectId: validProjectId,
@@ -2561,8 +2585,9 @@ export function createSqlitePlanAccess(
           projectId: feature.projectId,
           phaseId: feature.phaseId,
           status: feature.status,
-          // P05-2 deliberately does not infer integration from Feature completion.
-          integrationEvidence: null,
+          revision: featureRows.find((row) => row.id === feature.id)?.revision,
+          // 集成证据只由权威 integration plan 投影；缺失即 fail-closed 为 null。
+          integrationEvidence: previewEvidence.nodeEvidence.get(feature.id) ?? null,
         })),
         existingEdges: featureEdges,
       });

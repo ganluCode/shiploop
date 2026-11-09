@@ -1737,9 +1737,13 @@ function validatePhaseGraphWire(value: unknown): PhaseGraphResult {
   if (dependencies.some(edge => edge.projectId !== phase.projectId || edge.phaseId !== phase.id)) malformed(operation, 'scope_mismatch');
   const readiness = graph.readiness.map(value => {
     const item = requirePlain(operation, value);
-    exactKeys(operation, item, ['featureId', 'dependencyCompleted', 'dependencyCompletion', 'integrationReady', 'dependencyIntegrationReady', 'ready', 'reason', 'blockers']);
+    exactKeys(operation, item, ['featureId', 'dependencyCompleted', 'dependencyCompletion', 'integrationReady', 'dependencyIntegrationReady', 'ready', 'reason', 'blockers', 'dependencyStaleReasons', 'dependencyBlockReasons']);
     requireStableId(operation, item.featureId);
     for (const key of ['dependencyCompleted', 'integrationReady', 'dependencyIntegrationReady', 'ready']) if (typeof item[key] !== 'boolean') malformed(operation, 'phase_graph_readiness_invalid');
+    for (const key of ['dependencyStaleReasons', 'dependencyBlockReasons'] as const) {
+      const reasons = item[key];
+      if (!Array.isArray(reasons) || reasons.some(reason => typeof reason !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(reason))) malformed(operation, 'phase_graph_readiness_invalid');
+    }
     if (!(FEATURE_DAG_REASONS as readonly unknown[]).includes(item.reason) || !(FEATURE_DEPENDENCY_COMPLETION as readonly unknown[]).includes(item.dependencyCompletion) || !Array.isArray(item.blockers) || item.blockers.some(reason => !(FEATURE_GRAPH_BLOCKER_REASONS as readonly unknown[]).includes(reason))) malformed(operation, 'phase_graph_readiness_invalid');
     if (!ids.has(item.featureId as string) || item.dependencyCompleted !== (item.dependencyCompletion === 'complete') || item.ready !== (item.reason === 'ready') || (item.ready && (!item.dependencyCompleted || !item.dependencyIntegrationReady))) malformed(operation, 'phase_graph_readiness_invalid');
     return item as unknown as PhaseGraphResult['readiness'][number];

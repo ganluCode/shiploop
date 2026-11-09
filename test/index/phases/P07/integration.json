@@ -428,6 +428,16 @@
           "file": "test/modules/planning/planning-baseline-separation.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/planning/feature-dag-store-evidence.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/planning/feature-dag-diamond-evidence.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }

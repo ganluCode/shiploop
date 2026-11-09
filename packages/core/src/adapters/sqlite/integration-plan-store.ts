@@ -138,6 +138,71 @@ function validateRevision(value: unknown, operation: string): number {
   return value as number;
 }
 
+function planInputOf(record: PersistedIntegrationPlan): IntegrationPlanInput {
+  return {
+    projectId: record.projectId, phaseId: record.phaseId, batchId: record.batchId,
+    successorFeatureId: record.successorFeatureId, targetBaseline: record.targetBaseline,
+    predecessors: record.predecessors, approvedInputs: record.approvedInputs,
+    mergeOrder: record.mergeOrder, verificationScope: record.verificationScope,
+    strategySummary: record.strategySummary, integrationResult: record.integrationResult,
+  };
+}
+
+/**
+ * F-004（P07 DAG）：在同一读事务内校验并返回同 Phase 的全部权威 integration plan。
+ *
+ * 在 recordFromRow 的结构校验之上叠加持久不变量：状态/原因枚举、revision 与时间，
+ * 以及身份摘要重算与非 stale/blocked 状态的可推导性。任何损坏都在读取面 fail-closed，
+ * 不把坏事实带入 Feature DAG 评估。status='stale'/'blocked' 允许由受控状态更新写入，
+ * 因此只重算身份摘要，不要求与派生状态一致。
+ */
+export function listIntegrationPlansByPhaseInTransaction(
+  db: Database.Database,
+  projectId: string,
+  phaseId: string,
+  operation = `${OPERATION}.listByPhase`,
+): readonly PersistedIntegrationPlan[] {
+  const rows = db.prepare<[string, string], PlanRow>(
+    `SELECT ${PLAN_COLUMNS} FROM integration_plans WHERE project_id = ? AND phase_id = ? ORDER BY id`,
+  ).all(projectId, phaseId);
+  return rows.map((row) => {
+    const record = recordFromRow(db, row, operation);
+    const entityRef = entity(row.project_id, row.id);
+    if (!(INTEGRATION_PLAN_STATUSES as readonly string[]).includes(record.status)
+      || !Array.isArray(record.blockReasons)
+      || record.blockReasons.some((reason) => !(INTEGRATION_BLOCK_REASONS as readonly string[]).includes(reason))
+      || !Array.isArray(record.staleReasons)
+      || record.staleReasons.some((reason) => !(INTEGRATION_STALE_REASONS as readonly string[]).includes(reason))) {
+      throw new StorageError('corrupt', operation, '集成计划持久状态投影损坏', {
+        entity: entityRef, details: { reason: 'invalid_status_projection' },
+      });
+    }
+    if (!Number.isSafeInteger(record.revision) || record.revision < 1
+      || !Number.isSafeInteger(record.createdAtUtcMs) || record.createdAtUtcMs < 1
+      || !Number.isSafeInteger(record.updatedAtUtcMs) || record.updatedAtUtcMs < 1
+      || (record.frozenAtUtcMs !== null
+        && (!Number.isSafeInteger(record.frozenAtUtcMs) || record.frozenAtUtcMs < 1))) {
+      throw new StorageError('corrupt', operation, '集成计划持久身份或时间字段损坏', { entity: entityRef });
+    }
+    let derived: IntegrationPlan;
+    try {
+      derived = createIntegrationPlan(planInputOf(record));
+    } catch (cause) {
+      throw new StorageError('corrupt', operation, '集成计划持久快照未通过端口校验', { entity: entityRef, cause });
+    }
+    // 注：row.id / row.input_digest 在创建时固化，且 identity_immutable 触发器禁止变更；
+    // 受控 updateResult 会写入结果使当前体重算身份漂移，因此这里不重算创建期身份，
+    // 只校验结构、枚举与状态可推导性（状态仍必须能由当前冻结输入推导）。
+    if ((record.status === 'dependency_passed' || record.status === 'integration_passed')
+      && derived.status !== record.status) {
+      throw new StorageError('corrupt', operation, '集成计划持久状态不可由冻结输入推导', {
+        entity: entityRef, details: { reason: 'status_not_derivable', persisted: record.status, derived: derived.status },
+      });
+    }
+    return record;
+  });
+}
+
 function validateOwnership(db: Database.Database, input: IntegrationPlanInput, operation: string): void {
   const project = db.prepare<[string], { id: string }>('SELECT id FROM projects WHERE id = ?').get(input.projectId);
   if (project === undefined) throw new StorageError('not_found', operation, 'Project 不存在', { entity: { type: 'project', id: input.projectId } });
@@ -344,6 +409,14 @@ export function createSqliteIntegrationPlanAccess(
         const row = readRow(projectId, integrationId);
         return row === undefined ? undefined : recordFromRow(db, row, operation);
       });
+    },
+    listIntegrationPlansByPhase(projectIdInput, phaseIdInput) {
+      const operation = `${OPERATION}.listByPhase`;
+      if (db.inTransaction) throw new TypeError(`${operation} 不能嵌套在写事务内`);
+      const projectId = validateStableId(projectIdInput, { operation }, 'projectId');
+      const phaseId = validateStableId(phaseIdInput, { operation }, 'phaseId');
+      return transactSqliteConsistentRead(session, operation, () =>
+        listIntegrationPlansByPhaseInTransaction(db, projectId, phaseId, operation));
     },
   };
 }

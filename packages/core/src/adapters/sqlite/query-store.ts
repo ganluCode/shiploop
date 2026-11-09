@@ -376,6 +376,8 @@ export function createSqliteQueryStore(
       notificationQueries.readNotificationDelivery(projectId, deliveryId),
     readIntegrationPlanView: (projectId: unknown, integrationId: unknown) =>
       integrationPlan.readIntegrationPlanView(projectId, integrationId),
+    listIntegrationPlanViewsByPhase: (projectId: unknown, phaseId: unknown) =>
+      integrationPlan.listIntegrationPlanViewsByPhase(projectId, phaseId),
     readRunControlView: (projectId: unknown, runId: unknown): ExecutionRunControlView | undefined =>
       executionControl.readRunControlView(projectId, runId),
     readBatchControlView: (projectId: unknown, batchId: unknown): ExecutionBatchControlView | undefined =>

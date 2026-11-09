@@ -37,6 +37,7 @@ describe('P05-2 F-006 Phase graph blocker projection', () => {
       readiness: {
         featureId: 'feature-c', dependencyCompleted: true, dependencyCompletion: 'complete',
         integrationReady: false, dependencyIntegrationReady: false, ready: false, reason: 'integration_not_ready',
+        dependencyStaleReasons: [], dependencyBlockReasons: [],
       },
       taskCount: 2, planStatus: 'approved', activeBatch: false, missingCodeBaseline: true, missingDependencyIds: [],
     });
@@ -48,6 +49,7 @@ describe('P05-2 F-006 Phase graph blocker projection', () => {
       readiness: {
         featureId: 'feature-c', dependencyCompleted: false, dependencyCompletion: 'failed',
         integrationReady: false, dependencyIntegrationReady: false, ready: false, reason: 'dependency_failed',
+        dependencyStaleReasons: [], dependencyBlockReasons: [],
       },
       taskCount: 0, planStatus: 'draft', activeBatch: true, missingCodeBaseline: false, missingDependencyIds: [],
     })).toEqual(['no_tasks', 'plan_not_approved', 'dependency_failed', 'active_batch_scope']);

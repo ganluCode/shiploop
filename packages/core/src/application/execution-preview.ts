@@ -371,6 +371,8 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
           dependencyIntegrationReady: true,
           ready: true,
           reason: 'ready',
+          dependencyStaleReasons: [],
+          dependencyBlockReasons: [],
         },
       }];
       const project = scopeView?.project ?? legacyView!.project;

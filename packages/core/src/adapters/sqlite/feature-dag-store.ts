@@ -1,6 +1,8 @@
 import { StorageError } from '../../ports/errors.js';
 import type { FeatureDagInput, FeatureDagStore } from '../../ports/feature-dag.js';
+import { featureDagEdgeEvidenceKey } from '../../ports/feature-dag.js';
 import { validateStableId } from '../../ports/validation.js';
+import { readFeatureDagIntegrationEvidenceInView } from './feature-dag-integration-projection.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 import type { SqliteStorageSession } from './session.js';
 
@@ -11,6 +13,7 @@ interface FeatureRow {
   readonly project_id: string;
   readonly phase_id: string;
   readonly status: string;
+  readonly revision: number;
 }
 
 interface DependencyRow {
@@ -20,14 +23,17 @@ interface DependencyRow {
   readonly feature_id: string;
   readonly depends_on_id: string;
   readonly code_baseline_ref: string | null;
+  readonly revision: number;
 }
 
 /**
- * P05-4 的 Feature DAG 一致读适配器。
+ * P05-4 的 Feature DAG 一致读适配器（P07 DAG / F-004 扩展）。
  *
- * 这里只读取 P05-2 的 Feature/依赖事实并交给统一纯规则评估；没有独立的
- * 调度图状态，也不会把 delivery_status 或 Task 通过推断成代码集成证据。
- * 因此缺少后续集成证据时，依赖候选保持 fail-closed。
+ * 在单一 DEFERRED 读事务内读取 Feature/依赖边和权威 integration plan，并投影
+ * 边级/节点级集成证据：边集、Feature revision、integration plan revision 与证据
+ * 摘要在同一一致读视图中核对；跨项目/跨 Phase/损坏 JSON fail-closed。证据只来自
+ * 已冻结的计划事实（固定 integrationId、交付 commit、目标基线与摘要），不从分支名、
+ * 当前 HEAD 或完成先后推导，也不把 delivery_status 或 Task 通过推断成代码集成证据。
  */
 export function createSqliteFeatureDagStore(session: SqliteStorageSession): FeatureDagStore {
   return {
@@ -45,7 +51,7 @@ export function createSqliteFeatureDagStore(session: SqliteStorageSession): Feat
           });
         }
         const features = db.prepare<[string, string], FeatureRow>(
-          'SELECT id, project_id, phase_id, status FROM features WHERE project_id = ? AND phase_id = ? ORDER BY id',
+          'SELECT id, project_id, phase_id, status, revision FROM features WHERE project_id = ? AND phase_id = ? ORDER BY id',
         ).all(projectId, phaseId);
         if (features.some(feature => feature.project_id !== projectId || feature.phase_id !== phaseId)) {
           throw new StorageError('corrupt', OPERATION, 'Feature DAG contains an ownership mismatch', {
@@ -54,7 +60,7 @@ export function createSqliteFeatureDagStore(session: SqliteStorageSession): Feat
         }
         const featureIds = new Set(features.map(feature => feature.id));
         const dependencies = db.prepare<[string, string], DependencyRow>(
-          'SELECT id, project_id, phase_id, feature_id, depends_on_id, code_baseline_ref ' +
+          'SELECT id, project_id, phase_id, feature_id, depends_on_id, code_baseline_ref, revision ' +
             'FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id, depends_on_id',
         ).all(projectId, phaseId);
         if (dependencies.some(edge => edge.project_id !== projectId || edge.phase_id !== phaseId
@@ -63,6 +69,10 @@ export function createSqliteFeatureDagStore(session: SqliteStorageSession): Feat
             details: { reason: 'invalid_dependency_projection' },
           });
         }
+        const evidence = readFeatureDagIntegrationEvidenceInView(db, {
+          projectId, phaseId, operation: OPERATION, featureIds,
+          edges: dependencies.map(edge => ({ featureId: edge.feature_id, dependsOnId: edge.depends_on_id })),
+        });
         return {
           projectId,
           phaseId,
@@ -71,8 +81,9 @@ export function createSqliteFeatureDagStore(session: SqliteStorageSession): Feat
             projectId: feature.project_id,
             phaseId: feature.phase_id,
             status: feature.status,
-            // Integration evidence is a separate P05-6 fact. Do not infer it from status.
-            integrationEvidence: null,
+            revision: feature.revision,
+            // 集成证据只由权威 integration plan 投影；缺失即 fail-closed 为 null。
+            integrationEvidence: evidence.nodeEvidence.get(feature.id) ?? null,
           })),
           existingEdges: dependencies.map(edge => ({
             id: edge.id,
@@ -81,6 +92,8 @@ export function createSqliteFeatureDagStore(session: SqliteStorageSession): Feat
             featureId: edge.feature_id,
             dependsOnId: edge.depends_on_id,
             codeBaselineRef: edge.code_baseline_ref,
+            revision: edge.revision,
+            integrationEvidence: evidence.edgeEvidence.get(featureDagEdgeEvidenceKey(edge.feature_id, edge.depends_on_id)) ?? null,
           })),
         };
       });

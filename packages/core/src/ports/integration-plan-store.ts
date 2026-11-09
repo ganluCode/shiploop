@@ -64,6 +64,11 @@ export interface IntegrationPlanAccess {
   readonly updateIntegrationPlanStatusInTransaction: (input: unknown) => PersistedIntegrationPlan;
   readonly getIntegrationPlanInTransaction: (projectId: string, integrationId: string) => PersistedIntegrationPlan;
   readonly readIntegrationPlan: (projectId: unknown, integrationId: unknown) => PersistedIntegrationPlan | undefined;
+  /** F-004（P07 DAG）：同 Phase 计划列表（一致读视图；损坏事实 fail-closed）。 */
+  readonly listIntegrationPlansByPhase: (
+    projectId: unknown,
+    phaseId: unknown,
+  ) => readonly PersistedIntegrationPlan[];
 }
 
 export type { IntegrationPlan, IntegrationPlanInput, IntegrationPredecessorInput };

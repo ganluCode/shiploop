@@ -35,7 +35,7 @@ import type {
 } from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
 import type { PlanArtifactRef, PlanComplexity } from './feature-plan.js';
-import type { FeatureDagReadiness, FeatureDependencyRecord } from './feature-dag.js';
+import type { FeatureDagReadiness, FeatureDependencyRecord, FeatureIntegrationEvidence } from './feature-dag.js';
 import type {
   FeaturePlanStatus,
   FeatureRecord,
@@ -500,6 +500,9 @@ export const FEATURE_GRAPH_BLOCKER_REASONS = [
   'active_batch_scope',
   'code_baseline_missing',
   'integration_not_ready',
+  'integration_stale',
+  'integration_blocked',
+  'integration_drift',
   'invalid_graph',
 ] as const;
 export type FeatureGraphBlockerReason = (typeof FEATURE_GRAPH_BLOCKER_REASONS)[number];
@@ -522,6 +525,9 @@ export function derivePhaseFeatureBlockers(input: {
   if (input.activeBatch) blockers.push('active_batch_scope');
   if (input.missingCodeBaseline) blockers.push('code_baseline_missing');
   if (input.readiness.reason === 'integration_not_ready') blockers.push('integration_not_ready');
+  if (input.readiness.reason === 'integration_stale') blockers.push('integration_stale');
+  if (input.readiness.reason === 'integration_blocked') blockers.push('integration_blocked');
+  if (input.readiness.reason === 'integration_drift') blockers.push('integration_drift');
   if (input.readiness.reason === 'invalid_graph') blockers.push('invalid_graph');
   return blockers;
 }
@@ -575,6 +581,12 @@ export interface PhaseFeatureGraphView {
   readonly dependencies: readonly FeatureDependencyRecord[];
   readonly taskCounts: Readonly<Record<string, number>>;
   readonly activeFeatureIds: readonly string[];
+  /**
+   * F-004（P07 DAG）：同一事务内投影的集成证据（节点=全部消费方通过；
+   * 边=按后继权威计划）。缺省表示视图提供方未投影（消费者 fail-closed 为 null）。
+   */
+  readonly nodeIntegrationEvidence?: ReadonlyMap<string, FeatureIntegrationEvidence | null>;
+  readonly edgeIntegrationEvidence?: ReadonlyMap<string, FeatureIntegrationEvidence | null>;
 }
 
 /** phases.get → {phase}（真实父级 projectId 在记录内）。 */
