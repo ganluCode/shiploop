@@ -22,16 +22,16 @@
 - 需求 **FR-1 命令与回执**（幂等命令、摘要冲突、归属授权）与 **FR-2 查询与事件**（同事务
   state_events、至少一次投递按 ID 去重、快照水位断线续读）；验收标准 §3.3 的 5 条（含
   `npm run verify` 全通过、not_run 不折算、记录受测 commit）。
-- 实施前置契约：[p02-2-commands-events-contract.md](../p02-2-commands-events-contract.md)
+- 实施前置契约：[p02-2-commands-events-contract.md](../phases/p02/p02-2-commands-events-contract.md)
   （F-001 定案，F-002 ~ F-020 唯一协议依据）：版本/schemaVersion、命令信封与三态 scope、
   回执三态与错误码映射、授权矩阵、迁移 v3 `command_receipts`、事件封套/白名单/游标、
   `/v1` 路由、SSE 与背压、CLI 参数与五档退出码、§14 FR/T 编号映射、§15 设计差异登记与
   §15.5 携带的核对请求、§17 输入文档哈希。
 - 沿用前序唯一依据：Host 发现/认证/生命周期以
-  [p02-1-host-lifecycle-contract.md](../p02-1-host-lifecycle-contract.md)、
-  [p02-1-writer-lock.md](../p02-1-writer-lock.md) 为准；P01 应用/配置语义以
-  [p01-3-application-contract.md](../p01-3-application-contract.md)、
-  [p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md) 为准。P02-2 只把既有服务
+  [p02-1-host-lifecycle-contract.md](../phases/p02/p02-1-host-lifecycle-contract.md)、
+  [p02-1-writer-lock.md](../phases/p02/p02-1-writer-lock.md) 为准；P01 应用/配置语义以
+  [p01-3-application-contract.md](../phases/p01/p01-3-application-contract.md)、
+  [p01-4-acceptance-contract.md](../phases/p01/p01-4-acceptance-contract.md) 为准。P02-2 只把既有服务
   接入命令面，不重定义 P01 业务规则。
 - 编号不一致：PRD §3.3 的「T26 命令幂等」与设计 09 §2 的 T26（配置 CAS/计划/审批）编号
   不一致，按**具体行为**映射（契约 §14.3），P02-2 完整认领命令幂等语义并携带 P02-1 §15.4
@@ -64,8 +64,8 @@
   仅退出观察（退出码 4）。
 - **F-018**（`9d92977`）：整 Feature 真实 SQLite/HTTP/SSE/CLI 集成回归与脱敏证据映射
   （新增 `test/modules/commands/p02-2-integration-regression.test.ts` 6 项 + 契约 §14 注记 + 证据文档 + 守护）。
-- **F-019**（`98cf080`）：[p02-2-operations.md](../p02-2-operations.md)、
-  [p02-2-handoff.md](../p02-2-handoff.md)、README 索引与文档守护
+- **F-019**（`98cf080`）：[p02-2-operations.md](../phases/p02/p02-2-operations.md)、
+  [p02-2-handoff.md](../phases/p02/p02-2-handoff.md)、README 索引与文档守护
   `test/modules/commands/docs-p02-2-operations.test.ts`（3 项）。
 - **F-020**（本报告）：交付报告、FR 覆盖索引与脱敏证据核对。
 

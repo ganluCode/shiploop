@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const doc = new URL('../../../docs/p03-5-handoff.md', import.meta.url);
+const doc = new URL('../../../docs/phases/p03/p03-5-handoff.md', import.meta.url);
 
 describe('F-013 workspace integration handoff', () => {
   it('hands off delivered workspace surfaces with real-resource evidence, recovery boundary and not_run gaps', () => {
@@ -24,7 +24,7 @@ describe('F-013 workspace integration handoff', () => {
       'modules/workspace/p03-5-workspace-cleaner.test.ts',
       'modules/workspace/p03-5-workspace-discard.test.ts',
       'modules/workspace/p03-5-git-operation-lock.test.ts',
-      'docs/p03-5-workspace-preparation-recovery-contract.md',
+      'docs/phases/p03/p03-5-workspace-preparation-recovery-contract.md',
       'core-design/14-runtime-recovery-and-durable.md',
       'verifications/F-013/',
       'npm run verify', 'git diff --check',

@@ -1,7 +1,7 @@
 # shiploop-cli 源码
 
 CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host 客户端编排。详见设计
-`core-design/08-host-api-and-cli.md` 与本仓库 `docs/p02-1-host-lifecycle-contract.md` §13。
+`core-design/08-host-api-and-cli.md` 与本仓库 `docs/phases/p02/p02-1-host-lifecycle-contract.md` §13。
 
 - 允许：经包名 `shiploop-host` 公共面依赖 Host 的客户端/契约/启动器（F-011 起复用
   `isUuidV4`、错误码冻结表、`BIND_OVERRIDE_ENV_KEYS`、启动预算常量；F-012 起经
@@ -63,6 +63,6 @@ CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host �
   updateTaskStrategy/prepareExecutionInput/getReceipt）接线，结构化输出含实际
   计划身份/当前审批状态/Task 策略与来源/制品组 version/hash/用途，批准/拒绝/准备
   均明确未启动执行、未知执行能力不显示为可运行（操作说明见
-  `docs/p03-2-cli-approval-input-operations.md`）。
+  `docs/phases/p03/p03-2-cli-approval-input-operations.md`）。
 
 单向依赖规则见仓库根 `README.md`。

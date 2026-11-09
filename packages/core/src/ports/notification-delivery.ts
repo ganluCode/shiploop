@@ -24,6 +24,7 @@ import { isUuidV4 } from './commands.js';
 import { StorageError } from './errors.js';
 import type { PublicStateEvent } from './events.js';
 import {
+  ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_TERMINAL_EVENT_TYPE,
   TASK_ACTION_REQUIRED_EVENT_TYPE,
   EXECUTION_RUN_TERMINAL_EVENT_TYPE,
@@ -368,6 +369,7 @@ export interface NotificationDeliveryResultReadInput {
 
 /** 本地渠道输入/回执：摘要已在投影端脱敏，渠道不得访问业务表或执行 shell。 */
 export interface NotificationChannelSendInput {
+  readonly projectId?: string;
   readonly deliveryId: string;
   readonly attempt: number;
   readonly summary: Readonly<Record<string, unknown>>;
@@ -545,6 +547,7 @@ export const NOTIFICATION_SUMMARY_SCHEMA_VERSION = 1 as const;
  * 不产生 delivery；新订阅类型经端口版本化扩展，不猜下游渠道。
  */
 export const NOTIFICATION_SUBSCRIPTION_EVENT_TYPES = [
+  ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_TERMINAL_EVENT_TYPE,
   TASK_ACTION_REQUIRED_EVENT_TYPE,
   EXECUTION_RUN_TERMINAL_EVENT_TYPE,
@@ -587,6 +590,13 @@ export function deriveNotificationSummary(
 ): Readonly<Record<string, unknown>> | null {
   const aggregateId = event.aggregate.id;
   switch (event.type) {
+    case ATTEMPT_UPDATED_EVENT_TYPE: {
+      const fallback = (event.payload as { fallback?: { runId: string; category: string; provider: string; model: string; fromModel?: string } }).fallback;
+      return fallback ? { schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION, kind: 'model_fallback',
+        taskId: aggregateId, runId: fallback.runId, resultCategory: fallback.category,
+        provider: fallback.provider, model: fallback.model,
+        ...(fallback.fromModel === undefined ? {} : { fromModel: fallback.fromModel }) } : null;
+    }
     case TASK_TERMINAL_EVENT_TYPE: {
       const payload = event.payload as { status: string; resultCategory: string; attemptId: string; runId: string; resultRef: string | null };
       return {

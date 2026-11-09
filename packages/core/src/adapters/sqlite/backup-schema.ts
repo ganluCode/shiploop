@@ -16,6 +16,8 @@ const BACKUP_READS: ReadonlyArray<readonly [string, number, readonly string[]]> 
   ['capability_modules', 48, ['project_id', 'content_ref']],
   ['document_versions', 49, ['project_id', 'content_ref', 'source_refs']],
   ['memory_records', 49, ['project_id', 'content_ref', 'source_refs']],
+  ['feature_repair_attempts', 65, ['project_id', 'result_ref', 'process_identity', 'stop_confirmed']],
+  ['git_pushes', 65, ['project_id', 'run_id', 'remote_digest', 'commit_sha', 'status']],
 ];
 
 export function assertBackupSchemaReadable(db: Database.Database): void {

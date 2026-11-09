@@ -1,7 +1,7 @@
 /**
  * P01-4 / F-004 真实 SQLite 回滚与当前配置 CAS 阶段负例（检查
  * `P01-FR1-ROLLBACK` / `P01-FR2-ROLLBACK` / `P01-FR2-CAS`，契约见
- * docs/p01-4-acceptance-contract.md §2.1 / §3.3）：复用前序事务故障注入端口
+ * docs/phases/p01/p01-4-acceptance-contract.md §2.1 / §3.3）：复用前序事务故障注入端口
  * （真实 SQLite `CREATE TEMP TRIGGER … RAISE(ABORT)`，与 F-005/F-007/F-010
  * 同一注入面），在 F-002 夹具的隔离数据根与真实 Git 仓库上证明：
  *

@@ -34,7 +34,7 @@ const SKILL_INIT = 'docs/skills/project-init.md';
 const SKILL_OVERVIEW = 'docs/skills/project-overview.md';
 const SKILL_PATHS = [SKILL_INIT, SKILL_OVERVIEW] as const;
 
-/** dist CLI 的两个正式入口形态（与 docs/p02-2-operations.md 分发约定一致）。 */
+/** dist CLI 的两个正式入口形态（与 docs/phases/p02/p02-2-operations.md 分发约定一致）。 */
 const CLI_ENTRY_PREFIXES = ['node packages/cli/dist/bin.js ', 'shiploop '] as const;
 
 /** 示例命令只允许这些只读查询或需用户明确确认的正式命令（§12.4：Skill 不新增能力）。 */

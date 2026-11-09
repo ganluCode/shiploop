@@ -2,7 +2,7 @@
  * P05-1 / F-011 规划上下文/候选只读授权查询服务（application 层）。
  *
  * 设计依据：input/p05-planning.md FR-4、core-design/04 §3/§6（原因可查询、
- * 查询零写入）与 docs/p05-1-planning-candidate-contract.md（单候选、历史保留）。
+ * 查询零写入）与 docs/phases/p05/p05-1-planning-candidate-contract.md（单候选、历史保留）。
  *
  * 不变量：
  * - 能力核验（project.read）→ 输入校验 → 项目可见性 → 一致读，顺序固定；
@@ -274,6 +274,7 @@ export function createPlanningQueryService(options: PlanningQueryServiceOptions)
           id: task.id,
           title: task.title,
           complexity: task.complexity,
+          languages: [...task.languages],
           dependsOn: [...task.dependsOn],
         })),
         taskCount: candidate.plan.taskCount,

@@ -98,6 +98,6 @@
     "title": "P06 阶段验收契约与执行报告",
     "scope": "FR-1/FR-2 及 P06-1～P06-6 的存量接入、知识、增量、资源隔离、stdio MCP、live、人工和显式全仓回归开关",
     "version": "0.3",
-    "contractDoc": "docs/p06-acceptance.md"
+    "contractDoc": "docs/phases/p06/p06-acceptance.md"
   }
 }

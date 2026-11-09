@@ -7,7 +7,7 @@
  * 后不能用旧批准执行；标签变化不导致无关失效」、core-design/02 §10（修改要求
  * 或依赖更新当前计划并使旧批准失效）、core-design/11 §7（approvals 只批准
  * 具体版本，主体摘要变更使旧批准失效）。
- * 实施契约：docs/p03-2-plan-approval-verification-contract.md（本模块契约文档）。
+ * 实施契约：docs/phases/p03/p03-2-plan-approval-verification-contract.md（本模块契约文档）。
  *
  * 审批覆盖的实质输入身份（F-003 定案）：
  * - 要求、完整 acceptance、依赖：由前序确定性 planDigest（P03-1 冻结的业务

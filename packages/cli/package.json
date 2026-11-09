@@ -27,7 +27,8 @@
     "skills"
   ],
   "dependencies": {
-    "shiploop-host": "0.0.0"
+    "shiploop-host": "0.0.0",
+    "yaml": "2.9.0"
   },
   "scripts": {
     "build": "tsc -b tsconfig.json"

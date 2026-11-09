@@ -1,7 +1,7 @@
 /**
  * F-009 HostClient（契约 §12）：CLI 可复用的 Host 客户端。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §12：
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §12：
  * - §12.1：读取并核验受保护发现与凭据（复用 F-003 存储的 fail-closed 核验），
  *   本地计算 dataRootIdentity；只连接发现指向的 127.0.0.1 固定端口；
  * - §12.2：先发握手，响应必须同时通过 HTTP 200、协议版本支持集、

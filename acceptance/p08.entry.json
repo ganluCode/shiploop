@@ -40,7 +40,7 @@
       },
       "P08-2": {
         "reports": [
-          "docs/p08-2-live-acceptance-entry.md"
+          "docs/phases/p08/p08-2-live-acceptance-entry.md"
         ],
         "machineReadable": [],
         "liveEvidenceKind": "shiploop.todo.live-evidence",

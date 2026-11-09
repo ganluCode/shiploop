@@ -562,6 +562,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         baselineQueryService: locked.writer.baselineQueryService,
         baselineComparisonService: locked.writer.baselineComparisonService,
         knowledgeQueryService: locked.writer.knowledgeQueryService,
+        managedDocuments: locked.writer.managedDocuments,
         memoryQueryService: locked.writer.memoryQueryService,
         baselineExecutionService: locked.writer.baselineExecutionService,
         // P05-1 / F-012：规划上下文/候选只读查询接线（与握手能力清单一致；

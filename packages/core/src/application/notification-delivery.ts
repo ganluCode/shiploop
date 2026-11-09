@@ -102,6 +102,7 @@ export function createNotificationDeliveryService(options: NotificationDeliveryS
   async function process(delivery: NotificationDeliveryRecord, channel: NotificationChannel): Promise<NotificationDeliveryAttemptResult> {
     const controller = new AbortController();
     const sendInput: NotificationChannelSendInput = {
+      projectId: delivery.projectId,
       deliveryId: delivery.deliveryId, attempt: delivery.attemptCount, summary: delivery.summary, signal: controller.signal,
     };
     let sent: Completed<Readonly<Record<string, unknown>>> | TimedOut;

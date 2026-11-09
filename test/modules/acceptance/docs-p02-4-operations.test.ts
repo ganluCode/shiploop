@@ -1,5 +1,5 @@
 /**
- * F-013 文档核验：P02 操作指南（`docs/p02-4-operations.md`，含验收复跑说明）与人工审阅
+ * F-013 文档核验：P02 操作指南（`docs/phases/p02/p02-4-operations.md`，含验收复跑说明）与人工审阅
  * 清单（`docs/acceptance/p02-4-review-checklist.md`）必须交接**实际支持的接口与阶段
  * 边界**，不得与真实命令契约、`accept:p02` 控制器或检查清单漂移：
  *
@@ -41,7 +41,7 @@ import {
 } from '../../../scripts/acceptance/p02-config.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OPERATIONS_DOC_PATH = 'docs/p02-4-operations.md';
+const OPERATIONS_DOC_PATH = 'docs/phases/p02/p02-4-operations.md';
 const CHECKLIST_DOC_PATH = 'docs/acceptance/p02-4-review-checklist.md';
 const README_PATH = 'README.md';
 
@@ -411,7 +411,7 @@ describe('F-013 平台与边界声明', () => {
       expect(doc).not.toMatch(/ghp_[A-Za-z0-9]/);
       expect(doc).not.toContain('PRIVATE KEY');
     }
-    expect(readmeDoc).toContain('docs/p02-4-operations.md');
+    expect(readmeDoc).toContain('docs/phases/p02/p02-4-operations.md');
     expect(readmeDoc).toContain('docs/acceptance/p02-4-review-checklist.md');
   });
 });

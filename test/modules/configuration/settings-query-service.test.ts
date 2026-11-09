@@ -91,6 +91,26 @@ const GLOBAL_PAYLOAD: SettingsPayload = {
   },
 };
 
+it('persists and exports global locale through configuration services while rejecting project overrides', async () => {
+  await withMigratedDb(async dbPath => {
+    const h = openHarness(dbPath, createClock());
+    try {
+      const project = await h.store.createProject({ displayName: 'Locale project' });
+      const created = await h.service.createSettings({ kind: 'global' }, { payload: { schemaVersion: 2 } });
+      expect(created.payload.locale).toBe('en-US');
+      const updated = await h.service.updateSettings({ kind: 'global' }, {
+        expectedRevision: created.revision, payload: { schemaVersion: 2, locale: 'zh-CN' },
+      });
+      expect(updated.payload.locale).toBe('zh-CN');
+      expect((await h.service.getEffectiveSettings(project.id)).locale).toBe('zh-CN');
+      expect((await h.service.exportSettings()).current.locale).toBe('zh-CN');
+      await expect(h.service.createSettings({ kind: 'project', projectId: project.id }, {
+        payload: { schemaVersion: 2, locale: 'zh-CN' },
+      })).rejects.toSatisfy((error: unknown) => isStorageError(error, 'validation'));
+    } finally { h.close(); }
+  });
+});
+
 const PROJECT_PAYLOAD: SettingsPayload = {
   schemaVersion: 2,
   strategies: {
@@ -216,7 +236,7 @@ function injectStoredPayload(
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p01-3-application-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p01/p01-3-application-contract.md';
 const SERVICE_SOURCE_PATH = 'packages/core/src/application/configuration-service.ts';
 
 describe('F-011 getCurrentSettings (current value by scope)', () => {
@@ -232,7 +252,7 @@ describe('F-011 getCurrentSettings (current value by scope)', () => {
         expect(global.id).toBe('global');
         expect(global.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
         expect(global.revision).toBe(1);
-        expect(global.payload).toEqual(GLOBAL_PAYLOAD);
+        expect(global.payload).toEqual({ ...GLOBAL_PAYLOAD, locale: 'en-US' });
         expect('projectId' in global).toBe(false);
 
         const projectRecord = await harness.service.getCurrentSettings({ kind: 'project', projectId: project.id });
@@ -446,6 +466,31 @@ describe('F-011 getEffectiveSettings (F-009 merge + sources)', () => {
 });
 
 describe('F-011 exportSettings (plain redacted export)', () => {
+  it('preserves ordered fallbacks and policy in current and effective exports', async () => {
+    await withMigratedDb(async (dbPath) => {
+      const harness = openHarness(dbPath, createClock());
+      try {
+        const strategy = {
+          ...GLOBAL_PAYLOAD.strategies!.defaultStrategy!,
+          fallbacks: [
+            { runtime: 'pi', provider: 'openai', model: 'backup-a', credentialRef: 'credential://pi/openai' },
+            { runtime: 'pi', provider: 'anthropic', model: 'claude-opus' },
+          ],
+          fallbackPolicy: { onAuthentication: 'stop' as const },
+        };
+        await harness.service.createSettings({ kind: 'global' }, {
+          payload: { schemaVersion: 2, strategies: { defaultStrategy: strategy } },
+        });
+        const exported = await harness.service.exportSettings();
+        expect(exported.exportFormatVersion).toBe(2);
+        expect(exported.current.strategies?.defaultStrategy).toEqual(strategy);
+        expect(exported.effective.strategies.defaultStrategy?.strategy).toEqual(strategy);
+      } finally {
+        harness.close();
+      }
+    });
+  });
+
   it('exports scope metadata, current projection and effective sources; references are preserved verbatim', async () => {
     await withMigratedDb(async (dbPath) => {
       const harness = openHarness(dbPath, createClock());
@@ -459,6 +504,7 @@ describe('F-011 exportSettings (plain redacted export)', () => {
         expect(globalExport.scope).toBe('global');
         expect('projectId' in globalExport).toBe(false);
         expect(globalExport.current).toEqual({
+          locale: 'en-US',
           schemaVersion: 2,
           revision: 1,
           strategies: {

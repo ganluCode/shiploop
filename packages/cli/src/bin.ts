@@ -20,6 +20,8 @@ import { APP_CLI_COMMANDS } from './app/index.js';
 import { runAppCli } from './app-execute.js';
 import { runHostCli } from './host/execute.js';
 import { CLI_EXIT_OBSERVATION_INTERRUPTED } from './host/output.js';
+import { runProviderCli } from './provider-auth.js';
+import { isManagedWorkflow, runManagedWorkflow } from './managed-workflow.js';
 
 const io = {
   stdout: (text: string) => process.stdout.write(text),
@@ -39,7 +41,9 @@ const observesBaseline =
   args[0] === 'baseline' &&
   args.includes('run') &&
   (args.includes('--wait') || args.includes('--follow'));
-if (isAppCommand && (args[0] === 'events' || observesBaseline)) {
+const watchesConfig = args[0] === 'config' && args[1] === 'watch';
+const providerCommand = args[0] === 'provider';
+if (providerCommand || (isAppCommand && (args[0] === 'events' || observesBaseline || watchesConfig))) {
   const controller = new AbortController();
   let forced = false;
   process.on('SIGINT', () => {
@@ -49,10 +53,12 @@ if (isAppCommand && (args[0] === 'events' || observesBaseline)) {
     forced = true;
     controller.abort();
   });
+  if (watchesConfig || providerCommand) process.on('SIGTERM', () => controller.abort());
   observationSignal = controller.signal;
 }
 
-const run = isAppCommand
+const run = isManagedWorkflow(args) ? runManagedWorkflow({ args, io, userHomeDir: homedir() })
+  : providerCommand ? runProviderCli({ args, io, userHomeDir: homedir(), input: process.stdin, signal: observationSignal }) : isAppCommand
   ? runAppCli({
       args,
       env: process.env,

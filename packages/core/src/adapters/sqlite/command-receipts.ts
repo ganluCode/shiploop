@@ -2,7 +2,7 @@
  * F-006 SQLite CommandReceiptStore 适配器（adapters 层）：持久命令回执的
  * 写入与授权读取端口实现。
  *
- * 设计依据：docs/p02-2-commands-events-contract.md §5.3/§5.5/§5.6/§10 与
+ * 设计依据：docs/phases/p02/p02-2-commands-events-contract.md §5.3/§5.5/§5.6/§10 与
  * core-design/03 §1-3（端口先校验后持久化、短同步写事务）。
  *
  * 不变量：

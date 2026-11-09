@@ -19,7 +19,7 @@ it.each([
   { ...enabled, maxRepairs: 4 }, { ...enabled, maxRepairs: 0 }, { ...enabled, maxRepairs: 1.5 },
   { ...enabled, maxTokenTotal: 0 }, { ...enabled, maxTokenTotal: null },
   { ...enabled, maxTurns: 0 }, { ...enabled, timeoutMs: 999 },
-  { enabled: true }, { ...enabled, strategy: { runtime: 'fake' } },
+  { enabled: true, strategy: { runtime: 'fake' } },
   { ...enabled, strategy: { ...strategy, apiKey: 'must-not-be-accepted' } },
   { ...enabled, prompt: 'bypass approvals' }, { ...enabled, enabled: 'true' },
 ])('rejects invalid or unbounded feature auto repair %#', policy => {
@@ -52,6 +52,17 @@ it('defaults to disabled, resolves an explicit strategy before high and binds fi
   expect(changed).not.toEqual(ready);
   expect(listStrategyEntries(undefined, { featureAutoFix: { ...enabled, strategy } }))
     .toEqual([{ field: 'payload.policies.featureAutoFix.strategy', strategy }]);
+});
+
+it('allows the retry-only policy without feature-specific token, time or turn caps', () => {
+  const policy = { enabled: true, maxRepairs: 3, strategy };
+  expect(validateSettingsPayload({ schemaVersion: 2, policies: { featureAutoFix: policy } }, context)
+    .policies?.featureAutoFix).toEqual(policy);
+  const resolved = resolveFeatureAutoFixPolicy(mergeEffectiveSettings({
+    project: { scopeRevision: 1, payload: { schemaVersion: 2, policies: { featureAutoFix: policy }, strategies: { modelMap: { high: strategy } } } },
+  }));
+  expect(resolved).toMatchObject({ status: 'ready', maxRepairs: 3, strategy });
+  expect((resolved as { maxTokenTotal?: number }).maxTokenTotal).toBeUndefined();
 });
 
 it('validates repair provider/model capabilities even when no ordinary task strategy is configured', () => {

@@ -141,7 +141,7 @@ function buildHandshakeResponse(context: HostLifecycleContext, schemaVersion: nu
     ...(typeof context.application?.knowledgeQueryService?.search === 'function' ? ['knowledge.search' as const] : []),
     ...(typeof context.application?.knowledgeQueryService?.read === 'function' ? ['knowledge.read' as const] : []),
     ...(typeof context.application?.memoryQueryService?.search === 'function' ? ['memory.search' as const] : []),
-  ]);
+  ], typeof context.application?.managedDocuments?.writeDraft === 'function' && typeof context.application.managedDocuments.locations === 'function');
   // v5 clients predate P06-5 repository move wiring. Keep the route and
   // current v6 declaration intact while returning the capability surface that
   // the v5 client can understand.

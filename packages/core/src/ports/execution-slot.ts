@@ -3,7 +3,7 @@
  * 无任何 I/O）。
  *
  * 设计依据：input/p04-dispatch-foundation.md §3.2、core-design/15
- * §3 与 F-001 契约 docs/p04-9-f001-dispatch-slot-contract.md。
+ * §3 与 F-001 契约 docs/phases/p04/p04-9-f001-dispatch-slot-contract.md。
  *
  * 职责边界（四种资源职责不得互相冒充）：
  * - 执行槽位（本契约）：只限制「同时运行的 Run 消费者数量」；

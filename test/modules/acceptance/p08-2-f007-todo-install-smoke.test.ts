@@ -354,6 +354,6 @@ describe('P08-2 F-007 干净安装目录启动打包 CLI 冒烟', () => {
 
     const readme = readFileSync(join(REPO_ROOT, 'test/README.md'), 'utf8');
     expect(readme).toContain('index/phases/P08/features/P08-2/tasks/F-007.json');
-    expect(readFileSync(join(REPO_ROOT, 'docs/p08-2-todo-install-smoke.md'), 'utf8')).toContain('F-007');
+    expect(readFileSync(join(REPO_ROOT, 'docs/phases/p08/p08-2-todo-install-smoke.md'), 'utf8')).toContain('F-007');
   });
 });

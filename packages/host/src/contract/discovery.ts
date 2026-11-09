@@ -1,7 +1,7 @@
 /**
  * F-002 发现文件契约（discovery.json）：类型与运行时校验（纯模块）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §5（发现文件契约）、
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §5（发现文件契约）、
  * §3.2（dataRootIdentity）、§7.1（版本）。
  *
  * 发现文件是本地受保护文件（0600），从不经 HTTP 传输；因此其结构问题使用

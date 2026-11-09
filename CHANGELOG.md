@@ -10,9 +10,9 @@
 - F-002：新增 `npm run pack:local`，按依赖顺序生成三个本地 tarball 和带逐文件摘要的 `distribution-manifest.json`；拒绝 workspace/file/开发目录依赖与疑似凭据。
 - F-003：新增 `npm run verify:artifacts`，核对清单、commit、制品摘要、入口、依赖闭包、协议/Schema 范围和敏感内容；结果区分 `passed` / `failed` / `not_run`。
 - F-004：新增最小发布 CI `release-ci`，固定 `npm ci → verify:ci-config → verify → pack:local → verify:artifacts → 摘要` 顺序；不发布、不推送、不创建 PR、不调用真实模型。
-- F-005：新增[新用户安装与操作指南](docs/p08-1-user-guide.md)，覆盖本地 pack、独立安装、数据根、Host/CLI、认证、项目接入、规划、执行、停止、备份恢复与排障。
+- F-005：新增[新用户安装与操作指南](docs/phases/p08/p08-1-user-guide.md)，覆盖本地 pack、独立安装、数据根、Host/CLI、认证、项目接入、规划、执行、停止、备份恢复与排障。
 - F-006：新增并同步 8 份[操作 Skills](docs/skills/)，只通过正式 CLI/API 操作；补齐安装、规划批准、执行观察、停止、备份恢复和排障命令面。
-- F-007：新增[发布支持矩阵](docs/p08-1-support-matrix.md)、[制品检查说明](docs/p08-1-artifact-verification.md)、[发布清单模板](docs/acceptance/p08-1-release-manifest.md)与[P08-1 交付报告](docs/acceptance/p08-1-delivery-report.md)，并接入 README 文档导航。
+- F-007：新增[发布支持矩阵](docs/phases/p08/p08-1-support-matrix.md)、[制品检查说明](docs/phases/p08/p08-1-artifact-verification.md)、[发布清单模板](docs/acceptance/p08-1-release-manifest.md)与[P08-1 交付报告](docs/acceptance/p08-1-delivery-report.md)，并接入 README 文档导航。
 
 ### 兼容性
 

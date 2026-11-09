@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
@@ -61,7 +62,7 @@ function bodyRef(id: string) {
 
 describe('P06-1 F-004 profile input snapshot boundary', () => {
   it('[case:profile-snapshot-manifest] fixes profile/module identity in ContextBuilder output without inline bodies or paths', () => {
-    const result = createContextBuilder({
+    const result = createContextBuilder({ promptTemplates: testPromptTemplates,
       budget: {
         maxPromptBytes: 100_000,
         maxRequiredSnapshotBytes: 50_000,
@@ -92,7 +93,7 @@ describe('P06-1 F-004 profile input snapshot boundary', () => {
   });
 
   it('[case:profile-unknown-field-fail-closed] rejects malformed profile snapshots and preserves old snapshot compatibility', () => {
-    const builder = createContextBuilder({
+    const builder = createContextBuilder({ promptTemplates: testPromptTemplates,
       budget: {
         maxPromptBytes: 100_000,
         maxRequiredSnapshotBytes: 50_000,

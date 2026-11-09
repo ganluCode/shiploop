@@ -214,6 +214,21 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession, opti
       }
       release(result.claim, timestamp);
     },
+    releaseForRun(runId: string, timestamp: number) {
+      assertWrite();
+      const currentAttempts = db.prepare<[string], { status: string }>(
+        'SELECT status FROM attempts WHERE run_id = ? ORDER BY created_at, rowid',
+      ).all(runId);
+      if (currentAttempts.some(attempt => ['preparing', 'executing', 'verifying'].includes(attempt.status))) {
+        recoveryConflict('dispatch_occupancy_unresolved');
+      }
+      if (db.prepare<[string], { id: string }>(
+        'SELECT id FROM workspace_leases WHERE owner_id IN (SELECT id FROM attempts WHERE run_id = ?) LIMIT 1',
+      ).get(runId)) recoveryConflict('dispatch_occupancy_unresolved');
+      for (const claim of claims(runId)) {
+        if (claim.state !== 'released') release(claim, timestamp, 'planning_cancelled');
+      }
+    },
   };
 }
 

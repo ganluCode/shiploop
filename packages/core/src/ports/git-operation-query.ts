@@ -4,7 +4,7 @@
  * 设计依据：input/p03-feature-delivery.md FR-1（意图/实际 commit/回执分别
  * 可查询，不用一条 completed 掩盖失败）与 core-design/07 §4（提交作为
  * operation：意图 → 执行 → 核对 → 回执）；查询面纪律沿用
- * docs/p02-2-commands-events-contract.md §7（查询与分页）。
+ * docs/phases/p02/p02-2-commands-events-contract.md §7（查询与分页）。
  *
  * 不变量：
  * - 公开记录是 F-002 持久事实（GitOperationRecord，已经 validateGitOperationRecord

@@ -5,7 +5,7 @@
  * 设计依据：core-design/06 §1（规范路径 + Git 与脏状态识别；不执行仓库脚本、
  * 不安装依赖；已有脏工作区不自动 stash/reset；无初始 commit 不猜 main）、
  * core-design/03 §1（canonical_path 唯一、remote 非唯一身份）与
- * docs/p01-3-application-contract.md §4.2。
+ * docs/phases/p01/p01-3-application-contract.md §4.2。
  *
  * 不变量：
  * - 只读：只调用 rev-parse / status 等只读子命令；子进程环境固定

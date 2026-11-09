@@ -1,6 +1,6 @@
 /**
  * P01-4 / F-009 构建产物冒烟与开发路径检查回归（检查 `P01-ENG-BUILD-SMOKE`，
- * 契约见 docs/p01-4-acceptance-contract.md §2.1/§3.5）。
+ * 契约见 docs/phases/p01/p01-4-acceptance-contract.md §2.1/§3.5）。
  *
  * 覆盖：
  * - 可发布构建文件路径扫描：真实编译的 Core 产物无 finding、入口与迁移资源在位、
@@ -45,7 +45,7 @@ function emitEvidence(line: string, fields: Readonly<Record<string, unknown>>): 
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const SMOKE_SCRIPT = resolve(REPO_ROOT, 'scripts/core-assembly-smoke.mjs');
-const CONTRACT_DOC = readFileSync(resolve(REPO_ROOT, 'docs/p01-4-acceptance-contract.md'), 'utf-8');
+const CONTRACT_DOC = readFileSync(resolve(REPO_ROOT, 'docs/phases/p01/p01-4-acceptance-contract.md'), 'utf-8');
 const FORBIDDEN_RUNTIME_DEPS = ['nezha', '@nezhajs', '@earendil-works/pi-coding-agent'] as const;
 const SMOKE_ENV_KEYS = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'];
 

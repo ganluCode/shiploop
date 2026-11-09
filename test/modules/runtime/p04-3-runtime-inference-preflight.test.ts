@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 import type { RuntimeInferenceAdapter, RuntimeInferenceAudit, RuntimeInferencePreflightDependencies, RuntimeInferenceProbeRequest } from '../../../packages/core/src/ports/runtime-inference-preflight.ts';
 import { createRuntimeInferencePreflight, resolveRuntimeInferencePreflightPolicy } from '../../../packages/core/src/application/runtime-inference-preflight.ts';
 
@@ -17,7 +18,7 @@ function fixture(options: Partial<Omit<RuntimeInferencePreflightDependencies, 'a
   const audit = vi.fn(async (_record: RuntimeInferenceAudit) => {});
   const probe = vi.fn(async () => ({ terminal: 'completed', response: 'ok', usage }));
   const authorize = vi.fn(async () => true);
-  const service = createRuntimeInferencePreflight({ policy, audit, authorize, ...options,
+  const service = createRuntimeInferencePreflight({ promptTemplates: testPromptTemplates, policy, audit, authorize, ...options,
     adapter: (options.adapter ?? { isolation: 'inference_only', probe }) as RuntimeInferenceAdapter });
   return { service, audit, probe, authorize };
 }

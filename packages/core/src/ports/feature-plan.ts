@@ -6,7 +6,7 @@
  * description 不替代结构化验收与依赖；labels 默认空数组且不参与计划语义）、
  * core-design/11 §4（task_dependencies 两端为同 Feature Task、UNIQUE(feature_id,
  * task_id,depends_on_id)、无环；features.plan_digest 可空摘要）。
- * 实施契约：docs/p03-1-plan-import-contract.md（P03-1 / F-001 冻结，含边界数值请求核对）。
+ * 实施契约：docs/phases/p03/p03-1-plan-import-contract.md（P03-1 / F-001 冻结，含边界数值请求核对）。
  *
  * 契约要点：
  * - 本模块只做**纯结构校验**（无 I/O、无时钟、无数据库、无模型调用）：输入是
@@ -28,6 +28,7 @@
  *   已批准或可执行，本任务不生成 Run、审批或模型调用。
  */
 import { createHash } from 'node:crypto';
+import { normalizeTaskLanguages, taskLanguagesProjection } from './task-languages.js';
 import { StorageError } from './errors.js';
 import type { StorageEntityRef } from './errors.js';
 import type { ModelComplexity } from './settings-schema.js';
@@ -43,7 +44,7 @@ import {
 import type { ValidationContext } from './validation.js';
 
 /* ------------------------------------------------------------------ *
- * 版本与边界常量（实施契约值，记录于 docs/p03-1-plan-import-contract.md）
+ * 版本与边界常量（实施契约值，记录于 docs/phases/p03/p03-1-plan-import-contract.md）
  * ------------------------------------------------------------------ */
 
 /** 本版本 Core 唯一支持的计划 payload 结构版本；未知/更高版本拒绝，不静默降级。 */
@@ -78,6 +79,7 @@ const PLAN_COMPLEXITY_VALUES: readonly PlanComplexity[] = ['low', 'medium', 'hig
 const PLAN_PAYLOAD_KEYS = ['schemaVersion', 'feature', 'tasks'] as const;
 const PLAN_FEATURE_KEYS = ['title', 'description', 'labels', 'sourceRefs'] as const;
 const PLAN_TASK_KEYS = [
+  'languages',
   'id',
   'title',
   'description',
@@ -107,6 +109,8 @@ export interface PlanArtifactRef {
 }
 
 export interface ValidatedFeaturePlanTask {
+  /** 开发语言：小写、去重排序；非空时属于计划业务摘要。 */
+  readonly languages: readonly string[];
   readonly id: string;
   readonly title: string;
   /** 省略/null/全空白归一为 null；原文保留（Markdown/Unicode 不转写）。 */
@@ -405,6 +409,7 @@ export function validateFeaturePlanInput(
   }
 
   interface PendingTask {
+    readonly languages: readonly string[];
     readonly id: string;
     readonly title: string;
     readonly description: string | null;
@@ -452,6 +457,7 @@ export function validateFeaturePlanInput(
     }
 
     pendingTasks.push({
+      languages: normalizeTaskLanguages(taskObject.languages, taskContext, `${taskField}.languages`),
       id,
       title: validatePlanTitle(taskObject.title, taskContext, `${taskField}.title`),
       description: validatePlanDescription(taskObject.description, taskContext, `${taskField}.description`),
@@ -541,6 +547,7 @@ export function validateFeaturePlanInput(
 
   const tasks: ValidatedFeaturePlanTask[] = pendingTasks
     .map((task) => ({
+      languages: task.languages,
       id: task.id,
       title: task.title,
       description: task.description,
@@ -666,6 +673,7 @@ export function canonicalFeaturePlanBusinessJson(plan: ValidatedFeaturePlan): st
     tasks: [...plan.tasks]
       .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .map((task) => ({
+        ...taskLanguagesProjection(task.languages),
         id: task.id,
         title: task.title,
         description: task.description,

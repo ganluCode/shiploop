@@ -1,5 +1,5 @@
 /**
- * F-009 文档守护：P03-2 交接文档（docs/p03-2-handoff.md）核对。
+ * F-009 文档守护：P03-2 交接文档（docs/phases/p03/p03-2-handoff.md）核对。
  *
  * 依据 F-009 验收标准 3/5/6 逐项守护：
  * 1. 交接记录实现范围（F-001 ~ F-009 逐项）、输入文档版本、实际基线与代码 commit
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const HANDOFF_PATH = 'docs/p03-2-handoff.md';
+const HANDOFF_PATH = 'docs/phases/p03/p03-2-handoff.md';
 const README_PATH = 'README.md';
 
 function readRepo(relativePath: string): string {
@@ -56,17 +56,17 @@ const F009_TEST_FILE = 'test/modules/planning/p03-2-integration-regression.test.
 
 /** F-009 写回登记的三份契约文档。 */
 const REGISTERED_CONTRACT_DOCS: readonly string[] = [
-  'docs/p03-2-plan-approval-verification-contract.md',
-  'docs/p03-2-execution-input-prepare-contract.md',
-  'docs/p03-2-cli-approval-input-operations.md',
+  'docs/phases/p03/p03-2-plan-approval-verification-contract.md',
+  'docs/phases/p03/p03-2-execution-input-prepare-contract.md',
+  'docs/phases/p03/p03-2-cli-approval-input-operations.md',
 ];
 
-describe('F-009 交接文档守护（docs/p03-2-handoff.md）', () => {
+describe('F-009 交接文档守护（docs/phases/p03/p03-2-handoff.md）', () => {
   it('文档存在且登记于 README 文档索引；引用的回归测试文件真实存在', () => {
     const handoff = readRepo(HANDOFF_PATH);
     expect(handoff).toContain('# P03-2 计划批准、Task 策略与固定执行输入 — 交接');
     const readme = readRepo(README_PATH);
-    expect(readme).toContain('docs/p03-2-handoff.md');
+    expect(readme).toContain('docs/phases/p03/p03-2-handoff.md');
     for (const cited of CITED_TEST_FILES) {
       expect(existsSync(resolve(REPO_ROOT, cited)), `${cited} 必须存在`).toBe(true);
       expect(handoff, `交接文档必须引用 ${cited}`).toContain(cited);

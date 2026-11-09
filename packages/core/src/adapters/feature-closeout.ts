@@ -22,6 +22,12 @@ import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { CommandProcessPort, CommandProcessIdentity } from '../ports/command-process.js';
 import type { CommandTransaction } from '../ports/atomic-commands.js';
 import type { createSqliteTaskCommitter } from './sqlite/task-commit.js';
+import { autoPushVerifiedCommit } from './sqlite/auto-push.js';
+import { executeFeatureRepair } from './sqlite/feature-repair.js';
+import type { WorkRuntimeFactory } from './work-execution.js';
+import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
+import type { ProjectResourceService } from '../application/project-resource-service.js';
+import { mergeEffectiveSettings } from '../application/effective-settings.js';
 
 type DeliveryDeps = Parameters<typeof createSqliteTaskCommitter>[0];
 
@@ -34,6 +40,8 @@ export function assembleFeatureCloseout(options: Pick<DeliveryDeps,
   hostInstanceId: string;
   confirmProcessIdentity(projectId: string, identity: CommandProcessIdentity): Promise<void>;
   nowUtcMs?: () => number;
+  repair?: { runtimeFactory: WorkRuntimeFactory; capabilityCatalog: RuntimeCapabilityCatalog;
+    dataRoot: string; projectResources: ProjectResourceService };
 }) {
   const { session } = options;
   const now = options.nowUtcMs ?? Date.now;
@@ -74,7 +82,7 @@ export function assembleFeatureCloseout(options: Pick<DeliveryDeps,
     let context;
     try { context = contexts.read(projectId, runId); }
     catch (error) { pause(projectId, runId, reasonOf(error)); return { recordHandoff: false as const }; }
-    if (context.autoFix.status !== 'disabled') {
+    if (context.autoFix.status === 'blocked' || (context.autoFix.status === 'ready' && !options.repair)) {
       pause(projectId, runId, context.autoFix.status === 'blocked' ? context.autoFix.reason : 'feature_auto_fix_runtime_not_assembled');
       return { recordHandoff: false as const };
     }
@@ -173,10 +181,15 @@ export function assembleFeatureCloseout(options: Pick<DeliveryDeps,
               if (!['succeeded', 'no_change'].includes(previous.status)
                 || !(await git.verifyOperation(request, operationId)).matched) throw new Error('closeout_git_reconcile_required');
             } else { await git.commit(request); }
-            return operations.getGitOperation(projectId, operationId);
+            const committed = operations.getGitOperation(projectId, operationId);
+            await autoPushVerifiedCommit({ session, projectId, runId, operationId,
+              boundary: 'feature', branch: baseline.branch, commit: committed.actualCommit!, policy: context.deliveryPolicy,
+              driver: options.driverFor(projectId, signal).open(baseline, assertCurrent), assertCurrent });
+            return committed;
           } },
         });
         const coordinator = createFeatureCloseoutCoordinator({ store: ledger, owner: options.ownerId,
+          maxRepairs: context.autoFix.status === 'ready' ? context.autoFix.maxRepairs : 0,
           consumers: {
             authorize: async () => { try { assertCurrent(); return { allowed: true, reason: 'authorized' }; }
               catch (error) { return { allowed: false, reason: reasonOf(error) }; } },
@@ -185,7 +198,41 @@ export function assembleFeatureCloseout(options: Pick<DeliveryDeps,
               if (await stopVerifier.verify(options.resources.read(identity)) === null) throw new Error('closeout_verifier_stop_unconfirmed');
               return result;
             }, complete: delivery.complete,
-            repair: async () => { throw new Error('closeout_repair_not_configured'); },
+            repair: async (_ref, ordinal) => {
+              assertCurrent();
+              if (!options.repair || context.autoFix.status !== 'ready') throw new Error('closeout_repair_not_configured');
+              const failed = ledger.read(projectId, runId);
+              if (!failed?.evidenceRef) throw new Error('closeout_failure_evidence_missing');
+              const failures = verification.listCheckResults(projectId, failed.evidenceRef).map(result => ({
+                checkKey: result.checkKey, status: result.status, exitCode: result.exitCode,
+                outputTail: result.outputTail?.slice(-8192), outputArtifactId: result.outputArtifactId,
+              }));
+              let managedContext: Parameters<typeof executeFeatureRepair>[0]['managedContext'];
+              const sources = atomic.transact('FeatureRepair.documents', tx => tx.getFeaturePlan(projectId, key.featureId).feature.sourceRefs);
+              for (const source of sources) {
+                const artifact = await options.artifacts.getArtifact(projectId, source.artifactId);
+                if (artifact.kind !== 'managed-document-context') continue;
+                if (artifact.contentHash !== source.contentHash) throw new Error('managed_document_context_changed');
+                if (managedContext) throw new Error('managed_document_context_ambiguous');
+                const body = await artifacts.readVerifiedContent(projectId, artifact.id);
+                managedContext = { content: body.content, ref: { projectId, artifactId: artifact.id, kind: artifact.kind,
+                  purpose: 'managed-documents', version: artifact.version, contentHash: body.contentHash, sizeBytes: body.sizeBytes,
+                  locator: artifact.locator, mediaType: artifact.mediaType, origin: { kind: 'artifact' } } };
+              }
+              const result = await executeFeatureRepair({ ...options.repair, session, publisher: options.publisher, managedContext,
+                projectId, featureId: key.featureId, runId, ordinal, inputDigest: key.inputDigest,
+                ownerId: options.ownerId, hostInstanceId: options.hostInstanceId, cwd: context.workspace.canonicalPath,
+                policy: context.autoFix, parentDeadline: context.deadlineUtcMs, failures,
+                checkScope: context.policy.checkDefinitions?.filter(check => context.checkKeys.includes(check.checkKey)),
+                signal, assertCurrent, now,
+                effectiveSettings: id => atomic.transact('FeatureRepair.settings', tx => {
+                  const global = tx.getGlobalSettingsOrNull(), project = tx.getProjectSettingsOrNull(id);
+                  return mergeEffectiveSettings({ global: global && { scopeRevision: global.revision, payload: global.payload },
+                    project: project && { scopeRevision: project.revision, payload: project.payload } });
+                }) });
+              assertCurrent();
+              return result;
+            },
           } });
         const result = await coordinator.execute(key);
         if (result.stage === 'failed') {

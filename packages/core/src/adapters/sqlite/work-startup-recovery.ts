@@ -86,10 +86,15 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
       return session.transactWrite('Work.startupRecovery.fence', () => {
         const timestamp = now();
         const census = dispatch.fence(timestamp);
-        const rows = db.prepare<string[], AttemptRow>(`SELECT a.* FROM attempts a WHERE
-          a.status IN ('preparing', 'executing', 'verifying') OR EXISTS
-            (SELECT 1 FROM workspace_leases l WHERE l.owner_id = a.id)
-          ${census.attemptIds.length === 0 ? '' : `OR a.id IN (${census.attemptIds.map(() => '?').join(',')})`}
+        const rows = db.prepare<string[], AttemptRow>(`SELECT a.* FROM attempts a
+          JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
+          WHERE NOT (r.status = 'cancelled' AND NOT EXISTS
+            (SELECT 1 FROM workspace_leases cancelled_l WHERE cancelled_l.owner_id = a.id
+             AND cancelled_l.state IN ('held', 'quarantined')))
+          AND (a.status IN ('preparing', 'executing', 'verifying') OR EXISTS
+            (SELECT 1 FROM workspace_leases l WHERE l.owner_id = a.id
+             AND l.state IN ('held', 'quarantined'))
+            ${census.attemptIds.length === 0 ? '' : `OR a.id IN (${census.attemptIds.map(() => '?').join(',')})`})
           ORDER BY a.id LIMIT ${LIMIT + 1}`).all(...census.attemptIds);
         const runs = db.prepare<[], { id: string; project_id: string; revision: number; status: string }>(`SELECT id, project_id, revision, status
           FROM runs WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') ORDER BY id LIMIT ${LIMIT + 1}`).all();
@@ -213,6 +218,9 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
               WHERE latest.event_type = 'work.recovery.updated' AND latest.attempt_id = e.attempt_id
                 AND json_extract(latest.payload, '$.phase') IN ('recorded', 'reprobed'))
             AND a.status = 'interrupted'
+            AND NOT (r.status = 'cancelled' AND NOT EXISTS
+              (SELECT 1 FROM workspace_leases cancelled_l WHERE cancelled_l.owner_id = a.id
+               AND cancelled_l.state IN ('held', 'quarantined')))
             AND (w.id IS NULL OR COALESCE((SELECT writer.attempt_id FROM state_events writer
               WHERE writer.project_id = w.project_id AND writer.aggregate_id = w.feature_id
                 AND writer.event_type = 'workspace.operation_updated' ORDER BY writer.sequence DESC LIMIT 1), w.attempt_id) = a.id)

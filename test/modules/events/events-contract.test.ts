@@ -1,7 +1,7 @@
 /**
  * F-003 公开事件封套映射与事件游标纯契约测试。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md
  * - §8 快照水位：watermark = 一致读视图内 MAX(state_events.sequence)，空库 0，
  *   cursor 绑定数据根身份与 scope；
  * - §9.1 事件封套 schemaVersion=1（独立于线消息 2/配置 payload 2）：

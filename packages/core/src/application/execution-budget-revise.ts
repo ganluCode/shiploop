@@ -6,7 +6,7 @@
  * 需要延期由用户显式审批记录新预算版本；CAS 上限更新失败不派发；预算耗尽
  * 需人决定继续、增额或结束）、core-design/08 §2（reviseBatchBudget：累计预算
  * 不随重启/子 Run 清零，增额需明确授权；模型不能调用新建 Batch 或增额命令来
- * 绕过授权预算）、docs/p03-3-budget-revision-contract.md（本模块契约文档）。
+ * 绕过授权预算）、docs/phases/p03/p03-3-budget-revision-contract.md（本模块契约文档）。
  *
  * 不变量：
  * - 命令面 `execution.budget.revise`（capability `execution.budget.revise`，

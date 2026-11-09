@@ -6,7 +6,7 @@
 - 报告 Schema 版本：1
 - 输入计划：P05 阶段验收契约与执行报告（2026-10-23-18-55-21_shiploop-p05-feature / p05-acceptance，版本 1.0）
 - 范围：FR-1/FR-2/FR-3/FR-4 及 P05-1～P05-9 的离线、live、人工和显式全仓回归开关
-- 校验清单摘要：plan=deb0f36e824cd3e9872d8b494f799e31dd4b0d66501270c753de877cdef2026c · checklist=2096d41b97f3a83baece5032cbabdbd36122272d79490587ccc6f779638d387f · 契约 docs/p05-acceptance.md
+- 校验清单摘要：plan=deb0f36e824cd3e9872d8b494f799e31dd4b0d66501270c753de877cdef2026c · checklist=2096d41b97f3a83baece5032cbabdbd36122272d79490587ccc6f779638d387f · 契约 docs/phases/p05/p05-acceptance.md
 - 受测 commit：`245fa62f5fc36e22d510dd98fe9c61aeb2a58b03`（工作树 clean，分支 acceptance/p05）
 - 前序基线：2026-10-23-18-55-21_shiploop-p05-feature @ `245fa62f5fc36e22d510dd98fe9c61aeb2a58b03`（acceptance/p05）
 - 平台：darwin 25.6.0 / arm64

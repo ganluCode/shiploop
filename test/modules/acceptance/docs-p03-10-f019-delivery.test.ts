@@ -2,7 +2,7 @@
  * F-019 文档守护：P03-10 交付报告、P03 人工验收清单与 P04 进入门槛记录核对。
  *
  * 依据 F-019 验收标准逐项守护：
- * 1. 交付报告引用 `docs/p03-10-f018-manual-acceptance.md` 与实际定向验收证据
+ * 1. 交付报告引用 `docs/phases/p03/p03-10-f018-manual-acceptance.md` 与实际定向验收证据
  *    （受测提交、测试结果、修复内容、已知缺口各有独立段落）；
  * 2. 明确区分 Nezha 开发任务完成、Feature 索引验证、P03 人工阶段验收与 P04 放行
  *    四个层次，双次全量阶段复跑结论保持 pending/not_run，不伪造双次通过证据；
@@ -24,9 +24,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const DELIVERY_REPORT_PATH = 'docs/p03-10-f019-delivery-report.md';
-const MANUAL_CHECKLIST_PATH = 'docs/p03-10-f019-p03-manual-checklist.md';
-const P04_GATE_PATH = 'docs/p03-10-f019-p04-gate-record.md';
+const DELIVERY_REPORT_PATH = 'docs/phases/p03/p03-10-f019-delivery-report.md';
+const MANUAL_CHECKLIST_PATH = 'docs/phases/p03/p03-10-f019-p03-manual-checklist.md';
+const P04_GATE_PATH = 'docs/phases/p03/p03-10-f019-p04-gate-record.md';
 const TASK_INDEX_PATH = 'test/index/phases/P03/features/P03-10/tasks/F-019.json';
 const FEATURE_INDEX_PATH = 'test/index/phases/P03/features/P03-10/feature.json';
 
@@ -39,7 +39,7 @@ function readDoc(relativePath: string): string {
 describe('F-019 交付报告与人工验收文档守护', () => {
   it('[case:delivery-report-evidence] 交付报告引用 F-018 人工验收记录与定向证据，列明受测提交/结果/修复/缺口', () => {
     const doc = readDoc(DELIVERY_REPORT_PATH);
-    expect(doc).toContain('docs/p03-10-f018-manual-acceptance.md');
+    expect(doc).toContain('docs/phases/p03/p03-10-f018-manual-acceptance.md');
     // 实际定向验收证据与其受测提交
     expect(doc).toContain('verifications/F-018/manual-20261019/verification.json');
     expect(doc).toContain('98d0a85241d9316ed9970ceaf23b8d5b10f2f8d0');

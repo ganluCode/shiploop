@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
-import { RuntimeError } from 'shiploop-core';
+import { CommandProcessError, RuntimeError } from 'shiploop-core';
 import type {
   CommandProcessHandle, CommandProcessPort, CommandProcessResult, CommandProcessIdentity,
   RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeEvent, RuntimeHandle, RuntimeStopEvidence, RuntimeUsageReport,
@@ -79,7 +79,17 @@ export function createPiRunnerAdapter(options: PiRunnerAdapterOptions): {
             stdin: Buffer.from(JSON.stringify(request)), timeoutMs: request.limits.timeoutMs,
             maxInputBytes: 65_536, maxOutputBytes: request.limits.maxOutputBytes,
           }, identity => options.confirm(identity, request));
-        } catch { throw new RuntimeError('process', 'runner_start_failed'); }
+        } catch (error) {
+          if (error instanceof CommandProcessError && error.reason === 'invalid_input') {
+            // CommandProcess validates before spawning. Preserve that fact so
+            // Core can settle the durable launch without quarantining a
+            // process that never existed.
+            throw new RuntimeError('configuration', 'runner_invalid_input');
+          }
+          if (error instanceof RuntimeError) throw error;
+          if (error instanceof CommandProcessError) throw new RuntimeError('process', `runner_start_${error.reason}`);
+          throw new RuntimeError('process', 'runner_start_failed');
+        }
         return manageRunner(request, processHandle, options.resourceStop);
       });
       invocations.set(request.invocationId, { digest, handle });

@@ -42,6 +42,9 @@ export interface RuntimeRetryCounters {
 }
 
 export interface RuntimeRetryPolicy {
+  /** Legacy callers retain an Attempt-wide ceiling; production may use a resettable streak. */
+  readonly budgetScope?: 'attempt' | 'consecutive';
+  readonly backoffMode?: 'exponential' | 'linear';
   /** Core-approved maximum number of Core retries for this Attempt. */
   readonly maxRetries: number;
   /** One outer ceiling shared by SDK and Core retries. */
@@ -100,7 +103,7 @@ function backoffFor(retryRound: number, policy: RuntimeRetryPolicy): number {
   const base = Math.max(0, Math.min(policy.baseBackoffMs, 86_400_000));
   const cap = Math.max(0, Math.min(policy.maxBackoffMs, 86_400_000));
   if (base === 0 || cap === 0) return 0;
-  return Math.min(cap, base * 2 ** Math.max(0, retryRound - 1));
+  return Math.min(cap, policy.backoffMode === 'linear' ? base * (retryRound + 1) : base * 2 ** Math.max(0, retryRound - 1));
 }
 
 function failureCounters(input: DecideSameAttemptRetryInput): RuntimeRetryCounters {
@@ -162,12 +165,12 @@ export function decideSameAttemptRetry(input: DecideSameAttemptRetryInput): Runt
   }
 
   const coreRetries = Math.max(0, counters.retryCount - counters.sdkRetryCount);
-  const nextCoreRetry = coreRetries + 1;
+  const nextCoreRetry = input.policy.budgetScope === 'consecutive' ? counters.consecutiveFailures : coreRetries + 1;
   const totalObservedRetries = Math.max(counters.retryCount, counters.sdkRetryCount);
   if (nextCoreRetry > input.policy.maxRetries) {
     return decision(input, counters, 'stop', 'retry_limit_exhausted', null, 0);
   }
-  if (totalObservedRetries >= input.policy.maxTotalRetries) {
+  if (input.policy.budgetScope !== 'consecutive' && totalObservedRetries >= input.policy.maxTotalRetries) {
     return decision(input, counters, 'stop', 'shared_retry_budget_exhausted', null, 0);
   }
   if (input.nowUtcMs >= input.deadlineUtcMs) {

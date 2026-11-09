@@ -12,7 +12,7 @@ import { evaluateBatchBudgetRevision } from '../../../../packages/core/src/ports
 import { APPLICATION_COMMAND_CAPABILITIES } from '../../../../packages/host/src/contract/lifecycle.ts';
 
 const read = (path: string) => readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
-const doc = read('docs/p03-3-budget-revision-contract.md');
+const doc = read('docs/phases/p03/p03-3-budget-revision-contract.md');
 
 describe('F-009 budget revision contract', () => {
   it('registers the contract doc and freezes the command/capability/event surfaces', () => {

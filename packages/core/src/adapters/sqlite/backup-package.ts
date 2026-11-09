@@ -36,6 +36,9 @@ export interface BackupPackageServiceOptions {
   readonly maintenanceGate: MaintenanceWriteGate;
   readonly nowUtcMs?: () => number;
   readonly limits?: BackupPackageLimits;
+  /** Trusted startup only: preserve historical recorder gaps in a rollback
+   * snapshot. Does not waive missing files, native archives or corrupt JSON. */
+  readonly preserveRecordingGapsForUpgrade?: boolean;
 }
 
 export class BackupPackageError extends Error {
@@ -231,6 +234,7 @@ export function createBackupPackageService(options: BackupPackageServiceOptions)
         const refColumns: Array<[table: string, column: string, reason: string, artifactShapedOnly: boolean]> = [
           ['attempts', 'input_ref', 'execution-input', false], ['attempts', 'code_ref', 'attempt-code', false], ['attempts', 'diagnostic_ref', 'attempt-diagnostic', false],
           ['sessions', 'input_ref', 'session-input', false], ['sessions', 'result_ref', 'session-result', false], ['session_messages', 'content_ref', 'recording-content', false],
+          ['feature_repair_attempts', 'result_ref', 'feature-repair-result', false],
           ['recording_manifests', 'manifest_ref', 'recording-manifest', false], ['document_versions', 'content_ref', 'document-content', false],
           ['memory_records', 'content_ref', 'memory-content', false], ['capability_modules', 'content_ref', 'capability-content', true],
         ];
@@ -298,7 +302,7 @@ export function createBackupPackageService(options: BackupPackageServiceOptions)
               try { gaps.push(...jsonArray(manifestRow.missing_reasons, 'missing_reasons').map(safeReason)); } catch { gaps.push('missing_reasons_invalid'); }
             } else if (watermark !== null) { coverage = 'partial'; gaps.push('recording_manifest_missing'); }
             gaps = [...new Set(gaps)].slice(0, 32);
-            if (coverage !== 'complete') reasons.push(`recording_incomplete:${sessionId}`);
+            if (coverage !== 'complete' && options.preserveRecordingGapsForUpgrade !== true) reasons.push(`recording_incomplete:${sessionId}`);
             recorder.push({ sessionId, watermark, coverage, gaps });
             if (session.native_ref !== null) {
               const sourceDigest = digest(String(session.native_ref));

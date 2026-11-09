@@ -263,10 +263,12 @@ describe('P03-4 deterministic Task DAG', () => {
       const task = db.prepare<[], Record<string, unknown>>('SELECT * FROM tasks').get();
       const migrations = db.prepare('SELECT * FROM schema_migrations').all();
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual(currentMigrationVersions.filter(version => version >= 15));
-      expect(db.prepare('SELECT * FROM tasks').get()).toEqual({ ...task, kind: 'coding', manual_block: 0 });
+      expect(db.prepare('SELECT * FROM tasks').get()).toEqual({ ...task, kind: 'coding', manual_block: 0, languages: '[]' });
       expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 14').all()).toEqual(migrations);
       expect(() => db.prepare("UPDATE tasks SET kind = 'runtime'").run()).toThrow();
       expect(() => db.prepare('UPDATE tasks SET manual_block = 1.5').run()).toThrow();
+      expect(() => db.prepare("UPDATE tasks SET languages = '{}'").run()).toThrow();
+      expect(() => db.prepare('UPDATE tasks SET languages = ?').run(JSON.stringify(Array(17).fill('sql')))).toThrow();
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);
     } finally { session.close(); sandbox.cleanup(); }
   });

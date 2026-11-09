@@ -31,8 +31,8 @@ PRD 为 `p01-acceptance.md`（版本 0.2，2026-10-01）。本阶段实际依据
 | `core-design/11-database-model.md` | `57dc3c6eab520fea43b5078a131821525f5c85336c09990719f10f9b705e5fa9` |
 | `core-design/09-testing-and-implementation.md` | `69912f251a79be62617f80786a5e73e4db90d674977a32fad90282e8b4a213ad` |
 
-前置契约：[docs/p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)（检查清单与报告约定）；
-操作说明：[docs/p01-4-operations.md](../p01-4-operations.md)。
+前置契约：[docs/phases/p01/p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)（检查清单与报告约定）；
+操作说明：[docs/phases/p01/p01-4-operations.md](../p01-4-operations.md)。
 
 前序基线（均为当前分支祖先，实际端口与测试在库）：
 

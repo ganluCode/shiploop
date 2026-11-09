@@ -152,14 +152,14 @@ it('[case:index-fail-closed] 缺 P04-9、损坏索引或 Feature 合集不一致
 });
 
 it('[case:handoff-doc] 交接文档记录持久结构、资源职责、恢复限制、设计映射与未运行范围', () => {
-  const handoff = readFileSync(join(ROOT, 'docs/p04-9-f011-acceptance-handoff.md'), 'utf8');
+  const handoff = readFileSync(join(ROOT, 'docs/phases/p04/p04-9-f011-acceptance-handoff.md'), 'utf8');
   for (const token of ['提交引用', 'run_dispatch_intents', 'run_dispatch_claims', 'execution_slot_claims',
     '生产额度 1', 'TaskClaimReceipt.dispatch', 'capacity_unsupported', 'P05',
     'core-design/04', 'core-design/11', 'core-design/12', 'core-design/15',
     'not_run', '负责人确认', 'P04 未放行', 'test-sauycijp.log']) {
     expect(handoff).toContain(token);
   }
-  const contract = readFileSync(join(ROOT, 'docs/p04-acceptance.md'), 'utf8');
+  const contract = readFileSync(join(ROOT, 'docs/phases/p04/p04-acceptance.md'), 'utf8');
   for (const token of ['P04-P9-AC1', 'AC6', 'schemaVersion=2', 'requiredChecks', 'task_union']) {
     expect(contract).toContain(token);
   }

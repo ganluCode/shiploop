@@ -1,0 +1,3 @@
+- previous: {{attemptId}} status {{status}} stage {{stage}}
+- previous endedAtUtcMs: {{endedAt}}; diagnostic: {{diagnostic}}
+- handoff: {{note}}

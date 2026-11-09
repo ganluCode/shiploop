@@ -23,7 +23,7 @@ import { P01_REQUIRED_CHECKS } from '../../../scripts/acceptance/p01-report.ts';
 import { P01_ACCEPT_CONFIG_PATH } from '../../../scripts/acceptance/p01-accept.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OPERATIONS_DOC_PATH = 'docs/p01-4-operations.md';
+const OPERATIONS_DOC_PATH = 'docs/phases/p01/p01-4-operations.md';
 const REPLAY_SCRIPT_PATH = 'scripts/acceptance/clean-snapshot-replay.ts';
 const CONFIG_PATH = 'acceptance/p01.config.json';
 const operationsDoc = readFileSync(resolve(REPO_ROOT, OPERATIONS_DOC_PATH), 'utf-8');

@@ -40,7 +40,7 @@ import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const FIXTURE_CLI = readFileSync(resolve(REPO_ROOT, 'test/helpers/p08-2/todo-fixture-cli.mjs'), 'utf8');
 const TEST_FILE = 'test/modules/acceptance/p08-2-f003-todo-delivery-check.test.ts';
-const DOC_PATH = 'docs/p08-2-todo-delivery-check.md';
+const DOC_PATH = 'docs/phases/p08/p08-2-todo-delivery-check.md';
 
 const TEST_FILES_BY_CATEGORY: ReadonlyArray<{ readonly file: string; readonly category: string }> = [
   { file: 'test/todo-add.test.mjs', category: 'add' },

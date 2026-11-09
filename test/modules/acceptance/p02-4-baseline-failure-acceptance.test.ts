@@ -1,7 +1,7 @@
 /**
  * F-008 P02-4 基线失败、未授权及执行异常的真实 CLI/Host 验收场景。
  *
- * 对应 docs/p02-4-acceptance-contract.md §2.1 冻结的必需检查（required）：
+ * 对应 docs/phases/p02/p02-4-acceptance-contract.md §2.1 冻结的必需检查（required）：
  * - `P02-FR2-BASELINE-FAILURE`（FR-2 基线失败）：固定非零退出、拒绝授权
  *   `not_run`、缺命令/未知脚本、超时 `timed_out`、显式取消 `cancelled`、停止
  *   未确认 `stop_unconfirmed` 保留占用、`preview_stale`；失败不撤销注册、不删

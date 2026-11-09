@@ -18,6 +18,7 @@
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { syncShiploopSkills } from './shiploop-skills.js';
 import { closeSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import {
@@ -44,6 +45,8 @@ import {
   type NotificationDeliveryStatus,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
+import { readSettingsFile } from './config-file.js';
+import { watchProjectConfig } from './config-watch.js';
 import {
   buildExecutionBudgetView,
   buildExecutionPreviewView,
@@ -392,7 +395,7 @@ type ParsedExecutionCommand = Extract<ParsedAppCliCommand, { command: 'execution
 type ParsedBaselineCommand = Extract<ParsedAppCliCommand, { command: 'baseline' }>;
 
 /** 配置命令（create/update/get/effective/export）的解析形态。 */
-type ParsedConfigCommand = Extract<ParsedAppCliCommand, { command: 'config' }>;
+type ParsedConfigCommand = Exclude<Extract<ParsedAppCliCommand, { command: 'config' }>, { commandId: 'config.watch' }>;
 /** 携带 scope 的配置命令子集（effective 无 scope）。 */
 type ScopedConfigCommand = Extract<ParsedConfigCommand, { scope: 'global' | 'project' }>;
 
@@ -1060,11 +1063,26 @@ async function executeProjectInit(
       [buildInitConfirmationNotice()],
     );
   }
+  // 已有绑定允许省略名称；首次注册仍要求显式名称，不发明默认值。
+  let displayName = command.displayName;
+  if (displayName === undefined && inspection.alreadyRegistered !== null) {
+    const existing = await client.getProject(inspection.alreadyRegistered.projectId);
+    displayName = existing.project.displayName;
+  }
+  if (displayName === undefined) {
+    return emitFailure(io, command.json, {
+      exitCode: 2,
+      command: command.commandId,
+      code: 'invalid_input',
+      message: '首次注册必须提供 --name；已注册项目可省略名称以同步 Skills。',
+      details: { reason: 'name_required_for_registration', field: 'displayName' },
+    });
+  }
   // 3) 确认注册：经既有 project.register 幂等命令（显式 --command-id 先查回执
   //    并以原 issuedAt 重建同一信封；响应丢失沿用 HostClient 先查回执再重试）。
   const payload: Record<string, unknown> = {
     repositoryPath: command.repositoryPath,
-    displayName: command.displayName,
+    displayName,
   };
   if (command.description !== undefined) {
     payload.description = command.description;
@@ -1098,7 +1116,11 @@ async function executeProjectInit(
   const registration = initRegistrationOutcome(receipt);
   let skills;
   try {
-    skills = syncShiploopSkills(inspection.canonicalPath);
+    const globalSettings = await client.getGlobalSettings().catch(error => {
+      if (isHostProtocolError(error, 'not_found')) return undefined;
+      throw error;
+    });
+    skills = syncShiploopSkills(inspection.canonicalPath, globalSettings?.payload.locale ?? 'en-US');
   } catch {
     return emitFailure(io, command.json, {
       exitCode: 1, command: command.commandId, code: 'io_error',
@@ -1619,18 +1641,7 @@ function configScope(
 function readConfigInputPayload(
   command: ParsedConfigCreate | ParsedConfigUpdate,
 ): Record<string, unknown> {
-  let text: string;
-  try {
-    text = readFileSync(command.inputFile, 'utf8');
-  } catch {
-    throw new AppCliParseError(
-      'invalid_input',
-      'invalid_input_file',
-      { command: command.command, commandId: command.commandId, json: command.json },
-      'input',
-    );
-  }
-  return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
+  return readSettingsFile(command.inputFile, command.commandId, command.json);
 }
 
 function readProfileInputPayload(
@@ -2003,7 +2014,12 @@ async function executePlanCommand(
     case 'feature.report': {
       const result = await client.getFeatureReport(command.projectId, command.featureId);
       // F-006：文本输出为可审阅文本视图（同一报告投影重新生成，不倾倒 JSON）。
-      return emitSuccess(io, command, result, formatFeatureReportTextView(buildFeatureReportTextView(result)));
+      if (command.json) return emitSuccess(io, command, result, '');
+      const global = await client.getGlobalSettings().catch(error => {
+        if (isHostProtocolError(error, 'not_found')) return undefined;
+        throw error;
+      });
+      return emitSuccess(io, command, result, formatFeatureReportTextView(buildFeatureReportTextView(result, global?.payload.locale)));
     }
     case 'feature.delivery': {
       const result = await client.getFeatureDelivery(command.projectId, command.featureId);
@@ -4330,19 +4346,6 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     });
   }
 
-  // P02-3 / F-006：确认注册（--confirm）最终经既有 project.register 命令提交，
-  // 该命令要求 displayName（唯一注册通道，不发明默认名）；缺 --name 属输入
-  // 错误（退出码 2），在发现 Host/联网之前拒绝，与解析失败同一纪律。
-  if (command.commandId === 'project.init' && command.confirm && command.displayName === undefined) {
-    return emitFailure(io, command.json, {
-      exitCode: 2,
-      command: command.commandId,
-      code: 'invalid_input',
-      message: '确认注册必须提供 --name（project.register 要求 displayName）',
-      details: { reason: 'name_required_for_registration', field: 'displayName' },
-    });
-  }
-
   // P07-3 / F-014：隔离恢复维护入口完全离线（持有目标数据根 writer 锁的独立
   // 入口）——在任何 Host 发现/启动之前分派，绝不经 HTTP 替换运行中 Host 数据库。
   if (command.command === 'restore') {
@@ -4368,9 +4371,11 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   // 配置输入文件在连接 Host 之前读取/解析：缺失/畸形 JSON 以退出码 2 拒绝，
   // 不发现 Host、不联网、不启动进程（与纯解析失败同一纪律）。
   let configPayload: Record<string, unknown> | undefined;
-  if (command.commandId === 'config.create' || command.commandId === 'config.update') {
+  if (command.commandId === 'config.create' || command.commandId === 'config.update' || command.commandId === 'config.watch') {
     try {
-      configPayload = readConfigInputPayload(command);
+      configPayload = command.commandId === 'config.watch'
+        ? readSettingsFile(resolve(options.cwd ?? process.cwd(), command.inputFile), command.commandId, command.json)
+        : readConfigInputPayload(command);
       // P03-7 / F-014：检查定义/模块策略确认的参数守护——policies 段拒绝客户端
       // 伪造主体与明文凭据字段（不进入请求体；服务端 Schema 仍是唯一权威）。
       if (configPayload.policies !== undefined) {
@@ -4703,6 +4708,11 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
     if (command.command === 'baseline') {
       return await executeBaselineCommand(io, command, client, baselinePlan, baselineBudgets, options.signal);
+    }
+    if (command.commandId === 'config.watch') {
+      const exitCode = await watchProjectConfig({ projectId: command.projectId,
+        inputFile: resolve(options.cwd ?? process.cwd(), command.inputFile), client, io, json: command.json, signal: options.signal });
+      return { exitCode, kind: exitCode === 0 ? 'success' : 'failure', command: command.commandId };
     }
     if (command.command === 'config') {
       return await executeConfigCommand(io, command, client, configPayload as Record<string, unknown>);

@@ -6,7 +6,7 @@
  * 凭据只保存引用，不存明文；配置含 defaultStrategy/purposeStrategies/modelMap
  * 与 verification/executionLimits/securityPolicy 等政策段）。
  *
- * F-008 显式升级：schemaVersion 1 → 2（docs/p01-3-application-contract.md §5.1/§9-2）。
+ * F-008 显式升级：schemaVersion 1 → 2（docs/phases/p01/p01-3-application-contract.md §5.1/§9-2）。
  * v2 在 v1 的 strategies 结构之上新增**本阶段确认的政策子集** `policies`；
  * v1 payload 一律拒绝（读取持久数据时为 corrupt），旧版本不被静默误读。
  *
@@ -24,6 +24,8 @@
  *   ports/runtime-capabilities.ts（可信装配注入的窄能力描述，应用层组合）。
  */
 import { StorageError } from './errors.js';
+import { resolveWorkflowLocale, type WorkflowLocale } from './locale.js';
+import { validatePiAgentPolicy, validatePiExecutionPolicy, validateFeishuNotificationPolicy } from './pi-production-policy.js';
 import { validateProjectResourceSettings, type ProjectResourceSettings } from './project-resource-store.js';
 import {
   TASK_MAX_CODE_ATTEMPTS_MAX,
@@ -58,7 +60,7 @@ import type {
 export const SETTINGS_SCHEMA_VERSION = 2;
 
 /** 线上脱敏导出格式版本；业务服务与客户端共享。 */
-export const SETTINGS_EXPORT_FORMAT_VERSION = 1;
+export const SETTINGS_EXPORT_FORMAT_VERSION = 2;
 
 /** 完整运行时策略条目：三个必备字段齐全才构成可执行策略。 */
 export interface RuntimeStrategyV1 {
@@ -74,11 +76,21 @@ export interface RuntimeStrategyV1 {
 export type ModelComplexity = 'low' | 'medium' | 'high';
 export type StrategyPurpose = 'planner' | 'judge' | 'review';
 
+export interface ConfiguredRuntimeStrategy extends RuntimeStrategyV1 {
+  readonly fallbacks?: readonly RuntimeStrategyV1[];
+  readonly fallbackPolicy?: {
+    readonly onQuotaBlocked?: 'switch' | 'stop';
+    readonly onTransientConnection?: 'switch' | 'stop';
+    readonly onTransientServer?: 'switch' | 'stop';
+    readonly onAuthentication?: 'switch' | 'stop';
+  };
+}
+
 export interface ProjectStrategiesV1 {
-  readonly defaultStrategy?: RuntimeStrategyV1;
-  readonly modelMap?: Partial<Record<ModelComplexity, RuntimeStrategyV1>>;
-  readonly purposeStrategies?: Partial<Record<StrategyPurpose, RuntimeStrategyV1>>;
-  readonly agentOverrides?: Record<string, RuntimeStrategyV1>;
+  readonly defaultStrategy?: ConfiguredRuntimeStrategy;
+  readonly modelMap?: Partial<Record<ModelComplexity, ConfiguredRuntimeStrategy>>;
+  readonly purposeStrategies?: Partial<Record<StrategyPurpose, ConfiguredRuntimeStrategy>>;
+  readonly agentOverrides?: Record<string, ConfiguredRuntimeStrategy>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -174,6 +186,8 @@ export interface SecurityPolicyV2 {
  * （无该段）语义不变；未知/未来版本仍一律拒绝。
  */
 export interface DeliveryPolicyV2 {
+  readonly auto_push?: boolean;
+  readonly push_remote?: string;
   /** 新策略 task_and_feature；历史名称不豁免逐 Task 本地提交。 */
   readonly commitMode?: 'feature_final_only' | 'task_and_feature';
   /** 用户明确配置并确认的提交身份（不回落到开发机全局身份或官方邮箱）。 */
@@ -244,6 +258,9 @@ export interface FeatureAutoFixPolicyV2 {
 }
 
 export interface SettingsPoliciesV2 {
+  readonly feishu?: import('./pi-production-policy.js').FeishuNotificationPolicy;
+  readonly piAgent?: import('./pi-production-policy.js').PiAgentPolicy;
+  readonly piExecution?: import('./pi-production-policy.js').PiExecutionPolicy;
   readonly featureAutoFix?: FeatureAutoFixPolicyV2;
   readonly executionLimits?: ExecutionLimitsPolicyV2;
   readonly verification?: VerificationPolicyV2;
@@ -255,6 +272,8 @@ export interface SettingsPoliciesV2 {
 }
 
 export interface SettingsPayloadV2 {
+  /** Global workflow language; omitted values resolve to en-US. */
+  readonly locale?: WorkflowLocale;
   readonly schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
   readonly strategies?: ProjectStrategiesV1;
   readonly policies?: SettingsPoliciesV2;
@@ -273,12 +292,12 @@ export type SettingsScope =
   | { readonly kind: 'global' }
   | { readonly kind: 'project'; readonly projectId: string };
 
-const PAYLOAD_KEYS = ['schemaVersion', 'strategies', 'policies', 'projectResources'] as const;
+const PAYLOAD_KEYS = ['schemaVersion', 'locale', 'strategies', 'policies', 'projectResources'] as const;
 const STRATEGIES_KEYS = ['defaultStrategy', 'modelMap', 'purposeStrategies', 'agentOverrides'] as const;
 const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'endpointRef'] as const;
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
-const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy', 'retentionPolicy', 'featureAutoFix'] as const;
+const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy', 'retentionPolicy', 'featureAutoFix', 'piAgent', 'piExecution', 'feishu'] as const;
 const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'toolTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
 const RETENTION_POLICY_KEYS = ['evidenceRetentionDays', 'backupRetentionDays', 'maxBackupCount', 'diskMinFreeBytes', 'diskMinFreePercent'] as const;
@@ -355,18 +374,45 @@ export function validateRuntimeStrategy(
   return result;
 }
 
+export function validateConfiguredRuntimeStrategy(value: unknown, context: ValidationContext, field: string): ConfiguredRuntimeStrategy {
+  const raw = requirePlainObject(value, context, field);
+  rejectUnknownKeys(raw, [...STRATEGY_ENTRY_KEYS, 'fallbacks', 'fallbackPolicy'], context, field);
+  const { fallbacks, fallbackPolicy, ...primary } = raw;
+  const result: { fallbacks?: RuntimeStrategyV1[]; fallbackPolicy?: ConfiguredRuntimeStrategy['fallbackPolicy'] } & RuntimeStrategyV1
+    = validateRuntimeStrategy(primary, context, field);
+  if (fallbacks !== undefined) {
+    if (!Array.isArray(fallbacks) || fallbacks.length > 32) throw validationError(context, `${field}.fallbacks`, 'bounded_array_required');
+    const identity = (s: RuntimeStrategyV1) => JSON.stringify([s.runtime, s.provider, s.model]);
+    const seen = new Set([identity(result)]);
+    result.fallbacks = fallbacks.map((item, i) => {
+      const strategy = validateRuntimeStrategy(item, context, `${field}.fallbacks[${i}]`);
+      if (seen.has(identity(strategy))) throw validationError(context, `${field}.fallbacks[${i}]`, 'duplicate_fallback_strategy');
+      seen.add(identity(strategy)); return strategy;
+    });
+  }
+  if (fallbackPolicy !== undefined) {
+    const policy = requirePlainObject(fallbackPolicy, context, `${field}.fallbackPolicy`);
+    rejectUnknownKeys(policy, ['onQuotaBlocked', 'onTransientConnection', 'onTransientServer', 'onAuthentication'], context, `${field}.fallbackPolicy`);
+    for (const [key, action] of Object.entries(policy)) {
+      if (action !== 'switch' && action !== 'stop') throw validationError(context, `${field}.fallbackPolicy.${key}`, 'switch_or_stop_required');
+    }
+    result.fallbackPolicy = { ...policy } as ConfiguredRuntimeStrategy['fallbackPolicy'];
+  }
+  return result;
+}
+
 function validateKeyedStrategies(
   value: unknown,
   allowedKeys: readonly string[],
   context: ValidationContext,
   field: string,
-): Record<string, RuntimeStrategyV1> {
+): Record<string, ConfiguredRuntimeStrategy> {
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, allowedKeys, context, field);
-  const result: Record<string, RuntimeStrategyV1> = {};
+  const result: Record<string, ConfiguredRuntimeStrategy> = {};
   for (const key of allowedKeys) {
     if (object[key] !== undefined) {
-      result[key] = validateRuntimeStrategy(object[key], context, `${field}.${key}`);
+      result[key] = validateConfiguredRuntimeStrategy(object[key], context, `${field}.${key}`);
     }
   }
   return result;
@@ -376,12 +422,12 @@ function validateAgentOverrides(
   value: unknown,
   context: ValidationContext,
   field: string,
-): Record<string, RuntimeStrategyV1> {
+): Record<string, ConfiguredRuntimeStrategy> {
   const object = requirePlainObject(value, context, field);
-  const result: Record<string, RuntimeStrategyV1> = {};
+  const result: Record<string, ConfiguredRuntimeStrategy> = {};
   for (const key of Object.keys(object)) {
     requireSafeRecordKey(key, context, `${field}.${key}`);
-    result[key] = validateRuntimeStrategy(object[key], context, `${field}.${key}`);
+    result[key] = validateConfiguredRuntimeStrategy(object[key], context, `${field}.${key}`);
   }
   return result;
 }
@@ -394,13 +440,13 @@ function validateProjectStrategies(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, STRATEGIES_KEYS, context, field);
   const result: {
-    defaultStrategy?: RuntimeStrategyV1;
-    modelMap?: Record<string, RuntimeStrategyV1>;
-    purposeStrategies?: Record<string, RuntimeStrategyV1>;
-    agentOverrides?: Record<string, RuntimeStrategyV1>;
+    defaultStrategy?: ConfiguredRuntimeStrategy;
+    modelMap?: Record<string, ConfiguredRuntimeStrategy>;
+    purposeStrategies?: Record<string, ConfiguredRuntimeStrategy>;
+    agentOverrides?: Record<string, ConfiguredRuntimeStrategy>;
   } = {};
   if (object.defaultStrategy !== undefined) {
-    result.defaultStrategy = validateRuntimeStrategy(object.defaultStrategy, context, `${field}.defaultStrategy`);
+    result.defaultStrategy = validateConfiguredRuntimeStrategy(object.defaultStrategy, context, `${field}.defaultStrategy`);
   }
   if (object.modelMap !== undefined) {
     result.modelMap = validateKeyedStrategies(object.modelMap, MODEL_MAP_KEYS, context, `${field}.modelMap`);
@@ -698,11 +744,6 @@ function validateFeatureAutoFixPolicy(value: unknown, context: ValidationContext
   for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
     if (raw[key] !== undefined) result[key] = validateBoundedInteger(raw[key], context, `${field}.${key}`, limits[key][0], limits[key][1]);
   }
-  if (result.enabled === true) {
-    for (const key of ['maxTokenTotal', 'timeoutMs', 'maxTurns'] as const) {
-      if (result[key] === undefined) throw validationError(context, `${field}.${key}`, '启用自动修复必须显式批准有限预算');
-    }
-  }
   return result;
 }
 
@@ -714,6 +755,9 @@ function validateSettingsPolicies(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, POLICIES_KEYS, context, field);
   const result: {
+    feishu?: SettingsPoliciesV2['feishu'];
+    piAgent?: SettingsPoliciesV2['piAgent'];
+    piExecution?: SettingsPoliciesV2['piExecution'];
     featureAutoFix?: FeatureAutoFixPolicyV2;
     executionLimits?: ExecutionLimitsPolicyV2;
     verification?: VerificationPolicyV2;
@@ -721,6 +765,9 @@ function validateSettingsPolicies(
     deliveryPolicy?: DeliveryPolicyV2;
     retentionPolicy?: RetentionPolicyV2;
   } = {};
+  if (object.piAgent !== undefined) result.piAgent = validatePiAgentPolicy(object.piAgent, context, `${field}.piAgent`);
+  if (object.feishu !== undefined) result.feishu = validateFeishuNotificationPolicy(object.feishu, context, `${field}.feishu`);
+  if (object.piExecution !== undefined) result.piExecution = validatePiExecutionPolicy(object.piExecution, context, `${field}.piExecution`);
   if (object.featureAutoFix !== undefined) result.featureAutoFix = validateFeatureAutoFixPolicy(object.featureAutoFix, context, `${field}.featureAutoFix`);
   if (object.executionLimits !== undefined) {
     result.executionLimits = validateExecutionLimitsPolicy(object.executionLimits, context, `${field}.executionLimits`);
@@ -766,12 +813,19 @@ export function validateSettingsPayload(value: unknown, context: ValidationConte
   }
   const result: {
     schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
+    locale?: WorkflowLocale;
     strategies?: ProjectStrategiesV1;
     policies?: SettingsPoliciesV2;
     projectResources?: ProjectResourceSettings;
   } = {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
   };
+  if (object.locale !== undefined) {
+    if (context.entity?.type === 'project_settings' || context.entity?.projectId !== undefined) {
+      throw validationError(context, 'payload.locale', 'global_only_field');
+    }
+    result.locale = resolveWorkflowLocale(object.locale, context);
+  }
   if (object.strategies !== undefined) {
     result.strategies = validateProjectStrategies(object.strategies, context, 'payload.strategies');
   }
@@ -851,7 +905,7 @@ export function validateSettingsScope(value: unknown, context: ValidationContext
 export interface StrategyEntryRef {
   /** payload 内字段路径，如 payload.strategies.modelMap.low。 */
   readonly field: string;
-  readonly strategy: RuntimeStrategyV1;
+  readonly strategy: ConfiguredRuntimeStrategy;
 }
 
 /**

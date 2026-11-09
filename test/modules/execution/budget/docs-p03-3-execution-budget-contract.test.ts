@@ -1,6 +1,6 @@
 import { currentMigrationVersions } from '../../../helpers/current-schema.ts';
 /**
- * P03-3 / F-001 文档核验：`docs/p03-3-execution-budget-contract.md` 记录的执行预算
+ * P03-3 / F-001 文档核验：`docs/phases/p03/p03-3-execution-budget-contract.md` 记录的执行预算
  * 契约必须与仓库实现事实一致（前序核对记录、分层校验词汇与 reason 码、数值范围、
  * maxCodeAttempts 兼容规则、配置版本决策、Task 快照捕获路径、并发授权规则与
  * 纯预算判定语义），避免「文档另立一套」与后续任务（F-002..F-012）各自发明规则。
@@ -36,7 +36,7 @@ import { selectTaskStrategy } from '../../../../packages/core/src/application/ta
 import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite/migrations.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-3-execution-budget-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-3-execution-budget-contract.md';
 const CONTEXT: ValidationContext = { operation: 'DocsP033ExecutionBudgetContract.test' };
 
 function readContractDoc(): string {

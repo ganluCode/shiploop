@@ -9,6 +9,7 @@ import { createCommandService } from '../../../packages/core/src/application/com
 import type { CommandReceipt } from '../../../packages/core/src/ports/commands.ts';
 import { openPlanningSubmitFixture, SUBMIT_NOW } from '../../helpers/planning/p05-1-candidate-submit-fixture.ts';
 import type { PlanningSubmitFixture } from '../../helpers/planning/p05-1-candidate-submit-fixture.ts';
+import { validatePlanningDecisionResultWire } from '../../../packages/host/src/client/app-wire.ts';
 
 let fixture: PlanningSubmitFixture | undefined;
 afterEach(() => {
@@ -35,12 +36,13 @@ function candidateWithHistory(f: PlanningSubmitFixture): string {
       schemaVersion: 1,
       feature: { title: '规划后的交付计划', description: null, labels: [], sourceRefs: [] },
       tasks: [
-        { id: 't-1', title: '既有草稿编码任务', acceptance: { criteria: ['草稿可规划'] }, dependsOn: [] },
-        { id: 'p-1', title: '实现候选提交', acceptance: { criteria: ['候选可提交并通过校验'] }, dependsOn: [] },
+        { id: 't-1', title: '既有草稿编码任务', languages: ['typescript'], acceptance: { criteria: ['草稿可规划'] }, dependsOn: [] },
+        { id: 'p-1', title: '实现候选提交', languages: ['typescript', 'sql'], acceptance: { criteria: ['候选可提交并通过校验'] }, dependsOn: [] },
         { id: 'p-2', title: '回归候选重放', acceptance: { criteria: ['重放不重复发布'] }, dependsOn: ['p-1'] },
       ],
     },
-    taskVerification: [{ taskId: 't-1', checkRefs: ['unit-core'], moduleRefs: ['core'], impactScope: ['packages/core'] }],
+    taskVerification: ['t-1', 'p-1', 'p-2'].map(taskId => ({ taskId,
+      checkRefs: ['unit-core'], moduleRefs: ['core'], impactScope: ['packages/core'] })),
   });
 }
 
@@ -69,6 +71,34 @@ async function decide(f: PlanningSubmitFixture, candidateDigest: string, decisio
 }
 
 describe('P05-1 / F-008 候选批准与拒绝', () => {
+  it('scopes colliding candidate Task IDs without changing the reviewed candidate or foreign Tasks', async () => {
+    const f = fixture = await openPlanningSubmitFixture();
+    const db = f.session.database;
+    db.prepare(`INSERT INTO features (id,project_id,phase_id,created_at,updated_at,title)
+      SELECT 'foreign-feature',project_id,phase_id,created_at,updated_at,'Foreign' FROM features WHERE id=?`).run(f.featureId);
+    db.prepare(`INSERT INTO tasks (id,project_id,feature_id,created_at,updated_at,title,acceptance,execution_config,config_source)
+      SELECT 'p-1',project_id,'foreign-feature',created_at,updated_at,'Foreign task',acceptance,execution_config,config_source
+      FROM tasks WHERE id='t-1'`).run();
+    const published = completed(await f.bridge.invoke(f.request({ candidate: candidateWithHistory(f) })) as CommandReceipt);
+    terminalizePlanningRun(f);
+    const before = db.prepare("SELECT * FROM tasks WHERE id='p-1'").get();
+    const receipt = completed(await decide(f, published.result.candidateDigest as string, 'approve'));
+    const mapping = receipt.result.taskIdMapping as Record<string, string>;
+    expect(() => validatePlanningDecisionResultWire(receipt.result, { candidateId: f.candidateId,
+      candidateDigest: published.result.candidateDigest as string, decision: 'approve' })).not.toThrow();
+    expect(() => validatePlanningDecisionResultWire({ ...receipt.result, taskIdMapping: { 'p-1': 'foreign' } },
+      { candidateId: f.candidateId, candidateDigest: published.result.candidateDigest as string, decision: 'approve' })).toThrow();
+    expect(mapping['p-1']).not.toBe('p-1');
+    expect(mapping['t-1']).toBe('t-1');
+    expect(db.prepare("SELECT * FROM tasks WHERE id='p-1'").get()).toEqual(before);
+    expect(db.prepare('SELECT task_id,depends_on_id FROM task_dependencies WHERE feature_id=?').all(f.featureId))
+      .toEqual([{ task_id: mapping['p-2'], depends_on_id: mapping['p-1'] }]);
+    expect(receipt.result.verification).toEqual(expect.arrayContaining([expect.objectContaining({ taskId: mapping['p-1'] })]));
+    expect(receipt.result.candidateDigest).toBe(published.result.candidateDigest);
+    expect(f.planningContext()).toMatchObject({ status: 'applied', candidate_digest: published.result.candidateDigest });
+    const feature = db.prepare('SELECT plan_digest FROM features WHERE id=?').get(f.featureId) as { plan_digest: string };
+    expect(receipt.result.approval).toMatchObject({ subjectDigest: feature.plan_digest });
+  });
   it('[case:candidate-reject-preserves-history] 拒绝保留候选摘要与规划事实，不导入 coding Task', async () => {
     const f = fixture = await openPlanningSubmitFixture();
     const published = completed(await f.bridge.invoke(f.request()) as CommandReceipt);
@@ -89,6 +119,8 @@ describe('P05-1 / F-008 候选批准与拒绝', () => {
     const receipt = completed(await decide(f, published.result.candidateDigest as string, 'approve'));
     expect(receipt.result).toMatchObject({ decision: 'approve', candidateId: f.candidateId });
     expect(f.planningContext()).toMatchObject({ status: 'applied', decision: 'approved', applied_revision: 2 });
+    expect(f.session.database.prepare("SELECT id, languages FROM tasks WHERE id IN ('t-1', 'p-1') ORDER BY id").all())
+      .toEqual([{ id: 'p-1', languages: '["sql","typescript"]' }, { id: 't-1', languages: '["typescript"]' }]);
     expect(f.session.database.prepare('SELECT plan_status, revision FROM features WHERE id = ?').get(f.featureId)).toEqual({ plan_status: 'approved', revision: 2 });
     expect(f.session.database.prepare('SELECT id FROM tasks WHERE feature_id = ? AND kind = \'planning\'').get(f.featureId)).toBeTruthy();
     expect(f.session.database.prepare('SELECT id FROM tasks WHERE feature_id = ? AND kind = \'coding\' ORDER BY id').all(f.featureId)).toEqual([{ id: 'p-1' }, { id: 'p-2' }, { id: 't-1' }]);

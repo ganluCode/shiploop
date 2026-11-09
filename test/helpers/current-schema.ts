@@ -17,5 +17,7 @@
 // P07-4 / F-007：notification delivery 的 owner/lease fencing（v62）；
 // P07-4 / integration repair：v63 重建 delivery 表以落实新增认领约束。
 // P07 closeout：v64 持久 Feature 自动收尾 ledger。
-export const currentSchemaVersion = 64;
+// Production operations v65; Task languages v66.
+// Managed documents v68; persistent notification display aliases v69.
+export const currentSchemaVersion = 70;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

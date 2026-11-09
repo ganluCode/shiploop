@@ -13,11 +13,13 @@
  * import 本模块无副作用：只有 runHostStartEntry 显式调用才启动 Host。
  */
 import { isAbsolute } from 'node:path';
-import { createStaticRuntimeCapabilityCatalog } from 'shiploop-core';
+import { homedir } from 'node:os';
+import { deriveDefaultDataRoot } from 'shiploop-core';
 import { HostProtocolError, isHostProtocolError } from '../contract/index.js';
 import type { LifecycleState } from '../contract/index.js';
 import { startHost } from './host-startup.js';
 import type { HostStartOptions, RunningHost } from './host-startup.js';
+import { productionPiOptions } from './production-pi.js';
 
 const OPERATION = 'host.discovery';
 
@@ -163,14 +165,15 @@ export async function runHostStartEntry(
     return { exitCode: 0 };
   }
 
-  const startOptions: HostStartOptions = {
-    ...(overrides?.startOptions ?? {}),
-    ...(parsed.dataRoot !== undefined ? { dataRoot: parsed.dataRoot } : {}),
-    // 空能力目录：不装配任何 runtime/Pi/模型执行；Core 配置校验 fail-closed。
-    capabilityCatalog:
-      overrides?.startOptions?.capabilityCatalog ?? createStaticRuntimeCapabilityCatalog([]),
-  };
   try {
+    const production = overrides?.startOptions?.capabilityCatalog === undefined
+      ? await productionPiOptions(parsed.dataRoot ?? deriveDefaultDataRoot(homedir()))
+      : { capabilityCatalog: overrides.startOptions.capabilityCatalog };
+    const startOptions: HostStartOptions = {
+      ...production,
+      ...(overrides?.startOptions ?? {}),
+      ...(parsed.dataRoot !== undefined ? { dataRoot: parsed.dataRoot } : {}),
+    };
     const host = await startHost(startOptions);
     const result: HostStartEntrySuccessResult = {
       hostInstanceId: host.hostInstanceId,
@@ -184,6 +187,10 @@ export async function runHostStartEntry(
     io.stdout(JSON.stringify({ ok: true, command: 'host.start', result }));
     return { exitCode: 0, result, host };
   } catch (error) {
+    if (error instanceof Error && /^production_pi_config_(invalid|permissions|directory|unreadable|model_unknown)$/.test(error.message)) {
+      emitError(io, 'invalid_input', `Pi 生产配置未通过检查：${error.message}（未启用执行）`);
+      return { exitCode: 2 };
+    }
     if (isHostProtocolError(error)) {
       emitError(io, error.code, error.message);
       return {

@@ -1,8 +1,8 @@
 /**
  * F-010（P02-3）受监督进程取消/超时/升级终止与停止核验。
  *
- * 协议依据：docs/p02-3-command-process.md（F-010 节）与
- * docs/p02-3-onboarding-contract.md §8.3（停止未确认 → failed/inconclusive/
+ * 协议依据：docs/phases/p02/p02-3-command-process.md（F-010 节）与
+ * docs/phases/p02/p02-3-onboarding-contract.md §8.3（停止未确认 → failed/inconclusive/
  * stop_unconfirmed 且保留占用）、§13（SIGTERM→等待→SIGKILL 升级窗口 5s、
  * 升级后确认停止预算 5s、全局单并发占用）。
  *

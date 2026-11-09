@@ -62,7 +62,7 @@
 - 通用命令回执体系与 `command_receipts` 持久化。
 - `npm run accept:p02`（阶段末项；本 Feature 未提供任何整阶段通过脚本）。
 - 强 OS 沙箱（同用户恶意进程不在强隔离保证内；advisory flock 边界见
-  `docs/p02-1-writer-lock.md`）。
+  `docs/phases/p02/p02-1-writer-lock.md`）。
 - 「重开 Core 查询前序持久数据」用例覆盖项目注册行的身份/元数据/绑定一致性；
   工件存储与更广的 P01 数据面回归沿用既有套件，不在本套件重复。
 

@@ -1,0 +1,1 @@
+Run a shell command in the authorized worktree. Trusted project mode, not an OS sandbox. Run only Task-related unit tests. Core owns Git commit/push and official metadata. Timeout cancels this invocation.

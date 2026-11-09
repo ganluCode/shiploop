@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
  * P05-1 / F-004 规划输入准备与受控工作区绑定（真实临时文件/SQLite/Git 纵向）。
  *
@@ -70,7 +71,7 @@ import {
 import type { ExecutionPermissionsReader } from '../../../packages/core/src/ports/execution-input-prepare.ts';
 import { PLANNING_START_OPERATION } from '../../../packages/core/src/ports/planning-start.ts';
 import { PLANNING_CANDIDATE_SUBMIT_OPERATION } from '../../../packages/core/src/ports/planning-candidates.ts';
-import { deriveManagedFeatureBranch } from '../../../packages/core/src/ports/workspace-preparation.ts';
+import { readFeatureBranch } from '../../helpers/feature-branch.ts';
 import { PublicError } from '../../../packages/core/src/ports/commands.ts';
 import type { CommandReceipt, PlanningAcceptedCommandReceipt } from '../../../packages/core/src/ports/commands.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
@@ -198,7 +199,7 @@ async function openFixture(options: {
     };
 
     const permissionsRef = options.permissionsRef ?? { reader: TRUSTED_PROJECT_PERMISSIONS_READER };
-    const service = createPlanningInputPrepareService({
+    const service = createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
       views: createSqlitePlanningContextStore(session, { nowUtcMs }),
       inputs: createExecutionInputService({
         artifacts: artifactStore,
@@ -279,7 +280,7 @@ async function openFixture(options: {
       budget: { ...PLANNING_BUDGET, batch: { ...PLANNING_BUDGET.batch }, run: { ...PLANNING_BUDGET.run } },
     }, { scope, expectedRevision: featureRowBefore.result.feature.revision });
     const accepted = planningReceipt as PlanningAcceptedCommandReceipt;
-    const branch = deriveManagedFeatureBranch(projectId, featureId);
+    const branch = readFeatureBranch(session, projectId, featureId);
 
     /* 真实受管 worktree：git worktree add 于源仓库确认基线（只读准备不改源）。 */
     const worktreeParent = join(box.root, 'managed', featureId, '..');
@@ -359,7 +360,7 @@ function createPlanningInputPrepareServiceForViews(
 ): PlanningInputPreparePort {
   const nowUtcMs = (): number => NOW;
   const files = createArtifactFileStore({ dataRoot: f.box.dataRoot });
-  return createPlanningInputPrepareService({
+  return createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
     views,
     inputs: createExecutionInputService({
       artifacts: f.artifacts,
@@ -458,12 +459,18 @@ describe('P05-1 / F-004 规划输入准备与受控工作区绑定', () => {
     const prepared = await f.service.preparePlanningInput(f.projectId, { runId: f.planningRunId });
     const prompt = await readBody(f, prepared.group.prompt.artifactId);
     expect(prompt).toContain(PLANNING_CANDIDATE_SUBMIT_OPERATION);
-    expect(prompt).toContain('一次性规划');
+    expect(prompt).toContain('Plan once');
     expect(prompt).toContain('approvalMode: manual');
-    expect(prompt).toContain('不能自批');
-    expect(prompt).toContain('候选 schema');
-    expect(prompt).toContain('业务 SQLite 路径、owner token 或未选择的全局 MCP/Skills/扩展');
-    expect(prompt).toContain('不是强 OS 沙箱');
+    expect(prompt).toContain('Never self-approve');
+    expect(prompt).toContain('planning-candidate v1');
+    expect(prompt).toContain('No business SQLite paths, owner tokens or unselected global MCP/Skills/extensions');
+    expect(prompt).toContain('not an OS sandbox');
+    expect(prompt).toContain('Task Complexity');
+    expect(prompt).toContain('CAS/fencing');
+    expect(prompt).toContain('Do not impose low/medium/high quotas');
+    expect(prompt).toContain('frontend');
+    expect(prompt).toContain('backend');
+    expect(prompt).toContain('languages');
     expect(prompt).toContain('不改变既有公开接口');
     expect(prompt).toContain('候选包含 Task 拆分与验收');
     expect(prompt).toContain(`candidateId: ${f.candidateId}`);
@@ -770,7 +777,7 @@ describe('P05-1 / F-004 规划输入准备与受控工作区绑定', () => {
         strategy: { approvalMode: 'manual', taskLimit: null },
         budget: { ...PLANNING_BUDGET, batch: { ...PLANNING_BUDGET.batch }, run: { ...PLANNING_BUDGET.run } },
       }, { scope: { kind: 'project', projectId }, expectedRevision: imported.result.feature.revision }) as PlanningAcceptedCommandReceipt;
-      const service = createPlanningInputPrepareService({
+      const service = createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
         views: createSqlitePlanningContextStore(session, { nowUtcMs }),
         inputs: createExecutionInputService({
           artifacts: artifactStore,
@@ -812,7 +819,7 @@ describe('P05-1 / F-004 规划输入准备与受控工作区绑定', () => {
     const { createInputSourceFileReader } = await import('../../../packages/core/src/adapters/fs/input-source-files.ts');
     const nowUtcMs = (): number => NOW;
     const files = createArtifactFileStore({ dataRoot: f.box.dataRoot });
-    const service = createPlanningInputPrepareService({
+    const service = createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
       views: createSqlitePlanningContextStore(f.session, { nowUtcMs }),
       inputs: createExecutionInputService({
         artifacts: f.artifacts,

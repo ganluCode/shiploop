@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../prompt-templates.ts';
 /**
  * P03-6 / F-002 执行输入绑定测试夹具（仅测试，不进 packages/）。
  *
@@ -67,6 +68,7 @@ export const FAKE_STRATEGY = { runtime: 'fake', provider: 'test-provider', model
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
 export interface BindingFixtureOptions {
+  readonly runtimeStartLimit?: number;
   readonly verificationPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').VerificationPolicyV2;
   readonly featureAutoFixPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').FeatureAutoFixPolicyV2;
   /** Explicit existing repository, owned by the caller (never cleaned by this fixture). */
@@ -83,6 +85,7 @@ export interface BindingFixtureOptions {
   readonly requirementContent?: string;
   /** Trusted Runtime strategy for adapter composition tests; default retains Fake fixtures. */
   readonly strategy?: { readonly runtime: string; readonly provider: string; readonly model: string };
+  readonly capabilityCatalog?: import('../../../packages/core/src/ports/runtime-capabilities.ts').RuntimeCapabilityCatalog;
   /** P03-3A 可信恢复能力描述符数组（缺省即无目录、全部 unverified）。 */
   readonly recoveryDescriptors?: unknown[];
   readonly recoverySources?: RuntimeRecoverySourceReader;
@@ -184,7 +187,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     const verifier = createArtifactVerifier({
       artifacts, files, limits: { maxReadBytes: 4_000_000 }, nowMs: nowUtcMs,
     });
-    const capabilityCatalog = createStaticRuntimeCapabilityCatalog([
+    const capabilityCatalog = options.capabilityCatalog ?? createStaticRuntimeCapabilityCatalog([
       { runtimeId: strategy.runtime, providers: [{ providerId: strategy.provider, models: [strategy.model] }] },
     ]);
     const views = createSqlitePlanAccess(session, { nowUtcMs });
@@ -211,7 +214,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
           },
           nowMs: nowUtcMs,
         }),
-        builder: createContextBuilder({ budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET }),
+        builder: createContextBuilder({ promptTemplates: testPromptTemplates, budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET }),
         publisher, verifier,
         permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
         ...(options.prepareKnowledge === undefined ? {} : { knowledge: createExecutionKnowledgeReader({
@@ -398,14 +401,16 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
 
     /* 显式执行启动（真实 Batch/Run）。 */
     const previewResult = await preview.previewExecution(projectId, {
-      featureIds: [featureId], budget: BINDING_BUDGET,
+      featureIds: [featureId], budget: { ...BINDING_BUDGET, batch: { ...BINDING_BUDGET.batch,
+        maxRuntimeStarts: options.runtimeStartLimit ?? BINDING_BUDGET.batch.maxRuntimeStarts } },
     });
     if (previewResult.status !== 'ready') {
       throw new Error(`夹具预览失败: ${JSON.stringify(previewResult)}`);
     }
     const startEnvelope = { schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(now).toISOString(),
       operation: 'execution.start', scope,
-      payload: { featureIds: [featureId], budget: BINDING_BUDGET, previewDigest: previewResult.previewDigest } };
+      payload: { featureIds: [featureId], budget: { ...BINDING_BUDGET, batch: { ...BINDING_BUDGET.batch,
+        maxRuntimeStarts: options.runtimeStartLimit ?? BINDING_BUDGET.batch.maxRuntimeStarts } }, previewDigest: previewResult.previewDigest } };
     const started = await commands.submit(owner, startEnvelope as never);
     if (started.status !== 'accepted' || !('runId' in started)) {
       throw new Error(`夹具启动失败: ${JSON.stringify(started)}`);

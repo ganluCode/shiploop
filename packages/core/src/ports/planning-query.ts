@@ -5,8 +5,8 @@
  * Run/planning Task/Attempt、候选 Artifact 与 candidateDigest、拒绝原因、应用
  * 映射与预算/停止阻塞原因；生成前 candidateId 明确为待生成）、core-design/04
  * §3/§6（SQLite 是调度真相、原因可查询；planning Run 成功 ≠ 计划批准 ≠
- * 编码可执行）、docs/p03-1-plan-import-contract.md §6.6（同一分页/游标/只读
- * 纪律）与 docs/p05-1-planning-candidate-contract.md（单候选、历史保留、
+ * 编码可执行）、docs/phases/p03/p03-1-plan-import-contract.md §6.6（同一分页/游标/只读
+ * 纪律）与 docs/phases/p05/p05-1-planning-candidate-contract.md（单候选、历史保留、
  * 拒绝不倒改）。
  *
  * 不变量：
@@ -515,6 +515,7 @@ export interface PublicPlanningCandidateBody {
       readonly id: string;
       readonly title: string;
       readonly complexity: import('./feature-plan.js').PlanComplexity | null;
+      readonly languages?: readonly string[];
       readonly dependsOn: readonly string[];
     }[];
     readonly taskCount: number;

@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
  * P03-9 / F-007 同 Task 通用续接决策与来源快照。
  *
@@ -434,10 +435,11 @@ describe('P03-9 / F-007 同 Task 续接决策与来源快照', () => {
       isWorkRecoveryContinuationError(error, 'candidate_identity_mismatch'));
   });
 
-  it('任务输入变化：auto 新建并记录 input:changed，required 明确拒绝', async () => {
+  it.each(['acceptance', 'languages', 'locale'])('任务输入变化 %s：auto 新建并记录 input:changed，required 明确拒绝', async field => {
     const h = makeHarness();
     const changed = baseSnapshot();
-    (changed.task as Record<string, unknown>).acceptance = { criteria: ['changed criterion'] };
+    if (field === 'locale') changed.locale = 'en-US';
+    else (changed.task as Record<string, unknown>)[field] = field === 'languages' ? ['typescript'] : { criteria: ['changed criterion'] };
     const changedRef = h.store.add('execution-snapshot', stableStringify(changed), 'inputs/task-1/snapshot-changed');
     h.setAttempts([{
       ...h.candidate,
@@ -556,7 +558,7 @@ describe('P03-9 / F-007 同 Task 续接决策与来源快照', () => {
     const h = makeHarness();
     const planned = await h.serviceWith(capabilities('unsupported')).plan(h.request());
     const record = planned.record as WorkRecoveryContinuationRecord;
-    const builder = createContextBuilder({
+    const builder = createContextBuilder({ promptTemplates: testPromptTemplates,
       budget: {
         maxPromptBytes: 200_000, maxRequiredSnapshotBytes: 100_000,
         maxRequiredInputRefs: 16, maxHistoryEntries: 20, maxHistoryEntryChars: 120,

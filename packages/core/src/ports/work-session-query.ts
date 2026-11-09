@@ -3,9 +3,9 @@
  * 授权查询契约（ports 纯契约层）。
  *
  * 设计依据：core-design/04 §3/§6（SQLite 是调度真相、原因可查询）、
- * docs/p03-6-work-session-contract.md（Session 是最小持久关联与诊断入口，
- * 未知指标保持 null）、docs/p03-4-schedule-query-contract.md（同一分页/
- * 游标/只读纪律）与 docs/p03-3a-runtime-recovery-contract.md（原生引用只是
+ * docs/phases/p03/p03-6-work-session-contract.md（Session 是最小持久关联与诊断入口，
+ * 未知指标保持 null）、docs/phases/p03/p03-4-schedule-query-contract.md（同一分页/
+ * 游标/只读纪律）与 docs/phases/p03/p03-3a-runtime-recovery-contract.md（原生引用只是
  * 自描述指针，恢复不等于验收）。
  *
  * 不变量：

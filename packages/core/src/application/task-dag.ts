@@ -98,6 +98,7 @@ export function evaluateTaskDag(view: TaskDagView, nowMs: number): TaskDagResult
       feature: { title: feature.title, description: feature.description, labels: feature.labels, sourceRefs: feature.sourceRefs },
       tasks: scope.map(id => { const task = byId.get(id)!; return {
         id, title: task.title, description: task.description, labels: task.labels, complexity: task.complexity,
+        languages: task.languages ?? [],
         acceptance: task.acceptance, requirementsRefs: task.requirementsRefs, dependsOn: dependencies.get(id),
       }; }),
     });

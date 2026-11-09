@@ -103,6 +103,8 @@ const CONFIG_FIELDS = [
   'maxCodeAttempts',
   'workTimeoutMs',
   'toolTimeoutMs',
+  'fallbacks',
+  'fallbackPolicy',
 ] as const;
 const DIGEST_DOMAIN = 'shiploop/task-strategy-reapplication-preview/v1';
 

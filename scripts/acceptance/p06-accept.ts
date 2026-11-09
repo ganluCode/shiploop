@@ -137,7 +137,7 @@ export async function runP06Acceptance(options: P06AcceptanceOptions) {
     'scripts/acceptance/p06-accept.ts', 'scripts/acceptance/p06-report.ts', 'scripts/acceptance/p06-evidence.ts', 'scripts/acceptance/p06-facts.ts',
     'scripts/acceptance/p06-config.ts', 'scripts/acceptance/p06-process.ts', 'scripts/acceptance/p05-steps.ts', 'scripts/acceptance/p02-accept.ts', 'scripts/acceptance/owned-process-tree.ts',
     'scripts/verify.ts', 'scripts/run-tests.ts', 'test/helpers/node-ts-loader/hooks.mjs', 'test/helpers/node-ts-loader/register.mjs',
-    'docs/p06-acceptance.md', 'docs/acceptance/p06-owner-walkthrough.md', DEMO, ...selection.inputs, ...selection.files])].sort();
+    'docs/phases/p06/p06-acceptance.md', 'docs/acceptance/p06-owner-walkthrough.md', DEMO, ...selection.inputs, ...selection.files])].sort();
   const material = { config, prerequisites: prerequisites!, stepTimeoutMs, overallTimeoutMs, fullRegression: options.fullRegression === true,
     files: files.map(file => ({ file, sha256: hashP06Bytes(readFileSync(repoFile(root, file))) })) };
   const identity: P06EvidenceIdentity = { runId: id, testedCommit: commit, inputDigest: hashP06Input(material) };

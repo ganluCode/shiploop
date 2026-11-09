@@ -1,7 +1,7 @@
 /**
  * F-010（P02-3）受监督基线进程停止后的占用收尾（application 层）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md §8.3（停止未确认 → 操作 failed、
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md §8.3（停止未确认 → 操作 failed、
  * 检查 inconclusive、reason=stop_unconfirmed，且**保留占用**）、§8.4（操作终态
  * 在全部检查收尾且进程确认停止后写回；写回失败占用保留）、§13（全局单并发
  * 占用：另一在途操作 → resource_busy baseline_in_progress）。

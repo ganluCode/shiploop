@@ -2374,6 +2374,16 @@ export function createSqliteExecutionAccess(
         details: { reason: 'stale_revision' },
       });
     }
+    if (status === 'cancelled') {
+      // A cancelled planning Run has no candidate to approve/reject. Close its
+      // open planning context so a new planning.start can be issued after a
+      // provider failure, while preserving all historical Attempts/artifacts.
+      session.database.prepare(`UPDATE planning_contexts
+        SET status = 'cancelled', decision = NULL, decision_reason = ?, decided_at = NULL,
+            applied_revision = NULL, applied_at = NULL, updated_at = ?
+        WHERE project_id = ? AND run_id = ? AND status IN ('open', 'candidate_published')`)
+        .run('user_cancel', timestamp, projectId, row.id);
+    }
     return { changed: true, revision: row.revision + 1 };
   }
 
@@ -2551,7 +2561,36 @@ export function createSqliteExecutionAccess(
       ).all(projectId, targetId);
     }
 
+    const finishStoppedPlanning = () => {
+      if (targetKind !== 'run') return;
+      const run = getExecutionRunInTransaction(projectId, targetId);
+      if (run.purpose !== 'plan' || run.status !== 'cancelled') return;
+      const attemptRows = session.database.prepare<[string, string], {
+        id: string; project_id: string; feature_id: string; run_id: string;
+        owner_id: string; host_instance_id: string; execution_version: number;
+      }>('SELECT * FROM attempts WHERE project_id = ? AND run_id = ?').all(projectId, targetId);
+      const unsafe = session.database.prepare<[string, string], { n: number }>(
+        `SELECT COUNT(*) AS n FROM attempts a LEFT JOIN sessions s ON s.attempt_id = a.id
+         WHERE a.project_id = ? AND a.run_id = ? AND
+           (a.status IN ('preparing', 'executing', 'verifying') OR
+            (a.status = 'interrupted' AND (s.id IS NULL OR s.status <> 'stopped'
+              OR (s.recording_watermark IS NULL AND s.result_ref IS NULL))) OR
+            EXISTS (SELECT 1 FROM workspace_leases l WHERE l.owner_id = a.id))`,
+      ).get(projectId, targetId)!.n;
+      if (unsafe !== 0) return;
+      const recovery = createSqliteDispatchRecovery(session);
+      recovery.releaseForRun(targetId, timestamp);
+      session.database.prepare(`UPDATE tasks SET status = 'cancelled', revision = revision + 1, updated_at = ?
+        WHERE id IN (SELECT planning_task_id FROM planning_contexts WHERE project_id = ? AND run_id = ?)
+          AND kind = 'planning' AND status IN ('pending', 'running')`).run(timestamp, projectId, targetId);
+      session.database.prepare(`UPDATE execution_batches SET status = 'cancelled', reason = 'user_cancel',
+        revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ?
+          AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling')
+          AND NOT EXISTS (SELECT 1 FROM runs WHERE batch_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled'))`)
+        .run(timestamp, batchId, projectId, batchId);
+    };
     if (isExecutionTerminalStatus(targetStatus)) {
+      finishStoppedPlanning();
       return {
         outcome: 'already_terminal', targetKind, targetId, status: targetStatus as ExecutionRunStatus,
         revision: targetRevision, changed: false, stopOperationId: null, stopStatus: null, eventId: null,
@@ -2562,8 +2601,20 @@ export function createSqliteExecutionAccess(
     }
 
     const facts = executionCancelFacts(projectId, runRows.map(row => row.id));
-    const hasInterrupted = targetStatus === 'interrupted'
-      || runRows.some(row => row.status === 'interrupted') || facts.interruptedAttempts > 0;
+    const planningRunStopped = targetKind === 'run'
+      && session.database.prepare<[string, string], { purpose: string }>(
+        'SELECT purpose FROM runs WHERE project_id = ? AND id = ?',
+      ).get(projectId, targetId)?.purpose === 'plan'
+      && facts.activeAttempts === 0 && facts.leases === 0
+      && session.database.prepare<[string, string], { n: number }>(
+        `SELECT COUNT(*) AS n FROM attempts a
+         LEFT JOIN sessions s ON s.attempt_id = a.id
+         WHERE a.project_id = ? AND a.run_id = ? AND a.status = 'interrupted'
+           AND (s.id IS NULL OR s.status <> 'stopped'
+             OR (s.recording_watermark IS NULL AND s.result_ref IS NULL))`,
+      ).get(projectId, targetId)!.n === 0;
+    const hasInterrupted = !planningRunStopped && (targetStatus === 'interrupted'
+      || runRows.some(row => row.status === 'interrupted') || facts.interruptedAttempts > 0);
     const hasActivity = facts.activeAttempts > 0 || facts.leases > 0;
     let existing = findActiveStopOperation(projectId, targetKind, targetId)
       ?? findStopOperationByCommand(projectId, commandId);
@@ -2672,6 +2723,7 @@ export function createSqliteExecutionAccess(
     const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
       featureId: null,
       runId: targetKind === 'run' ? targetId : null, status: 'stopped', timestamp, existing });
+    finishStoppedPlanning();
     return {
       outcome: 'cancelled', targetKind, targetId, status: 'cancelled', revision: currentRevision,
       changed, stopOperationId: stop.id, stopStatus: stop.status, eventId,

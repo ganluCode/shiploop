@@ -4,7 +4,7 @@
  * 也不新建通用事件或报告平台——本模块只服务 P02-4 阶段验收）。
  *
  * 沿用 P01-4 / F-007 的验收模式（scripts/acceptance/p01-report.ts），按
- * `docs/p02-4-acceptance-contract.md`（F-001）冻结的 P02 约定实现：
+ * `docs/phases/p02/p02-4-acceptance-contract.md`（F-001）冻结的 P02 约定实现：
  * - 15 个必需检查 ID 在此以机器可读形式固定（`P02_REQUIRED_CHECKS`，顺序即报告与
  *   聚合的固定顺序）；未知或重复的检查 ID 一律拒绝，不得聚合为通过；
  * - 每个检查结果只有 pass / fail / not_run 三态；未提交结果、启动失败、超时与被

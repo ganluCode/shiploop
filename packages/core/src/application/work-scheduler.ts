@@ -1,4 +1,5 @@
 import { StorageError } from '../ports/errors.js';
+import { PublicError } from '../ports/commands.js';
 import type {
   SchedulerCandidate,
   SchedulerClaimContext,
@@ -33,6 +34,9 @@ function validateBound(name: string, value: number, minimum: number, maximum: nu
 
 function claimErrorReason(error: unknown): string {
   if (error instanceof StorageError && typeof error.details?.reason === 'string') {
+    return error.details.reason;
+  }
+  if (error instanceof PublicError && typeof error.details?.reason === 'string') {
     return error.details.reason;
   }
   return 'claim_rejected';

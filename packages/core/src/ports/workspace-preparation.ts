@@ -6,6 +6,7 @@ import type { CommandProcessIdentity } from './command-process.js';
 import type { WorkspaceBaseline, WorkspaceOperationCommit, WorkspaceOperationResult } from './workspace.js';
 import type { WorkspaceInspection } from './workspace-inspector.js';
 
+/** Legacy ref derivation, retained for historical recovery tooling only. */
 export function deriveManagedFeatureBranch(projectId: string, featureId: string): string {
   const context = { operation: 'Workspace.prepare.branch' };
   validateStableId(projectId, context, 'projectId');
@@ -26,6 +27,8 @@ export interface WorkspacePreparationInput {
   readonly workspaceId: string;
 }
 export interface WorkspacePreparationAuthorization {
+  /** Persisted by Core; legacy workspaces retain their original Git ref. */
+  readonly branchName: string;
   readonly binding: RepositoryBindingRecord;
   readonly featureId: string;
   readonly baseCommit: string;

@@ -2,7 +2,7 @@
  * F-006 命令回执持久化契约（ports 纯契约层）：稳定请求摘要、resultRef 生成、
  * command_receipts 持久行列映射、重放判定与 CommandReceiptStore 窄端口。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md
  * - §5.2 requestDigest 冻结算法：stableCanonicalJson（键按 UTF-16 码点递归升序、
  *   无空白、数组保序）+ SHA-256 小写 hex；commandId 不进摘要（它是幂等键本身）；
  *   摘要由服务端从规范化信封重算，信封不携带 digest；认证秘密不进摘要输入；

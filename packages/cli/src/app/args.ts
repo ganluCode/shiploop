@@ -88,6 +88,7 @@ export type AppCliCommandId =
   | 'config.get'
   | 'config.effective'
   | 'config.export'
+  | 'config.watch'
   | 'receipt.get'
   | 'events.observe'
   | 'knowledge.search'
@@ -228,6 +229,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'config.get',
   'config.effective',
   'config.export',
+  'config.watch',
   'receipt.get',
   'events.observe',
   'knowledge.search',
@@ -817,6 +819,10 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
+  },
+  'config.watch': {
+    command: 'config', commandId: 'config.watch', valueFlags: ['--project', '--input'],
+    boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [],
   },
   'receipt.get': {
     command: 'receipt',
@@ -1785,6 +1791,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       get: 'config.get',
       effective: 'config.effective',
       export: 'config.export',
+      watch: 'config.watch',
     },
     receipt: { get: 'receipt.get' },
     events: { observe: 'events.observe' },
@@ -2784,6 +2791,17 @@ export interface ParsedConfigExport {
   readonly dataRoot?: string;
   readonly scope: 'global' | 'project';
   readonly projectId?: string;
+}
+
+export interface ParsedConfigWatch {
+  readonly kind: 'command';
+  readonly command: 'config';
+  readonly commandId: 'config.watch';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly inputFile: string;
 }
 
 export interface ParsedReceiptGet {
@@ -4289,6 +4307,7 @@ export type ParsedAppCliCommand =
   | ParsedConfigGet
   | ParsedConfigEffective
   | ParsedConfigExport
+  | ParsedConfigWatch
   | ParsedReceiptGet
   | ParsedEventsObserve
   | ParsedKnowledgeCommand
@@ -4828,6 +4847,13 @@ function buildConfig(scan: ScanResult, state: ParseState, spec: AppCommandSpec):
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'config.watch': {
+      if (!scan.bools.has('--confirm')) fail(state, 'missing_required_option', 'confirm');
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const inputFile = takeOption(scan, '--input') ?? 'shiploop.yaml';
+      if (!inputFile || inputFile.includes('\0')) fail(state, 'invalid_input_file', 'input');
+      return { ...base, command: 'config', commandId: 'config.watch', projectId, inputFile };
+    }
     case 'config.create': {
       const { scope, projectId } = resolveScope(scan, state);
       const explicitCommandId = optionalCommandId(scan, state);

@@ -134,7 +134,7 @@ export function validateTaskStrategyReapplicationPreview(value: unknown): TaskSt
       const diff = object(item.diff, ['changed', 'fields', 'beforeDigest', 'afterDigest']);
       if (typeof diff.changed !== 'boolean' || !Array.isArray(diff.fields)
         || new Set(diff.fields).size !== diff.fields.length
-        || diff.fields.some(field => !['schemaVersion', 'runtime', 'provider', 'model', 'credentialRef', 'endpointRef', 'maxCodeAttempts', 'workTimeoutMs', 'toolTimeoutMs'].includes(field))) invalid();
+        || diff.fields.some(field => !['schemaVersion', 'runtime', 'provider', 'model', 'credentialRef', 'endpointRef', 'maxCodeAttempts', 'workTimeoutMs', 'toolTimeoutMs', 'fallbacks', 'fallbackPolicy'].includes(field))) invalid();
       hash(diff.beforeDigest);
       hash(diff.afterDigest);
       if (diff.changed !== (diff.fields.length > 0)

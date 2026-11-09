@@ -50,7 +50,7 @@ export function validationError(
 /**
  * 项目/实体元数据的长度与数量上限（P01-3 实施契约）。
  *
- * 设计未给出具体数值；这些值记录于 `docs/p01-3-application-contract.md` §3（复用规则）
+ * 设计未给出具体数值；这些值记录于 `docs/phases/p01/p01-3-application-contract.md` §3（复用规则）
  * 并请求确认，注册、元数据编辑与查询筛选**共用同一套上限**，任何入口不得另立数值。
  * 长度以 Unicode 码点计（emoji、组合字符不被错误截断判断），并先做标签规范化。
  */

@@ -1,7 +1,7 @@
 /**
  * F-007 P02-4 客户端退出与 Host 安全停止/重启闭环的真实端到端验收场景。
  *
- * 对应 docs/p02-4-acceptance-contract.md §2.1 冻结的两个必需检查（全部 required）：
+ * 对应 docs/phases/p02/p02-4-acceptance-contract.md §2.1 冻结的两个必需检查（全部 required）：
  * - `P02-FR2-CLIENT-EXIT`（FR-2 客户端退出）：受控基线取得实际运行就绪信号后，
  *   SIGINT 中断真实 dist CLI 的 `baseline run --wait` / `--follow` 观察——退出码 4
  *   `observation_interrupted` + 观察中断错误体（operationId/reason）；退出观察不发

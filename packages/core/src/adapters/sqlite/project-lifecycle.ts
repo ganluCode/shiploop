@@ -73,6 +73,8 @@ function readCloseoutInDatabase(db: Database, projectId: string): ProjectLifecyc
       projectId),
     unconfirmedStops: count(db,
       "SELECT COUNT(*) AS n FROM execution_stop_operations WHERE project_id = ? AND (status <> 'stopped' OR stop_confirmed IS NOT 1)",
+      projectId) + count(db,
+      "SELECT COUNT(*) AS n FROM feature_repair_attempts WHERE project_id=? AND (status IN ('reserved','running','uncertain') OR stop_confirmed <> 1)",
       projectId),
     activeBaselineOperations: count(db,
       `SELECT COUNT(*) AS n FROM baseline_operations WHERE project_id = ? AND status IN (${activeBaseline})`,

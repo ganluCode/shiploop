@@ -74,6 +74,6 @@
     "title": "P03-10 P03 确定性执行闭环与故障验收",
     "scope": "FR-1/FR-2/FR-3 确定性闭环、实战负例与可审阅报告（Fake 仅替代模型；live/Pi、强沙箱及后序能力 deferred）",
     "version": "0.3",
-    "contractDoc": "docs/p03-10-f002-checklist.md"
+    "contractDoc": "docs/phases/p03/p03-10-f002-checklist.md"
   }
 }

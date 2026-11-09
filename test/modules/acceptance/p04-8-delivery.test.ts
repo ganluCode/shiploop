@@ -149,8 +149,8 @@ for (const mode of ['normal', 'failure', 'timeout', 'corrupt-evidence', 'directo
 
 
 it('[case:delivery-gates] 交付包保留五层独立结论和未签署的 P04 放行门槛', () => {
-  const report = read('docs/p04-8-f010-delivery-report.md');
-  const checklist = read('docs/p04-8-f010-manual-checklist.md');
+  const report = read('docs/phases/p04/p04-8-f010-delivery-report.md');
+  const checklist = read('docs/phases/p04/p04-8-f010-manual-checklist.md');
   for (const layer of ['定向测试', 'Feature 索引合集', 'Phase 完整工程/集成', '真实 live', '负责人确认']) {
     expect(report).toContain(layer);
     expect(checklist).toContain(layer);
@@ -165,7 +165,7 @@ it('[case:delivery-gates] 交付包保留五层独立结论和未签署的 P04 �
 });
 
 it('[case:delivery-versions-evidence] 交付清单保留阶段实测工具、两种证据索引和未运行门槛计数', () => {
-  const report = read('docs/p04-8-f010-delivery-report.md');
+  const report = read('docs/phases/p04/p04-8-f010-delivery-report.md');
   for (const version of ['1.0.4', '7.0.2', '5.0.3', '13.0.3', '0.45.3']) {
     expect(report).toContain(version);
   }
@@ -176,14 +176,14 @@ it('[case:delivery-versions-evidence] 交付清单保留阶段实测工具、两
 });
 
 it('[case:delivery-matrix] 最终矩阵的六种场景和业务测试导航均可独立定位', () => {
-  const matrix = read('docs/p04-8-f010-fault-matrix.md');
+  const matrix = read('docs/phases/p04/p04-8-f010-fault-matrix.md');
   for (const mode of ['normal', 'failure', 'timeout', 'corrupt-evidence', 'directory-reuse', 'stop-uncertain']) {
     expect(matrix).toContain(`clean-${mode}`);
   }
   const references = [...matrix.matchAll(/`(test\/modules\/[^`]+\.test\.ts)`/g)].map(match => match[1]);
   expect(new Set(references).size).toBeGreaterThanOrEqual(8);
   for (const file of references) expect(existsSync(join(ROOT, file)), file).toBe(true);
-  const report = read('docs/p04-8-f010-delivery-report.md');
+  const report = read('docs/phases/p04/p04-8-f010-delivery-report.md');
   for (const match of report.matchAll(/\]\(([^)]+\.md)\)/g)) {
     expect(existsSync(resolve(ROOT, 'docs', match[1])), match[1]).toBe(true);
   }

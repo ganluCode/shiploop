@@ -6,10 +6,10 @@
  * StateStore 创建 Run；所有 Run 归属用户明确授权的 ExecutionBatch；所有计数与
  * 对象创建在同一事务）、core-design/04 §6（成功、失败、取消的已创建 Run 都消耗
  * maxRuns；同 Batch workKey 已成功不得再次自动创建 Run；显式重试失败工作增加
- * dispatchOrdinal 但共享预算）、docs/p03-3-execution-schema-contract.md（迁移 v9
- * 三表与条件唯一/不可变触发器）、docs/p03-3-work-command-receipts-contract.md
+ * dispatchOrdinal 但共享预算）、docs/phases/p03/p03-3-execution-schema-contract.md（迁移 v9
+ * 三表与条件唯一/不可变触发器）、docs/phases/p03/p03-3-work-command-receipts-contract.md
  * （Work accepted 回执 v6：operationId=batchId、真实 Batch/Run 外键）。
- * 实施契约：docs/p03-3-execution-start-contract.md。
+ * 实施契约：docs/phases/p03/p03-3-execution-start-contract.md。
  *
  * 契约要点：
  * - 本模块只定义记录形态与事务原语输入校验（输入一律 unknown，先校验后写入；
@@ -891,6 +891,22 @@ export function validateExecutionEventAppendInput(
     payload = { schemaVersion: 1, outcome: rawPayload.outcome, deliveryStatus: rawPayload.deliveryStatus,
       reasonCode: rawPayload.reasonCode, runId: requireVersionedId('runId'), batchId: requireVersionedId('batchId'),
       operationId: requireNullableId('operationId') };
+  } else if (eventType === ATTEMPT_UPDATED_EVENT_TYPE && rawPayload.fallback !== undefined) {
+    rejectUnknownKeys(rawPayload, ['updated', 'fallback'], context, 'payload');
+    if (rawPayload.updated !== true) throw validationError(context, 'payload.updated', '必须为 true');
+    const f = requirePlainObject(rawPayload.fallback, context, 'payload.fallback');
+    rejectUnknownKeys(f, ['runId', 'category', 'provider', 'model', 'fromModel'], context, 'payload.fallback');
+    if (!['quota_blocked', 'transient_connection', 'transient_server', 'authentication'].includes(String(f.category))) {
+      throw validationError(context, 'payload.fallback.category', '非法降级类别');
+    }
+    for (const key of ['provider', 'model', ...(f.fromModel === undefined ? [] : ['fromModel'])]) {
+      if (typeof f[key] !== 'string' || !(f[key] as string).length || (f[key] as string).length > 256) {
+        throw validationError(context, `payload.fallback.${key}`, '必须为有界模型标识');
+      }
+    }
+    payload = { updated: true, fallback: { runId: requireStableIdField(f.runId, context, 'payload.fallback.runId'),
+      category: f.category, provider: f.provider, model: f.model,
+      ...(f.fromModel === undefined ? {} : { fromModel: f.fromModel }) } };
   } else {
     if (rawPayload[spec.payloadKey] !== true) {
       throw validationError(context, 'payload', `必须是 {${spec.payloadKey}:true}（脱敏事件固定形状）`, rawPayload);

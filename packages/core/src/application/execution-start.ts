@@ -7,7 +7,7 @@
  * 工作增加 dispatchOrdinal 但共享预算）、core-design/04 §1（唤醒只降低延迟，
  * 持久状态是权威）、core-design/08 §9（startBatch 携带预览摘要；启动事务重核
  * 实际范围与前置条件；实质变化返回 preview_stale，不静默扩大范围）。
- * 实施契约：docs/p03-3-execution-start-contract.md。
+ * 实施契约：docs/phases/p03/p03-3-execution-start-contract.md。
  *
  * 编排顺序：
  * 1. 事务外准备（prepareExecutionStart）：预算深校验（纯）→ 范围形态（空/

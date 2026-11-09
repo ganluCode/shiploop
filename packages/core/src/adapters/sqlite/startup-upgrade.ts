@@ -160,12 +160,20 @@ export async function openUpgradedSqliteStorage(options: SqliteStorageSessionOpt
       try {
         const service = createBackupPackageService({ session, dataRoot: options.dataRoot,
           backupRoot: join(options.dataRoot, 'backups'), files: createArtifactFileStore({ dataRoot: options.dataRoot }),
+          preserveRecordingGapsForUpgrade: true,
           // Startup holds the OS lock, no adapters/listeners exist yet, and this gate never writes the old schema.
           maintenanceGate: createMaintenanceWriteGate() });
         const result = await service.create({ backupId: `upgrade-v${fromVersion}-${randomUUID()}`, owner: 'host-upgrade', hostInstanceId: randomUUID() });
         packagePath = result.packagePath;
         const report = await createBackupPackageVerificationService({ dataRoot: options.dataRoot }).verify({ packagePath });
-        if (report.status !== 'complete') throw new Error('upgrade_backup_verification_failed');
+        // A rollback snapshot must faithfully retain old gaps, not invent lost
+        // recording events. Ordinary restore verification still reports them as
+        // incomplete; every other check must pass, including files and SQLite.
+        const gapOnly = report.status === 'incomplete' && report.manifest !== undefined
+          && report.checks.some(check => check.name === 'recorder' && check.status === 'incomplete')
+          && report.checks.every(check => check.status === 'available' || (check.name === 'recorder'
+            && check.status === 'incomplete' && check.details?.reason === 'recorder_coverage_partial'));
+        if (report.status !== 'complete' && !gapOnly) throw new Error('upgrade_backup_verification_failed');
         // Recheck the entire census after asynchronous backup, still before migration writes.
         await assertUpgradeProcessesStopped(session.database, { probe: options.stopProbe, budgetMs: options.stopBudgetMs });
       } catch (cause) { throw new SqliteUpgradeError('backup', fromVersion, migrations.length, packagePath, null, cause); }

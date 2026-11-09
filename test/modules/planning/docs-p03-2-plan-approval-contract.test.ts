@@ -1,5 +1,5 @@
 /**
- * P03-2 / F-002 文档核验：`docs/p03-2-plan-approval-contract.md` 记录的计划
+ * P03-2 / F-002 文档核验：`docs/phases/p03/p03-2-plan-approval-contract.md` 记录的计划
  * 批准/拒绝决策契约必须与仓库实现事实一致（命令面、决策记录存储与约束、
  * 决策语义、事件与查询、迁移接续与白名单边界），避免「文档另立一套」与
  * 后续 Host/CLI 接线任务（F-007/F-008）各自发明规则。
@@ -38,7 +38,7 @@ import { approvals as approvalsTable } from '../../../packages/core/src/adapters
 import { getTableName } from 'drizzle-orm';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-2-plan-approval-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-2-plan-approval-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

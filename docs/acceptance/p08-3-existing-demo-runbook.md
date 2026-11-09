@@ -14,11 +14,11 @@
 | 层级 | 范围 | 当前可复现入口 | 结果含义 |
 | --- | --- | --- | --- |
 | 夹具与契约层 | 真实临时 Git 仓库、存量检查定义与结果、证据封套、增量与生命周期契约 | `node scripts/run-tests.ts <定向测试文件>`（见 §10） | 只证明该契约/夹具行为；不是产品闭环 |
-| 产品级手动演示 | 安装的 `shiploop` CLI + Host + 用户仓库 + 真实 Pi | CLI 步骤见 [新用户安装与操作指南](../p08-1-user-guide.md)；真实 Pi 另需授权 | 逐条命令记录退出码与证据；未跑项 `not_run` |
+| 产品级手动演示 | 安装的 `shiploop` CLI + Host + 用户仓库 + 真实 Pi | CLI 步骤见 [新用户安装与操作指南](../phases/p08/p08-1-user-guide.md)；真实 Pi 另需授权 | 逐条命令记录退出码与证据；未跑项 `not_run` |
 | Phase 集成验收 | 真实 Git/SQLite/Host/进程/停止/恢复组合 | `accept:p08` 阶段入口；没有自动人工签署 | 由负责人执行并签署；本手册不代替 |
 
 真实 Pi live 现有唯一实现入口是 Todo 演示的 `npm run accept:p08:live -- --approval <批准文件>`
-（见 [accept:p08:live 入口](../p08-2-live-acceptance-entry.md)）。存量增量变更**没有**已实现的
+（见 [accept:p08:live 入口](../phases/p08/p08-2-live-acceptance-entry.md)）。存量增量变更**没有**已实现的
 真实模型入口：它属于独立授权项，未获授权时保持 `not_run`，不得用 Todo live 报告或夹具通过代替。
 
 ## 2. 准备
@@ -210,6 +210,6 @@ npm run accept:p08:live -- --approval <批准文件绝对路径> --output <报�
   `test/modules/acceptance/p08-3-f002-evidence-envelope.test.ts`
 - 索引：`test/index/phases/P08/features/P08-3/feature.json`、
   `test/index/phases/P08/features/P08-3/tasks/F-005.json`
-- 依据：`docs/p08-2-existing-demo.md`、`docs/p08-2-live-acceptance-entry.md`、
-  `docs/p08-1-user-guide.md`、`docs/acceptance/phase-test-scope.md`、`package.json`、`package-lock.json`、
+- 依据：`docs/phases/p08/p08-2-existing-demo.md`、`docs/phases/p08/p08-2-live-acceptance-entry.md`、
+  `docs/phases/p08/p08-1-user-guide.md`、`docs/acceptance/phase-test-scope.md`、`package.json`、`package-lock.json`、
   `scripts/run-tests.ts`

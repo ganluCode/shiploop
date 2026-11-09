@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const doc = new URL('../../../../docs/p03-3a-handoff.md', import.meta.url);
+const doc = new URL('../../../../docs/phases/p03/p03-3a-handoff.md', import.meta.url);
 
 describe('F-005 runtime recovery handoff', () => {
   it('hands off the delivered recovery interfaces with Core authority and Work/Chat separation, without claiming runtime completion', () => {

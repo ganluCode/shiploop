@@ -75,6 +75,8 @@ export interface ConfirmedGitIdentity {
 
 /** 完整获准的 Feature 最终提交政策（可执行形态；缺任一必需成分即不可用）。 */
 export interface ConfirmedDeliveryPolicy {
+  readonly auto_push?: boolean;
+  readonly push_remote?: string;
   /** 新配置使用 task_and_feature；旧名称不豁免 Task 本地提交。 */
   readonly commitMode: CommitMode;
   /** 用户明确配置并确认的提交身份。 */
@@ -90,6 +92,8 @@ export interface ConfirmedDeliveryPolicy {
  * fail-closed 拒绝，不存在默认提交政策。
  */
 export interface DeliveryPolicySection {
+  readonly auto_push?: boolean;
+  readonly push_remote?: string;
   readonly commitMode?: CommitMode;
   readonly gitIdentity?: ConfirmedGitIdentity;
   readonly deliveryActions?: readonly DeliveryActionKind[];
@@ -122,7 +126,7 @@ export type DeliveryPolicyUseResolution =
   | { readonly status: 'rejected'; readonly reason: DeliveryPolicyRejectionReason };
 
 const GIT_IDENTITY_KEYS = ['name', 'email', 'confirmed'] as const;
-const CONFIRMED_POLICY_KEYS = ['commitMode', 'gitIdentity', 'deliveryActions'] as const;
+const CONFIRMED_POLICY_KEYS = ['commitMode', 'gitIdentity', 'deliveryActions', 'auto_push', 'push_remote'] as const;
 const RUNTIME_SOURCE_KEYS = ['runtime', 'provider', 'model', 'source'] as const;
 const RUNTIME_SOURCE_SOURCE_KEYS = ['kind', 'sourceKey'] as const;
 
@@ -280,10 +284,22 @@ export function validateDeliveryPolicySection(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, CONFIRMED_POLICY_KEYS, context, field);
   const result: {
+    auto_push?: boolean;
+    push_remote?: string;
     commitMode?: CommitMode;
     gitIdentity?: ConfirmedGitIdentity;
     deliveryActions?: readonly DeliveryActionKind[];
   } = {};
+  if (object.auto_push !== undefined) {
+    if (typeof object.auto_push !== 'boolean') throw validationError(context, `${field}.auto_push`, '必须是布尔值');
+    result.auto_push = object.auto_push;
+  }
+  if (object.push_remote !== undefined) {
+    if (typeof object.push_remote !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(object.push_remote)) {
+      throw validationError(context, `${field}.push_remote`, '必须是已配置的远端名称，不接受 URL');
+    }
+    result.push_remote = object.push_remote;
+  }
   if (object.commitMode !== undefined) {
     if (object.commitMode !== FEATURE_FINAL_COMMIT_MODE && object.commitMode !== TASK_AND_FEATURE_COMMIT_MODE) {
       throw new StorageError(
@@ -329,6 +345,8 @@ export function validateConfirmedDeliveryPolicy(
   return {
     commitMode: section.commitMode as CommitMode,
     gitIdentity: section.gitIdentity as ConfirmedGitIdentity,
+    ...(section.auto_push === undefined ? {} : { auto_push: section.auto_push }),
+    ...(section.push_remote === undefined ? {} : { push_remote: section.push_remote }),
     ...(section.deliveryActions === undefined ? {} : { deliveryActions: section.deliveryActions }),
   };
 }
@@ -369,6 +387,8 @@ export function resolveDeliveryPolicyForUse(section: DeliveryPolicySection | und
       policy: {
         commitMode: section.commitMode,
         gitIdentity,
+        ...(section.auto_push === undefined ? {} : { auto_push: section.auto_push }),
+        ...(section.push_remote === undefined ? {} : { push_remote: section.push_remote }),
         ...(actions === undefined ? {} : { deliveryActions: actions }),
       },
     };

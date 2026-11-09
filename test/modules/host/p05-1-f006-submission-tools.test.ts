@@ -28,6 +28,20 @@ import type { PlanningSubmitFixture } from '../../helpers/planning/p05-1-candida
 
 beforeAll(() => { execFileSync(process.execPath, ['scripts/build-host-lock.ts'], { timeout: 60_000 }); });
 
+it('retains the entire command envelope after an unknown submission result', async () => {
+  const calls: unknown[] = [];
+  let tick = SUBMIT_NOW;
+  const tool = createPlanningCandidateSubmitTool({ projectId: 'project-1', invocationId: 'invocation-1', executionVersion: 1,
+    identity: { purpose: 'work', runId: 'run-1', taskId: 'task-1', attemptId: 'attempt-1' },
+    nowIso: () => new Date(++tick).toISOString(),
+    async invoke(input) { calls.push(input); throw new Error('response lost'); },
+  });
+  await tool.execute('first', { candidate: '{}' });
+  await tool.execute('retry', { candidate: '{}' });
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toEqual(calls[0]);
+});
+
 async function servePlanningTool(f: PlanningSubmitFixture) {
   const workTools = createHostWorkToolAccess(f.channel);
   const grant = workTools.issue({

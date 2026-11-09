@@ -150,9 +150,10 @@ describe('P05-1 / F-009 规划取消、超时与失败的停止/结算控制', (
     /* 成功/取消均不退还 Run、Attempt、Runtime 启动计数，不重置 deadline。 */
     const after = batchFacts(f);
     expect(after).toEqual(before);
-    /* 不自动反复生成新规划：活动规划上下文保持 open，再次 planning.start 被拒。 */
-    await expect(submitPlanningStartAgain(f)).rejects.toMatchObject({ code: 'conflict', details: { reason: 'planning_in_progress' } });
-    expect(Number((f.query('SELECT COUNT(*) AS n FROM runs') as { n: number }).n)).toBe(1);
+    /* 已取消的上下文保留历史，显式新授权可以重新规划，不自动启动模型。 */
+    expect((await submitPlanningStartAgain(f)).status).toBe('accepted');
+    expect(Number((f.query('SELECT COUNT(*) AS n FROM runs') as { n: number }).n)).toBe(2);
+    expect(f.runtimeStarts()).toBe(0);
   }, 120_000);
 
   it('[case:planning-cancel-running-stops-and-settles] 工具中取消：控制意图先行、撤销工具 grant、停止核验后安全释放', async () => {
@@ -187,10 +188,10 @@ describe('P05-1 / F-009 规划取消、超时与失败的停止/结算控制', (
       .toMatchObject({ status: 'stopped', stop_confirmed: 1 });
     /* 停止证据以受管 Artifact 发布（身份、阶段、退出观察与缺口）。 */
     expect(Number((f.query('SELECT COUNT(*) AS n FROM artifacts WHERE kind = ?', 'execution_stop_evidence') as { n: number }).n)).toBe(1);
-    /* Session/Attempt/上下文事实保留：无候选发布，上下文保持 open。 */
+    /* Session/Attempt/上下文事实保留：无候选发布，取消上下文不再阻塞新授权。 */
     expect(f.query('SELECT id FROM sessions WHERE attempt_id = (SELECT id FROM attempts WHERE task_id = ?)', f.planningTaskId).id).toBeTruthy();
     expect(f.query('SELECT status, candidate_artifact_id FROM planning_contexts WHERE run_id = ?', f.planningRunId))
-      .toMatchObject({ status: 'open', candidate_artifact_id: null });
+      .toMatchObject({ status: 'cancelled', candidate_artifact_id: null });
 
     /* 停止确认后由当前 owner/version 安全结算并释放资源/槽位（停止控制的结算
      * 与 Run 收尾同一事务后，由派发结算入口按持久事实释放）。 */

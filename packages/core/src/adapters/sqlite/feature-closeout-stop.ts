@@ -33,6 +33,12 @@ export function createSqliteFeatureCloseoutStopVerifier(options: {
   return {
     async verify(snapshot) {
       try {
+        const repairs = session.database.prepare('SELECT process_identity,status,stop_confirmed FROM feature_repair_attempts WHERE project_id=? AND run_id=?')
+          .all(key.projectId, key.runId) as { process_identity: string | null; status: string; stop_confirmed: number }[];
+        for (const repair of repairs) {
+          if (!repair.stop_confirmed || !['completed', 'failed', 'interrupted'].includes(repair.status)) return null;
+          if (repair.process_identity && !(await options.processes.recoverStop?.(JSON.parse(repair.process_identity)))?.confirmed) return null;
+        }
         options.assertLease(options.token);
         if (options.token.signal.aborted || snapshot.identity.projectId !== key.projectId || snapshot.leases.length !== 0
           || snapshot.processIdentity !== null) return null;

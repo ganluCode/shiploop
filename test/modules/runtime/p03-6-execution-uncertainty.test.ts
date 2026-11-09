@@ -153,6 +153,19 @@ describe('F-010 uncertainty, persistence and shutdown', () => {
     } finally { await f.dispose(); }
   });
 
+  it('a trusted pre-spawn rejection releases resources and allows shutdown without losing failure evidence', async () => {
+    const f = await fixture({}, {}, (_f, deps) => {
+      Object.assign(deps.runtime, { start: async () => { throw new RuntimeError('configuration', 'runner_invalid_input'); } });
+    });
+    try {
+      await expect(f.start()).rejects.toMatchObject({ reason: 'runner_invalid_input' });
+      expect(f.rawHandles).toHaveLength(0);
+      expect(f.resources.read(f.identity).leases).toEqual([]);
+      expect(f.query('SELECT status FROM attempts')).toEqual({ status: 'failed' });
+      expect((await f.service.close()).closed).toBe(true);
+    } finally { await f.dispose(); }
+  });
+
   it('completed/cancel race finalizes once and leaves Task waiting for verification', async () => {
     const gate = createFakeRuntimeGate();
     const f = await fixture({ script: script([{ op: 'await_gate', name: 'finish' }]), gates: { finish: gate } });

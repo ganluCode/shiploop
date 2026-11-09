@@ -1,5 +1,6 @@
 /** Trusted Work composition. No adapter discovery, module loading, environment or SDK. */
 import { createHash, randomUUID } from 'node:crypto';
+import { loadBuiltinPromptTemplates } from './fs/prompt-templates.js';
 import type { CoreApplication } from './composition.js';
 import type { SqliteStorageSession } from './sqlite/session.js';
 import { createSqliteSchedulerStore } from './sqlite/scheduler-store.js';
@@ -72,6 +73,11 @@ import { deriveRunDispatchDisplay } from '../ports/execution-dispatch.js';
 import type { DispatchAttemptFence, DispatchSettlementResult } from '../ports/dispatch-settlement.js';
 import type { ExecutionRunStatus } from '../ports/execution-store.js';
 import type { assembleFeatureCloseout } from './feature-closeout.js';
+import { createWorkToolChannel } from '../application/work-tool-channel.js';
+import type { WorkToolBridge } from '../application/work-tool-channel.js';
+import type { WorkAccessBinding } from '../ports/work-access.js';
+import { mergeEffectiveSettings, type EffectiveSettings } from '../application/effective-settings.js';
+import { publishRuntimeDocumentContext } from './runtime-document-context.js';
 
 export interface WorkRuntimeContext {
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
@@ -80,10 +86,18 @@ export interface WorkRuntimeContext {
   readonly commitCommandIdentity: (identity: CommandProcessIdentity, request: RuntimeExecutionRequest) => Promise<{ launchId: string }>;
   /** Frozen project resource selection for a new Work Attempt; no live config is exposed to Runtime. */
   readonly projectResourceSelection?: (projectId: string) => ProjectResourceSelection;
+  /** Invocation-scoped planning-only grant. No general owner client reaches the Runner. */
+  readonly bindPlanningTool?: (request: RuntimeExecutionRequest) => WorkToolBridge;
+  readonly loadSelectedSkills?: (projectId: string) => ReturnType<CoreApplication['projectResourceService']['loadSelectedSkills']>;
+  readonly effectiveSettings?: (projectId: string) => EffectiveSettings;
+  readonly nowUtcMs?: () => number;
+  /** Publish additional invocation-time document evidence without changing approved Task inputs. */
+  readonly publishDocumentContext?: (request: RuntimeExecutionRequest, content: Uint8Array) => Promise<RuntimeExecutionRequest['inputManifest']>;
 }
 /** Approved Task-local routing, supplied by trusted assembly; authorization is checked on every switch. */
 export interface WorkFailureRoutingAssembly {
-  select(context: { projectId: string; runId: string; taskId: string; strategy: RuntimeStrategyV1 }): {
+  select(context: { projectId: string; runId: string; taskId: string; strategy: RuntimeStrategyV1;
+    routing?: Pick<import('../ports/settings-schema.js').ConfiguredRuntimeStrategy, 'fallbacks' | 'fallbackPolicy'> }): {
     readonly plan: RuntimeFallbackPlanV1;
     readonly policyVersion: string;
     readonly capabilityEvidence: RuntimeFallbackCapabilityEvidence;
@@ -244,12 +258,29 @@ export function assembleWorkExecution(options: {
           dispatches.delete(attemptId);
           continue;
         }
-        const result = session.transactWrite('WorkExecution.renewDispatch', () => dispatchSettlement.renewInTransaction({
+        const result = session.transactWrite('WorkExecution.renewDispatch', () => {
+          const renewed = dispatchSettlement.renewInTransaction({
           projectId: entry.projectId, runId: entry.runId,
           expected: { claimId: entry.claimId, claimVersion: entry.claimVersion,
             ownerId: entry.attempt.ownerId, hostInstanceId: entry.attempt.hostInstanceId },
           attempt: entry.attempt, leaseUntilUtcMs: now() + DISPATCH_LEASE_MS,
-        }));
+          });
+          if (renewed.decision !== 'renewed' && renewed.decision !== 'unchanged') return renewed;
+          const current = attempts.getAttempt(entry.projectId, attemptId);
+          if (['preparing', 'executing', 'verifying'].includes(current.status)) {
+            const identity = { projectId: entry.projectId, attemptId, owner: entry.attempt.ownerId,
+              hostInstanceId: entry.attempt.hostInstanceId, executionVersion: entry.attempt.executionVersion };
+            const held = resources.read(identity);
+            if (held.leases.length) {
+              const occupancy = resources.renewInTransaction(identity, Math.max(now() + DISPATCH_LEASE_MS,
+                ...held.leases.map(lease => lease.leaseUntilUtcMs)));
+              if (occupancy.leases.some(lease => lease.state !== 'held')) {
+                return { ...renewed, decision: 'quarantined' as const, reason: 'claim_quarantined' as const };
+              }
+            }
+          }
+          return renewed;
+        });
         if (result.decision === 'renewed') outcome.renewed += 1;
         else if (result.decision === 'unchanged') outcome.unchanged += 1;
         else {
@@ -269,7 +300,78 @@ export function assembleWorkExecution(options: {
     return outcome;
   }
   const runtimeAssembly = options.runtimeFactory?.({ capabilityCatalog: options.capabilityCatalog, workspaceRoots, reader: request => readers.get(request.invocationId),
+    nowUtcMs: now,
+    publishDocumentContext: (request, content) => publishRuntimeDocumentContext(publisher, request, content),
     projectResourceSelection: projectId => app.projectResourceService.snapshotForAttempt(createLocalOwnerPrincipal(), projectId),
+    loadSelectedSkills: projectId => app.projectResourceService.loadSelectedSkills(createLocalOwnerPrincipal(), projectId),
+    effectiveSettings(projectId) {
+      return createSqliteAtomicCommandStore(session).transact('WorkRuntime.settings', tx => {
+        const global = tx.getGlobalSettingsOrNull(), project = tx.getProjectSettingsOrNull(projectId);
+        return mergeEffectiveSettings({ global: global && { scopeRevision: global.revision, payload: global.payload },
+          project: project && { scopeRevision: project.revision, payload: project.payload } });
+      });
+    },
+    bindPlanningTool(request) {
+      if (request.identity.purpose !== 'work' || request.prompt.kind !== 'planning-prompt' || !readers.has(request.invocationId)) {
+        throw new PublicError('forbidden', 'planning.candidate.submit');
+      }
+      const identity = request.identity;
+      const principal = createLocalOwnerPrincipal();
+      const issuedAt = now();
+      let bindingReason = 'planning_binding_not_current';
+      const binding = (requireExecuting = true): WorkAccessBinding | null => {
+        const current = attempts.getAttempt(request.projectId, identity.attemptId);
+        if (!isPlanningAttemptSnapshot(current.inputSnapshot)) { bindingReason = 'planning_snapshot_missing'; return null; }
+        if (requireExecuting ? current.status !== 'executing' : !['preparing', 'executing'].includes(current.status)) {
+          bindingReason = 'planning_attempt_not_executing'; return null;
+        }
+        if (current.projectId !== request.projectId || current.featureId !== request.featureId
+          || current.taskId !== identity.taskId || current.runId !== identity.runId
+          || current.invocationId !== request.invocationId || current.executionVersion !== request.executionVersion
+          || current.owner !== request.owner.principalId || current.hostInstanceId !== request.owner.hostInstanceId) {
+          bindingReason = 'planning_identity_changed'; return null;
+        }
+        const held = resources.read({ projectId: request.projectId, attemptId: identity.attemptId,
+          owner: current.owner, hostInstanceId: current.hostInstanceId, executionVersion: current.executionVersion });
+        if (!held.leases.length || held.leases.some(lease => lease.state !== 'held' || lease.leaseUntilUtcMs <= now())) {
+          bindingReason = 'planning_lease_not_current'; return null;
+        }
+        return { principal, projectId: request.projectId, hostInstanceId: current.hostInstanceId,
+          identity, invocationId: request.invocationId, executionVersion: current.executionVersion,
+          nowUtcMs: now(), strategy: request.strategy };
+      };
+      const initial = binding(false);
+      if (!initial) throw new PublicError('forbidden', 'planning.candidate.submit');
+      const channel = createWorkToolChannel({ atomicStore: createSqliteAtomicCommandStore(session, { nowUtcMs: now }), attempts, dag,
+        verifier,
+        candidates: { async validateCandidates() { throw new PublicError('forbidden', 'planning.candidate.submit'); } },
+        currentBinding: () => binding(),
+        candidateContext() { throw new PublicError('forbidden', 'planning.candidate.submit'); },
+        planning: { publisher },
+      });
+      const declaration = { schemaVersion: 1, runtime: 'pi', provider: request.strategy.provider, model: request.strategy.model,
+        context: { grantId: randomUUID(), principalId: principal.principalId, projectId: request.projectId,
+          hostInstanceId: initial.hostInstanceId, identity, invocationId: request.invocationId,
+          executionVersion: request.executionVersion, issuedAtUtcMs: issuedAt, expiresAtUtcMs: issuedAt + request.limits.timeoutMs,
+          operations: ['planning.candidate.submit'] },
+        authentication: { kind: 'environment', sourceRef: randomUUID(), pluginId: null, environmentRefs: [] }, resources: [] };
+      // Runner launch precedes the durable started event. Issue the actual grant
+      // only when the first tool request sees a currently executing Attempt.
+      let activeBridge: WorkToolBridge | undefined;
+      let revoked = false;
+      return {
+        revoke() { revoked = true; activeBridge?.revoke(); },
+        async invoke(input) {
+          if (revoked) throw new PublicError('forbidden', 'planning.candidate.submit');
+          if (!activeBridge) {
+            const live = binding();
+            if (!live) throw new PublicError('forbidden', 'planning.candidate.submit', undefined, { details: { reason: bindingReason } });
+            activeBridge = channel.bind(declaration, live);
+          }
+          return activeBridge.invoke(input);
+        },
+      };
+    },
     async commitCommandIdentity(processIdentity, request) {
       if (request.identity.purpose !== 'work') throw new TypeError('Work identity required');
       const work = request.identity;
@@ -303,7 +405,7 @@ export function assembleWorkExecution(options: {
     }
     let probe = probes.get(projectId);
     if (!probe) {
-      probe = createRuntimeInferencePreflight({ ...probeAssembly!, policy: probePolicy, nowUtcMs: now,
+      probe = createRuntimeInferencePreflight({ ...probeAssembly!, policy: probePolicy, nowUtcMs: now, promptTemplates: loadBuiltinPromptTemplates(),
         async audit(record) {
           const body = Buffer.from(JSON.stringify(record));
           await publisher.publishArtifact({ projectId, kind: 'inference_preflight', mediaType: 'application/json',
@@ -421,7 +523,8 @@ export function assembleWorkExecution(options: {
     session.database.prepare(`SELECT DISTINCT l.owner_id FROM workspace_leases l
       JOIN attempts a ON a.id = l.owner_id
       LEFT JOIN sessions s ON s.id = a.session_id
-      WHERE s.status IS NULL OR s.status <> 'stopped' OR s.result_ref IS NULL`).all() as { owner_id: string }[]
+      WHERE a.host_instance_id = ? AND (s.status IS NULL OR s.status <> 'stopped' OR s.result_ref IS NULL)`)
+      .all(hostInstanceId) as { owner_id: string }[]
   ).map(row => row.owner_id)])];
   let quiescing = false, closed = false;
   // 仅收尾 Run 不创建编码 Attempt，但不得绕过单槽/项目 Work 门控：读取既有
@@ -533,16 +636,37 @@ export function assembleWorkExecution(options: {
           details: { reason: 'runtime_not_found' },
         });
       }
-      const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool, ...strategy } = config;
+      const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool,
+        fallbacks: _fallbacks, fallbackPolicy: _policy, ...strategy } = config;
 
-      /* 工作区（与认领同一权威的幂等复核）与截止（Batch/Run/租约）。 */
+      /* 工作区：首次 planning Attempt 也必须走正式准备流程，不能把尚未
+       * 创建的 Feature worktree 当作 Runtime cwd。认领阶段只验证目标路径
+       * 的授权边界；这里创建/复用受管 worktree 后，再以真实 realpath 核验。 */
+      const managed = createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now })
+        .readWorkspace(attempt.projectId, attempt.featureId);
+      const preparedWorkspace = managed === null ? await app.workspacePreparation.prepare({
+        identity,
+        runId: attempt.runId,
+        taskId: attempt.taskId,
+        claimKey: receipt.claimKey,
+        operationId: randomUUID(),
+        workspaceId: randomUUID(),
+      }) : null;
+      if (preparedWorkspace !== null && (preparedWorkspace.operation.status !== 'succeeded' || preparedWorkspace.workspace.status !== 'ready')) {
+        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Planning worktree preparation did not complete', {
+          details: { reason: 'workspace_not_ready' },
+        });
+      }
       const binding = await app.stateStore.getRepositoryBinding(attempt.projectId);
-      const workspace = await app.workWorkspaceAuthority.verifyPreparation(binding, attempt.featureId);
+      const workspace = await app.workWorkspaceAuthority.verify(binding, preparedWorkspace?.workspace.canonicalPath ?? managed!.canonicalPath);
       const view = dag.readTaskDagView(attempt.projectId, attempt.runId);
       const nowMs = now();
       const batchDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs);
-      const sessionLimit = Math.min(config.workTimeoutMs ?? DEFAULT_WORK_TIME_LIMIT_MS,
-        Math.max(0, attempt.leaseUntilUtcMs - nowMs));
+      // The dispatch lease is a renewable ownership claim, not the Planner's
+      // Session deadline. Capping the first Runtime request by leaseUntil made
+      // every planning Session expire after the default 60-second lease even
+      // when executionLimits.workTimeoutMs was configured higher.
+      const sessionLimit = config.workTimeoutMs ?? DEFAULT_WORK_TIME_LIMIT_MS;
       const deadlines = resolveExecutionDeadlines({
         nowUtcMs: nowMs,
         sessionTimeLimitMs: Math.max(1, sessionLimit),
@@ -676,8 +800,10 @@ export function assembleWorkExecution(options: {
       const config = validateTaskExecutionConfig(task.executionConfig, 'WorkRuntime.prepare');
       // Check adapter availability before any claim, workspace process or debit.
       if (!registry.resolve(config.runtime)) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Runtime adapter is not installed', { details: { reason: 'runtime_not_found' } });
-      const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool, ...probeStrategy } = config;
-      const selectedRoute = runtimeAssembly?.failureRouting?.select({ projectId, runId: candidate.run.id, taskId, strategy: probeStrategy });
+      const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool,
+        fallbacks, fallbackPolicy, ...probeStrategy } = config;
+      const selectedRoute = runtimeAssembly?.failureRouting?.select({ projectId, runId: candidate.run.id, taskId,
+        strategy: probeStrategy, routing: { fallbacks, fallbackPolicy } });
       const frozenRoute = selectedRoute === undefined ? undefined : { ...structuredClone(selectedRoute),
         plan: validateRuntimeFallbackPlan(selectedRoute.plan) };
       if (frozenRoute && (frozenRoute.plan.fallbacks.length > 32
@@ -780,6 +906,8 @@ export function assembleWorkExecution(options: {
           maxCodeAttempts: __,
           workTimeoutMs: configuredSessionLimit,
           toolTimeoutMs: configuredToolLimit,
+          fallbacks: _fallbacks,
+          fallbackPolicy: _fallbackPolicy,
           ...preferredStrategy
         } = config;
         const strategy = attempt.inputSnapshot.runtimeFallback?.strategy ?? preferredStrategy;

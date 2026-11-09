@@ -2,7 +2,7 @@
  * P01-4 / F-008 `npm run accept:p01` 单次验收入口（验收控制器）。
  * 开发验收工具，不是 ShipLoop 产品能力，不进 packages/，不提供 Host/CLI 业务接口。
  *
- * 依据 `docs/p01-4-acceptance-contract.md` §2.1/§2.4/§3.4 与 F-007 报告模块实现：
+ * 依据 `docs/phases/p01/p01-4-acceptance-contract.md` §2.1/§2.4/§3.4 与 F-007 报告模块实现：
  * - 一次运行自动串联 `npm run verify`（检查 P01-ENG-VERIFY）、四个固定必需场景
  *   （持久化闭环、回滚/CAS、制品负例、配置/标签，分别承接 FR-1/FR-2 分支检查）与
  *   构建产物冒烟（P01-ENG-BUILD-SMOKE，F-009 专用 `test/modules/acceptance/p01-4-build-smoke.test.ts`：

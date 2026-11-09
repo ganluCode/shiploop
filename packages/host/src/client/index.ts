@@ -64,6 +64,7 @@ export type {
   PreviewExecutionInput,
   StartExecutionInput,
   StartPlanningInput,
+  RetirePlanningInput,
   DecidePlanningCandidateInput,
   ListPlanningContextsInput,
   ReviseExecutionBudgetInput,

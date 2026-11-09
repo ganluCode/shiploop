@@ -20,7 +20,7 @@ import { expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-const MATRIX = 'docs/p08-capability-matrix.md';
+const MATRIX = 'docs/phases/p08/p08-capability-matrix.md';
 const REPORT_TEMPLATE = 'docs/acceptance/p08-delivery-report-template.md';
 const WALKTHROUGH = 'docs/acceptance/p08-owner-walkthrough.md';
 const NEW_DOCS = [MATRIX, REPORT_TEMPLATE, WALKTHROUGH] as const;

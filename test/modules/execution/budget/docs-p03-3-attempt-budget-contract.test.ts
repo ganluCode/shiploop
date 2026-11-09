@@ -1,6 +1,6 @@
 import { currentSchemaVersion } from '../../../helpers/current-schema.ts';
 /**
- * P03-3 / F-006 文档核验：`docs/p03-3-attempt-budget-contract.md` 记录的 Task
+ * P03-3 / F-006 文档核验：`docs/phases/p03/p03-3-attempt-budget-contract.md` 记录的 Task
  * 尝试预算预占与分类记账契约必须与仓库实现事实一致（迁移 v11 内容、原语面、
  * 受信边界与错误词汇、命令面不含自报入口），避免「文档另立一套」。
  */
@@ -17,7 +17,7 @@ import {
 import { DEFAULT_TASK_MAX_CODE_ATTEMPTS } from '../../../../packages/core/src/ports/execution-budget.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-3-attempt-budget-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-3-attempt-budget-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

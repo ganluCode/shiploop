@@ -8,7 +8,7 @@
  * 创建一个 planning Task；候选计划保存为制品，不建 PlanRevision；拒绝不倒改已
  * 结束 Run）、§9（规划 Task 按 purposeStrategies 创建配置副本）、core-design/03
  * §3（原子操作接口：不把一个原子行为拆成多个独立提交）、§6（迁移只追加，保留
- * 既有 SQL/checksum）。实施契约：docs/p05-1-planning-candidate-contract.md §6/§7
+ * 既有 SQL/checksum）。实施契约：docs/phases/p05/p05-1-planning-candidate-contract.md §6/§7
  * （candidateId 随 Run 持久绑定；单候选；批准才原子应用）。
  *
  * 契约要点：
@@ -46,6 +46,7 @@ import { PLANNING_RUN_PURPOSE, PLANNING_TASK_KIND } from './planning-candidates.
 import {
   SETTINGS_SCHEMA_VERSION,
   validateRuntimeStrategy,
+  validateConfiguredRuntimeStrategy,
 } from './settings-schema.js';
 import type { RuntimeStrategyV1 } from './settings-schema.js';
 import {
@@ -146,6 +147,12 @@ export interface PlanningStrategyCopy {
   readonly model: string;
   readonly credentialRef?: string;
   readonly endpointRef?: string;
+  readonly fallbacks?: import('./settings-schema.js').ConfiguredRuntimeStrategy['fallbacks'];
+  readonly fallbackPolicy?: import('./settings-schema.js').ConfiguredRuntimeStrategy['fallbackPolicy'];
+  /** Planner Session 总时长上限，冻结自 executionLimits。 */
+  readonly workTimeoutMs?: number;
+  /** Planner 单工具调用上限，冻结自 executionLimits。 */
+  readonly toolTimeoutMs?: number;
 }
 
 const STRATEGY_COPY_KEYS = [
@@ -155,6 +162,10 @@ const STRATEGY_COPY_KEYS = [
   'model',
   'credentialRef',
   'endpointRef',
+  'fallbacks',
+  'fallbackPolicy',
+  'workTimeoutMs',
+  'toolTimeoutMs',
 ] as const;
 
 /**
@@ -185,7 +196,9 @@ export function validatePlanningStrategyCopy(value: unknown, operation: string):
   if (object.endpointRef !== undefined) {
     entry.endpointRef = object.endpointRef;
   }
-  const strategy: RuntimeStrategyV1 = validateRuntimeStrategy(entry, context, 'strategy');
+  if (object.fallbacks !== undefined) entry.fallbacks = object.fallbacks;
+  if (object.fallbackPolicy !== undefined) entry.fallbackPolicy = object.fallbackPolicy;
+  const strategy = validateConfiguredRuntimeStrategy(entry, context, 'strategy');
   const copy: {
     schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
     runtime: string;
@@ -193,6 +206,10 @@ export function validatePlanningStrategyCopy(value: unknown, operation: string):
     model: string;
     credentialRef?: string;
     endpointRef?: string;
+    fallbacks?: PlanningStrategyCopy['fallbacks'];
+    fallbackPolicy?: PlanningStrategyCopy['fallbackPolicy'];
+    workTimeoutMs?: number;
+    toolTimeoutMs?: number;
   } = {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     runtime: strategy.runtime,
@@ -204,6 +221,20 @@ export function validatePlanningStrategyCopy(value: unknown, operation: string):
   }
   if (strategy.endpointRef !== undefined) {
     copy.endpointRef = strategy.endpointRef;
+  }
+  if (strategy.fallbacks !== undefined) copy.fallbacks = structuredClone(strategy.fallbacks);
+  if (strategy.fallbackPolicy !== undefined) copy.fallbackPolicy = { ...strategy.fallbackPolicy };
+  if (object.workTimeoutMs !== undefined) {
+    if (typeof object.workTimeoutMs !== 'number' || !Number.isSafeInteger(object.workTimeoutMs) || object.workTimeoutMs < 1000 || object.workTimeoutMs > 86_400_000) {
+      throw validationError(context, 'strategy.workTimeoutMs', '必须是 1..86400000 的整数');
+    }
+    copy.workTimeoutMs = object.workTimeoutMs;
+  }
+  if (object.toolTimeoutMs !== undefined) {
+    if (typeof object.toolTimeoutMs !== 'number' || !Number.isSafeInteger(object.toolTimeoutMs) || object.toolTimeoutMs < 1000 || object.toolTimeoutMs > 3_600_000) {
+      throw validationError(context, 'strategy.toolTimeoutMs', '必须是 1..3600000 的整数');
+    }
+    copy.toolTimeoutMs = object.toolTimeoutMs;
   }
   return copy;
 }

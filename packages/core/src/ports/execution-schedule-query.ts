@@ -3,9 +3,9 @@
  * 契约（ports 纯契约层）。
  *
  * 设计依据：core-design/04 §3/§6（SQLite 是调度真相、原因可查询、占用审计）
- * 与 docs/p03-4-task-dag-readiness-contract.md（同一就绪判定规则
+ * 与 docs/phases/p03/p03-4-task-dag-readiness-contract.md（同一就绪判定规则
  * evaluateTaskDag；ready/blocked 是持久状态的派生视图，绝不落库为第二套
- * 可写 Task 状态）、docs/p03-4-attempt-lifecycle-contract.md（有界脱敏诊断
+ * 可写 Task 状态）、docs/phases/p03/p03-4-attempt-lifecycle-contract.md（有界脱敏诊断
  * 只保留同项目 Attempt 链接、时间、固定原因与摘要）。
  *
  * 不变量：

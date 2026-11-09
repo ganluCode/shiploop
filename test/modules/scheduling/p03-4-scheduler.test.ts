@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createWorkScheduler } from '../../../packages/core/src/application/work-scheduler.ts';
+import { PublicError } from '../../../packages/core/src/ports/commands.ts';
 import { createSqliteSchedulerStore } from '../../../packages/core/src/adapters/sqlite/scheduler-store.ts';
 import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sqlite/task-dag-store.ts';
 import { createTaskDagService } from '../../../packages/core/src/application/task-dag.ts';
@@ -27,6 +28,19 @@ function manualTimers() {
 }
 
 describe('F-006 bounded Work Scheduler', () => {
+  it('persists the public preparation failure reason without creating an attempt', async () => {
+    const f = await openClaimFixture();
+    const scheduler = createWorkScheduler({ ...schedulerOptions(f), claims: f.store(),
+      prepareClaim: async () => { throw new PublicError('conflict', 'planning.input.prepare', undefined,
+        { details: { reason: 'code_baseline_unavailable' } }); },
+      consumeClaim: async () => undefined });
+    try {
+      await scheduler.scan();
+      expect(f.box.session.database.prepare('SELECT reason FROM runs').get())
+        .toEqual({ reason: 'code_baseline_unavailable' });
+      expect(f.box.session.database.prepare('SELECT count(*) AS n FROM attempts').get()).toEqual({ n: 0 });
+    } finally { await scheduler.close(); f.box.close(); }
+  });
   it('discovers a lost wakeup from SQLite and persists a capability gap without claiming', async () => {
     const f = await openClaimFixture();
     const scheduler = createWorkScheduler(schedulerOptions(f));

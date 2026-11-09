@@ -1,3 +1,4 @@
+import { CONTEXT_FIXED_GUIDANCE, testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
  * P03-2 / F-005 有版本的 ContextBuilder 回归（纯确定性单元：无 I/O、无时钟、
  * 无随机；所有摘要可独立复算）。
@@ -23,7 +24,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
-  CONTEXT_FIXED_GUIDANCE,
   CONTEXT_INPUT_SCHEMA_VERSION,
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
   CONTEXT_PROMPT_DIGEST_DOMAIN,
@@ -95,8 +95,27 @@ const DEFAULT_BUDGET: ContextBudget = {
 };
 
 function makeBuilder(overrides: Partial<ContextBudget> = {}): ContextBuilder {
-  return createContextBuilder({ budget: { ...DEFAULT_BUDGET, ...overrides } });
+  return createContextBuilder({ promptTemplates: testPromptTemplates, budget: { ...DEFAULT_BUDGET, ...overrides } });
 }
+
+it('binds Task languages to the execution snapshot and prompt', () => {
+  const input = makeInput();
+  const legacy = makeBuilder().build(input);
+  const task = input.task as Record<string, unknown>;
+  task.languages = [];
+  expect(makeBuilder().build(input).digests).toEqual(legacy.digests);
+  task.languages = ['typescript', 'sql'];
+  const result = makeBuilder().build(input);
+  expect(result.inputSnapshot.task.languages).toEqual(['sql', 'typescript']);
+  expect(result.prompt).toContain('- languages: sql, typescript');
+  expect(result.prompt).toContain('## TypeScript 开发规范');
+  expect(result.prompt).toContain('## SQL 开发规范');
+  expect(result.prompt).not.toContain('## Python 开发规范');
+  expect(result.inputManifest.promptTemplates?.modules.map(module => module.id)).toContain('languages/typescript.md');
+  expect(result.inputManifest.promptTemplates?.version).toBe(1);
+  expect(result.digests.promptDigest).not.toBe(legacy.digests.promptDigest);
+  expect(result.digests.snapshotDigest).not.toBe(legacy.digests.snapshotDigest);
+});
 
 function expectContextError(error: unknown, code: string, field?: string): void {
   expect(error).toBeInstanceOf(ContextBuildError);
@@ -112,6 +131,7 @@ function expectContextError(error: unknown, code: string, field?: string): void 
 function recomputeSnapshotDigest(input: Record<string, unknown>, historyIndex: unknown): string {
   const validated = validateContextBuildInput(input);
   const business = {
+    locale: validated.locale ?? 'zh-CN',
     schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
     projectId: validated.projectId,
     featureId: validated.featureId,
@@ -301,7 +321,7 @@ describe('P03-2 / F-005 完整 acceptance（固定必需输入）', () => {
       maxPromptBytes: full.promptBytes - 1,
       maxRequiredSnapshotBytes: DEFAULT_BUDGET.maxRequiredSnapshotBytes,
     };
-    const tight = createContextBuilder({ budget: tightBudget });
+    const tight = createContextBuilder({ promptTemplates: testPromptTemplates, budget: tightBudget });
     let error: unknown;
     try {
       tight.build(makeInput());
@@ -325,7 +345,7 @@ describe('P03-2 / F-005 历史增长不膨胀（固定指导与动态输入分�
 
   it('历史正文总量多档扩增后 prompt 规模不变且保持在上限内，acceptance 仍完整', () => {
     const budget: ContextBudget = { ...DEFAULT_BUDGET, maxHistoryEntries: 20 };
-    const builder = createContextBuilder({ budget });
+    const builder = createContextBuilder({ promptTemplates: testPromptTemplates, budget });
     const promptBytes: number[] = [];
     for (const count of [20, 200, 2000]) {
       const result = builder.build(
@@ -393,7 +413,7 @@ describe('P03-2 / F-005 历史增长不膨胀（固定指导与动态输入分�
     );
     // 预算只够容纳约一半历史段落。
     const middle = Math.floor((noneHistory.promptBytes + full.promptBytes) / 2);
-    const tight = createContextBuilder({
+    const tight = createContextBuilder({ promptTemplates: testPromptTemplates,
       budget: { ...DEFAULT_BUDGET, maxPromptBytes: middle },
     });
     const result = tight.build(makeInput({ historyIndex: { entries: historyEntries(20) } }));
@@ -787,7 +807,7 @@ describe('P03-2 / F-005 固定指导与权限边界', () => {
   it('装配入口无法替换固定指导或注入配置（未知 deps 键拒绝）', () => {
     let error: unknown;
     try {
-      createContextBuilder({
+      createContextBuilder({ promptTemplates: testPromptTemplates,
         budget: DEFAULT_BUDGET,
         ...( { fixedGuidance: '覆盖指导' } as unknown as Record<string, unknown> ),
       } as never);

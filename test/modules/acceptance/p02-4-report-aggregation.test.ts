@@ -1,7 +1,7 @@
 /**
  * F-009 P02 版本化逐项报告的严格结果聚合回归（契约 §2.1 `P02-PHASE-NOT-RUN`）。
  *
- * 承接 docs/p02-4-acceptance-contract.md 冻结的机器可读必需检查清单与聚合纪律：
+ * 承接 docs/phases/p02/p02-4-acceptance-contract.md 冻结的机器可读必需检查清单与聚合纪律：
  * - 15 个必需检查 ID 与契约文档 §2.1 一致（顺序固定、无重复），未知/重复 ID 拒绝；
  * - 三态（pass/fail/not_run）、not_run 四分类（未提交结果/启动失败/超时/被跳过）；
  *   缺失、跳过或未完成的必需检查一律 not_run，空结果集不得聚合为通过；
@@ -36,7 +36,7 @@ import {
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CONTRACT_DOC = readFileSync(
-  resolve(REPO_ROOT, 'docs/p02-4-acceptance-contract.md'),
+  resolve(REPO_ROOT, 'docs/phases/p02/p02-4-acceptance-contract.md'),
   'utf-8',
 );
 

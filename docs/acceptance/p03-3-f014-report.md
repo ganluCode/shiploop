@@ -20,7 +20,7 @@
 - F-014 验收实现 commit：`2bdcff145e1870fe30ab9cbae476c1970cb8f335`。
 - 分支：`feat/2026-10-11-17-45-49_p03-3-feature`；未切换、reset 或重写历史。
 - 新增 `test/modules/execution/budget/p03-3-cli-built.test.ts`、`test/modules/execution/budget/docs-p03-3-handoff.test.ts`；
-  [交接与覆盖索引](../p03-3-handoff.md) 登记于 README。
+  [交接与覆盖索引](../phases/p03/p03-3-handoff.md) 登记于 README。
 
 ## 实际验证
 

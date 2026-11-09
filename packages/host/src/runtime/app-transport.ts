@@ -142,7 +142,7 @@ import type { HostWorkToolAuthentication } from './work-tool-access.js';
 
 /** 应用操作身份字面量（与 §3.2 路由总表一一对应；错误体 operation）。 */
 export type ApplicationOperation =
-  | 'knowledge.search' | 'knowledge.read' | 'memory.search'
+  | 'knowledge.search' | 'knowledge.read' | 'memory.search' | 'documents.locations' | 'documents.write'
   | 'work.tools.invoke'
   | 'execution.sessions.list'
   | 'execution.session.get'
@@ -269,6 +269,7 @@ export interface ResolvedAppRoute {
  * 本层不从请求数据取身份，不直接访问 SQLite。
  */
 export interface HostApplicationContext {
+  readonly managedDocuments?: import('shiploop-core/assembly').ManagedDocuments;
   /** Instance-local restricted credentials; never authenticate against the owner token. */
   readonly workTools?: HostWorkToolAuthentication;
   readonly knowledgeQueryService?: Partial<Pick<import('shiploop-core').KnowledgeQueryService, 'search' | 'read'>>;
@@ -772,6 +773,8 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     const projectId = segments[0] as string;
     const sub = segments.slice(1).join('/');
     switch (sub) {
+      case 'documents': return { operation: 'documents.locations', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'documents/write': return { operation: 'documents.write', method: 'POST', pathParam: { name: 'projectId', value: projectId } };
       case '':
         return {
           operation: 'projects.get',
@@ -935,6 +938,7 @@ interface QuerySpec {
 }
 
 const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = Object.freeze({
+  'documents.locations': { allowed: ['featureId'], repeatable: [] },
   'knowledge.search': { allowed: ['documentId', 'version', 'keyword', 'title', 'path', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'], repeatable: [] },
   'knowledge.read': { allowed: ['documentId', 'version', 'maxReadBytes'], repeatable: [] },
   'memory.search': { allowed: ['keyword', 'recordKey', 'scope', 'version', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'], repeatable: [] },
@@ -1490,6 +1494,10 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.repositoryMoveService.preview(app.principal, { projectId, repositoryPath });
       break;
     }
+    case 'documents.locations':
+      if (!app.managedDocuments) reject(501, 'unsupported', operation, 'Managed documents unavailable');
+      result = await app.managedDocuments.locations(app.principal, pathParam!.value, params.get('featureId') ?? undefined);
+      break;
     case 'knowledge.search':
     case 'knowledge.read':
     case 'memory.search': {
@@ -2119,6 +2127,23 @@ export async function handleApplicationRequest(input: ApplicationRequestInput): 
             error.kind === 'conflict' ? 'conflict' : error.kind === 'ownership' ? 'forbidden' : error.kind === 'validation' ? 'invalid_input' : 'internal', operation, '来源管理请求被拒绝');
         }
         throw error;
+      }
+      return;
+    }
+    if (operation === 'documents.write') {
+      authenticateOrReject(request, input.authToken, operation);
+      if (input.rawQuery !== '') reject(400, 'invalid_input', operation, 'Query not supported');
+      if (input.app.getLifecycleState() !== 'ready') reject(503, 'not_ready', operation, 'Host unavailable');
+      if (!input.app.managedDocuments) reject(501, 'unsupported', operation, 'Managed documents unavailable');
+      try {
+        const result = await input.app.managedDocuments.writeDraft(input.app.principal, route.pathParam!.value,
+          parsedBody as { path: string; content: string; expectedHash?: string });
+        sendBoundedJson(response, 200, result, MAX_APP_BODY_BYTES, operation);
+      } catch (error) {
+        if (isStorageError(error)) throw error;
+        const reason = error instanceof Error && ['managed_document_changed', 'managed_document_input_invalid',
+          'managed_document_size_limit', 'managed_document_path_rejected'].includes(error.message) ? error.message : 'managed_document_write_failed';
+        reject(reason === 'managed_document_changed' ? 409 : 400, reason === 'managed_document_changed' ? 'conflict' : 'invalid_input', operation, reason);
       }
       return;
     }

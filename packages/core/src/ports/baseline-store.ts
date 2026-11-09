@@ -2,7 +2,7 @@
  * F-007（P02-3）基线窄存储端口契约（ports 契约层：记录形态、写输入校验、
  * 持久行列映射、读取端口与原子事务原语接口）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md
  * - §6.2 不可变授权摘要（insert-only，无 update 路径）；planDigest/policyRevision
  *   = sha256(stableCanonicalJson(规范化检查计划))；
  * - §8.1/§8.3 三轴状态枚举（operation 8 态 / check 5 态 / 受控 reason）；

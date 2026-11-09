@@ -1,7 +1,7 @@
 /**
  * F-002 契约运行时校验原语（纯函数，无 I/O）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §5.1（未知字段一律拒绝）、
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §5.1（未知字段一律拒绝）、
  * §7.3（脱敏结构化错误）。TypeScript 类型不能替代运行时校验：所有跨越进程边界
  * 的外部 JSON（unknown）必须先经本模块断言，校验失败抛 HostProtocolError。
  *

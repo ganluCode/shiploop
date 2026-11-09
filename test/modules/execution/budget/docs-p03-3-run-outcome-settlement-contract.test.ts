@@ -5,7 +5,7 @@ import { APP_CAPABILITIES, COMMAND_OPERATIONS } from '../../../../packages/core/
 import { RUN_OUTCOME_SETTLEMENT_OUTCOMES, RUN_PROGRESS_EVIDENCE_TYPES } from '../../../../packages/core/src/ports/execution-store.ts';
 
 const read = (path: string) => readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
-const doc = read('docs/p03-3-run-outcome-settlement-contract.md');
+const doc = read('docs/phases/p03/p03-3-run-outcome-settlement-contract.md');
 
 describe('F-008 Run outcome settlement contract', () => {
   it('registers v13, immutable evidence and first-pass provenance', () => {

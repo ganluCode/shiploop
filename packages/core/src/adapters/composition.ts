@@ -2,8 +2,8 @@
  * P01-3 / F-012 Core 装配公共入口（adapters 层组合根：把 SQLite/文件适配器接到
  * ports，并装配 application 用例；契约区不反向依赖本模块）。
  *
- * 设计依据：docs/p01-3-application-contract.md §7.4（组合根与公共入口）与
- * docs/p01-3-handoff.md §3（P01-3 需在 Core 内确定受控装配入口，例如明确的子路径
+ * 设计依据：docs/phases/p01/p01-3-application-contract.md §7.4（组合根与公共入口）与
+ * docs/phases/p01/p01-3-handoff.md §3（P01-3 需在 Core 内确定受控装配入口，例如明确的子路径
  * 导出，并保持 domain/application/ports/公共入口不反向依赖 adapters）；本模块经
  * `shiploop-core` 包清单的 `./assembly` 子路径导出，是 Node/Host 侧取得已装配
  * 端口与应用服务的唯一受控入口。
@@ -24,6 +24,9 @@
  *   使用 Runtime 时须先 await workExecution.close() 核验停止，再 close() 状态库。
  */
 import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } from './work-execution.js';
+import { loadBuiltinPromptTemplates } from './fs/prompt-templates.js';
+import { preparePlanningPreReleaseRecovery } from './planning-pre-release-recovery.js';
+export { loadBuiltinPromptTemplates } from './fs/prompt-templates.js';
 import { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 import { createPlanningStartupRecovery } from '../application/planning-recovery.js';
 import { createWorkRecoveryResumptionService } from '../application/work-recovery-resumption.js';
@@ -37,6 +40,7 @@ import type { WorkRecoveryContinuationService } from '../application/work-recove
 import { createRecoveryGitReader } from './fs/recovery-git-reader.js';
 import { createGitCommitDriver } from './fs/git-commit-driver.js';
 export type { WorkRuntimeFactory, WorkRuntimeContext, WorkFailureRoutingAssembly } from './work-execution.js';
+export type { ManagedDocuments } from './sqlite/managed-documents.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -270,6 +274,8 @@ import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.
 import { createSqliteDocumentStore } from './sqlite/document-store.js';
 import { createDocumentService } from '../application/document-service.js';
 import type { DocumentService } from '../application/document-service.js';
+import { createManagedDocuments, type ManagedDocuments } from './sqlite/managed-documents.js';
+import { validatePlanningRequest } from '../ports/planning-candidates.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
 import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
 import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
@@ -463,6 +469,7 @@ export interface CoreApplication {
   readonly queryService: QueryService;
   /** P06-2：受信项目内文档登记/版本追加/受控读取服务。 */
   readonly documentService: DocumentService;
+  readonly managedDocuments: ManagedDocuments;
   /** F-003：项目隔离的有界文档关键词/身份检索与受控正文读取。 */
   readonly knowledgeQueryService: KnowledgeQueryService;
   /** F-004：受控候选写入、显式 accepted/revoked CAS 与项目内记忆检索。 */
@@ -830,6 +837,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         roots: { ...(object.inputSourceRoots as Record<string, string> | undefined) },
       }),
     });
+    const managedDocuments = createManagedDocuments({ session, dataRoot: basePathService.dataRoot(), documents: documentService, maintenanceGate,
+      publisher: createArtifactPublisher({ artifacts: artifactStore, files: artifactFileStore,
+        limits: { maxSizeBytes: 2097152, timeoutMs: 30000 } }) });
     const knowledgeQueryService = createKnowledgeQueryService({
       documents: documentStore,
       documentQuery: queryStore,
@@ -968,6 +978,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
       }),
       builder: createContextBuilder({
+        promptTemplates: loadBuiltinPromptTemplates(),
         budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
       }),
       publisher: createArtifactPublisher({
@@ -1028,7 +1039,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       },
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
-    // P03-5 / F-011：workspace 栈装配（docs/p03-5-workspace-host-integration-contract.md §2）。
+    // P03-5 / F-011：workspace 栈装配（docs/phases/p03/p03-5-workspace-host-integration-contract.md §2）。
     // 授权根=数据根 + 登记绑定规范源路径（后者由 work-workspace authority 在每次
     // 核验时 realpath + repoIdentity/gitCommonDir 复核）；worktree 目标恒在数据根内。
     const workWorkspaceAuthority = createWorkWorkspaceAuthority({
@@ -1118,6 +1129,22 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       nowUtcMs,
     });
     const startupRecovery = createWorkStartupRecovery({
+      async recoverAuxiliaryWriters() {
+        const rows = session.database.prepare(`SELECT project_id,run_id,ordinal,process_identity FROM feature_repair_attempts
+          WHERE status IN ('reserved','running','uncertain') LIMIT 129`).all() as
+          { project_id: string; run_id: string; ordinal: number; process_identity: string | null }[];
+        if (rows.length > 128) throw new Error('feature_repair_recovery_limit');
+        for (const row of rows) {
+          if (row.process_identity !== null) {
+            const stopped = await workspaceCommandProcess.recoverStop!(JSON.parse(row.process_identity));
+            if (!stopped.confirmed) throw new Error('feature_repair_stop_unconfirmed');
+          }
+          session.transactWrite('FeatureRepair.recover', () => {
+            session.database.prepare(`UPDATE feature_repair_attempts SET status='interrupted',stop_confirmed=1
+              WHERE project_id=? AND run_id=? AND ordinal=?`).run(row.project_id, row.run_id, row.ordinal);
+          });
+        }
+      },
       isolatedRestore: dataRestoreIsolation,
       store: createSqliteWorkStartupRecoveryStore(session, { nowUtcMs }),
       process: workspaceCommandProcess,
@@ -1313,8 +1340,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         }).confirm(input);
       },
     };
-    // F-012：受信返工现场读取——同 Feature 受管 worktree 的当前身份经既有受界
-    // 检查器核对（Git 现场/文件内容）；无工作区返回 null（首次认领路径）。
+    // F-012：受信现场读取——有 Feature 受管 worktree 时复用其当前身份；首次
+    // Planner 尚无 worktree 时，使用已注册源仓库的只读 HEAD/工作树摘要作为
+    // 规划基线。规划输入只携带身份和摘要，后续 Runtime 仍经 Workspace
+    // Preparation 创建/核验受管 worktree；绝不把源仓库作为编码 cwd。
     const readReworkScene = async (projectId: string, featureId: string) => {
       const managed = createSqliteWorkspaceAccess(session, { resources: workResources,
         ...(nowUtcMs === undefined ? {} : { nowUtcMs }) })
@@ -1337,6 +1366,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // 现场身份，只读，不改变开发仓库分支/worktree）。全程写事务外；供
     // planning Run 派发/认领（F-005+）在提交或启动前调用。
     const planningInputPrepare: PlanningInputPreparePort = createPlanningInputPrepareService({
+      promptTemplates: loadBuiltinPromptTemplates(),
       views: createSqlitePlanningContextStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
       inputs: createExecutionInputService({
         artifacts: artifactStore,
@@ -1374,7 +1404,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         limits: { maxReadBytes: 2_000_000 },
       }),
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
-      readCodeBaseline: (input) => readReworkScene(input.projectId, input.featureId),
+      readCodeBaseline: async input => {
+        // Planner 的代码基线固定取项目绑定源仓库的只读快照。首次规划时
+        // worktree 尚不存在；调度前后 worktree 的创建不应改变规划输入摘要。
+        const binding = await stateStore.getRepositoryBinding(input.projectId);
+        const inspection = await repositoryInspector.inspect(binding.canonicalPath);
+        if (inspection.repoIdentity !== binding.repoIdentity || inspection.gitCommonDir !== binding.gitCommonDir) {
+          throw new PublicError('conflict', 'planning.baseline', undefined,
+            { details: { reason: 'repository_binding_changed' } });
+        }
+        if (inspection.headCommit === null || inspection.workingTreeDigest === undefined) return null;
+        return { worktreeId: binding.id, headCommit: inspection.headCommit, codeDigest: inspection.workingTreeDigest };
+      },
       limits: DEFAULT_PLANNING_INPUT_PREPARE_LIMITS,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
@@ -1394,6 +1435,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
           confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId) }),
         lock: workspaceGitLock, stopControl: verificationStops, nowUtcMs,
         confirmProcessIdentity: async (projectId, process) => { await confirmWorkspaceProcessIdentity(projectId)(process); },
+        ...(dataRestoreIsolation || object.workRuntimeFactory === undefined ? {} : { repair: {
+          runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory, capabilityCatalog,
+          dataRoot: basePathService.dataRoot(), projectResources: projectResourceService } }),
       }),
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         maintenanceGate,
@@ -1546,6 +1590,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       planningStart,
+      preparePlanningRetirement: input => dataRestoreIsolation ? Promise.resolve(undefined) : preparePlanningPreReleaseRecovery({session,input,dataRoot:basePathService.dataRoot(),
+        inspect:async(projectId,baseline)=>(await workspaceInspectorForCall(projectId)).inspect(baseline),publish:publishWorkspaceEvidence}),
+      afterPlanningRetirement:async()=>{await startupRecovery.retry();workExecution.start();},
+      prepareFeatureDocuments: (principal, projectId, sources) => managedDocuments.checkSources(principal, projectId, sources),
+      async prepareManagedPlanning(principal, projectId, request) {
+        const captured = await managedDocuments.capture(principal, projectId, request.featureId);
+        const { inputDigest: _inputDigest, ...basis } = request;
+        return validatePlanningRequest({ ...basis, requirementRefs: [...request.requirementRefs, ...captured.requirementRefs] });
+      },
       planningCandidateDecision: createPlanningCandidateDecisionPort({
         atomicStore,
         verifier: createArtifactVerifier({
@@ -1782,6 +1835,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       runtimeRecoveryCatalog: recoveryCatalog,
       workRecoveryContinuation,
       documentService,
+      managedDocuments,
       queryService,
       notificationDeliveryStore,
       notificationDelivery,

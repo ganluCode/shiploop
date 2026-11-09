@@ -27,6 +27,7 @@ import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js
 import { selectTaskStrategy } from './task-strategy-selection.js';
 import { createResultRef } from '../ports/command-receipts.js';
 import { randomBytes } from 'node:crypto';
+import { bindPlanningTaskIdentities } from './planning-task-identities.js';
 
 export const PLANNING_CANDIDATE_DECIDE_OPERATION = 'planning.candidate.decide' as const;
 
@@ -267,7 +268,9 @@ export function submitPlanningCandidateDecision(
     return receipt;
   }
 
-  const candidateTaskIds = new Set(candidate.plan.tasks.map(task => task.id));
+  const applied = bindPlanningTaskIdentities(transaction, projectId, snapshot.feature.id, candidate.plan);
+  const plan = applied.plan;
+  const candidateTaskIds = new Set(plan.tasks.map(task => task.id));
   const removedTaskIds = snapshot.tasks.filter(task => !candidateTaskIds.has(task.id)).map(task => task.id);
   const historicalTaskIds = transaction.hasTaskExecutionHistory(projectId, removedTaskIds);
   if (historicalTaskIds.size > 0) {
@@ -290,7 +293,7 @@ export function submitPlanningCandidateDecision(
   const projectSettings = transaction.getProjectSettingsOrNull(projectId);
   const selections = new Map<string, ReturnType<typeof selectTaskStrategy>>();
   const existingIds = new Set(snapshot.tasks.map(task => task.id));
-  for (const task of candidate.plan.tasks) {
+  for (const task of plan.tasks) {
     if (existingIds.has(task.id)) continue;
     try {
       selections.set(task.id, selectTaskStrategy({
@@ -313,10 +316,10 @@ export function submitPlanningCandidateDecision(
       description: candidate.plan.feature.description,
       labels: [...candidate.plan.feature.labels],
       sourceRefs: candidate.plan.feature.sourceRefs.map(ref => ({ ...ref })),
-      planDigest: candidate.plan.planDigest,
+      planDigest: plan.planDigest,
       planStatus: 'approved',
     },
-    tasks: candidate.plan.tasks.map(task => {
+    tasks: plan.tasks.map(task => {
       const existing = snapshot.tasks.find(item => item.id === task.id);
       const selected = selections.get(task.id);
       const strategy = selected ?? (existing === undefined ? undefined : {
@@ -330,6 +333,7 @@ export function submitPlanningCandidateDecision(
         title: task.title,
         description: task.description,
         labels: [...task.labels],
+        languages: [...task.languages],
         complexity: task.complexity,
         acceptance: { criteria: [...task.acceptance.criteria] },
         requirementsRefs: task.requirementsRefs.map(ref => ({ ...ref })),
@@ -338,21 +342,21 @@ export function submitPlanningCandidateDecision(
         configSourceKey: strategy.configSourceKey,
       };
     }),
-    dependencies: candidate.plan.tasks.flatMap(task => task.dependsOn.map(dependsOnId => ({ taskId: task.id, dependsOnId }))),
+    dependencies: plan.tasks.flatMap(task => task.dependsOn.map(dependsOnId => ({ taskId: task.id, dependsOnId }))),
   });
 
   const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
     globalSettings === null ? null : { scopeRevision: globalSettings.revision, payload: globalSettings.payload },
     projectSettings === null ? null : { scopeRevision: projectSettings.revision, payload: projectSettings.payload },
   );
-  if (transaction.findPlanApproval(projectId, snapshot.feature.id, candidate.plan.planDigest, checkPolicyDigest) !== undefined) {
+  if (transaction.findPlanApproval(projectId, snapshot.feature.id, plan.planDigest, checkPolicyDigest) !== undefined) {
     return rejected(identity, transaction, { reason: 'approval_already_decided' });
   }
   const approval = transaction.insertPlanApproval({
     projectId,
     subjectType: 'feature_plan',
     subjectId: snapshot.feature.id,
-    subjectDigest: candidate.plan.planDigest,
+    subjectDigest: plan.planDigest,
     checkPolicyDigest,
     status: 'approved',
     decisionActor: identity.principalId,
@@ -383,7 +387,8 @@ export function submitPlanningCandidateDecision(
       candidateDigest: candidate.candidateDigest,
       feature: { id: replacement.feature.id, revision: replacement.feature.revision, planDigest: replacement.feature.planDigest, planStatus: replacement.feature.planStatus },
       application: { createdTaskIds: replacement.createdTaskIds, keptTaskIds: replacement.keptTaskIds, removedTaskIds: replacement.removedTaskIds, planningContextStatus: decided.status },
-      verification: candidate.taskVerification.map(intent => ({ ...intent })),
+      taskIdMapping: applied.mapping,
+      verification: candidate.taskVerification.map(intent => ({ ...intent, taskId: applied.mapping[intent.taskId] })),
       approval: { id: approval.id, subjectDigest: approval.subjectDigest, checkPolicyDigest: approval.checkPolicyDigest, status: approval.status },
     },
   });

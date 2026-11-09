@@ -5,7 +5,7 @@
  * 代码基线/预算/阻塞原因；返回预览内容与摘要，不预先创建 Run/Attempt；预览
  * 不是批准记录或永久占用，不保证稍后仍可运行）、core-design/04 §6（本阶段
  * 范围恰为一个 Feature，不自动扩大；所有 Run 归属用户明确授权的 Batch）。
- * 实施契约：docs/p03-3-execution-preview-contract.md。
+ * 实施契约：docs/phases/p03/p03-3-execution-preview-contract.md。
  *
  * 编排顺序（授权与纯校验先于任何仓库或制品 I/O）：
  * 1. 预算提案深校验（ports/execution-budget 权威校验器；参考时钟校验 deadline

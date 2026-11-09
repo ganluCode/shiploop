@@ -519,6 +519,26 @@ describe('P03-6 / F-002 不可变执行输入绑定', () => {
     await expectRejection(fixture, fixture.bindingInput(bound), { kind: 'input', reason: 'limit_exceeded' });
   });
 
+  it('同一身份心跳续租后仍可绑定原认领回执', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    const until = bound.receipt.attempt.leaseUntilUtcMs + 180_000;
+    fixture.session.database.prepare('UPDATE workspace_leases SET lease_until=? WHERE owner_id=?')
+      .run(until, bound.receipt.attempt.id);
+    fixture.session.database.prepare('UPDATE attempts SET lease_until=? WHERE id=?')
+      .run(until, bound.receipt.attempt.id);
+    const result = await fixture.bindingService.bind(fixture.bindingInput(bound));
+    expect(result.evidence.outcome).toBe('bound');
+  });
+
+  it('回执不能声称比权威状态更长的租约', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    const input = fixture.bindingInput(bound);
+    (input.claim as {attempt:{leaseUntilUtcMs:number}}).attempt.leaseUntilUtcMs += 180_000;
+    await expectRejection(fixture,input,{kind:'input',reason:'claim_identity_mismatch'});
+  });
+
   it('过期/伪造认领回执与未授权启动明确拒绝', async () => {
     const fixture = await setup();
     const bound = fixture.claimAndLaunch('t-1');
@@ -1031,7 +1051,7 @@ describe('P03-10 / F-010 输入完整性与历史增长阶段回归', () => {
     ) as { contentHash: string };
     expect(sha256(Buffer.from(requirement.content))).toBe(requirementRow.contentHash);
     /* acceptance 完整未截断。 */
-    expect(bodyBefore.prompt.toString('utf8')).toContain('## Acceptance (required; complete; 不得删项)');
+    expect(bodyBefore.prompt.toString('utf8')).toContain('## Acceptance (required; complete; do not omit criteria)');
     expect(bodyBefore.prompt.toString('utf8')).toContain('[1] 验收条目甲：必须完整可读');
     expect(bodyBefore.prompt.toString('utf8')).toContain('[2] 验收条目乙：不得删项');
   });

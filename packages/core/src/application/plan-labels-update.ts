@@ -2,7 +2,7 @@
  * P03-1 / F-007 纯标签 CAS 编辑应用用例（application 层；在调用方的同一
  * BEGIN IMMEDIATE 写事务内执行，无任何事务外 I/O）。
  *
- * 设计依据：docs/p03-1-plan-import-contract.md §6.7（标签编辑命令定案）、
+ * 设计依据：docs/phases/p03/p03-1-plan-import-contract.md §6.7（标签编辑命令定案）、
  * core-design/02 §10 标签纪律（「更新标签是元数据编辑，须按实体 revision 做
  * CAS 并记录变更，但不因单纯改标签使计划审批、Task 通过结果或活动 Run 失效」）
  * 与 core-design/08（updateLabels 不改变状态、依赖、验收或已启动 Run）。

@@ -1,5 +1,5 @@
 /**
- * P03-8 / F-001 文档核验：`docs/p03-8-f001-delivery-policy-contract.md` 记录的
+ * P03-8 / F-001 文档核验：`docs/phases/p03/p03-8-f001-delivery-policy-contract.md` 记录的
  * 交付政策契约必须与仓库实现事实一致（冻结常量、词汇与集成点），避免
  * 「文档另立一套」。
  */
@@ -20,7 +20,7 @@ import {
 import { SETTINGS_SCHEMA_VERSION } from '../../../packages/core/src/ports/settings-schema.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-8-f001-delivery-policy-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-8-f001-delivery-policy-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

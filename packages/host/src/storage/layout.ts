@@ -1,7 +1,7 @@
 /**
  * F-003 Host 私有目录布局常量（纯常量，无 I/O）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §3.3。
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §3.3。
  *
  * 相对路径常量（POSIX 风格）同时用于错误 details：错误消息与 details 只携带
  * 这些受控相对位置，绝不携带绝对路径（§7.3 脱敏）。

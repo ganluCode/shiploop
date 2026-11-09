@@ -1,0 +1,1 @@
+- credentialRef: {{credentialRef}} (reference only; never inline credentials)

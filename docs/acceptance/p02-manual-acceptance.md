@@ -33,7 +33,7 @@ npm run verify
 修改正式提交后再执行，未提交修改不能声称已通过干净快照验收。
 当前复跑工具会回填 `docs/acceptance/evidence-p02-4-clean-replay`；运行后检查 diff，
 历史证据不能无说明覆盖，保留 run-id 和受测提交身份。结果必须 15 pass / 0 fail /
-0 not_run 且退出 0；详细入口和分阶段方式见 `docs/p02-4-operations.md` §4。
+0 not_run 且退出 0；详细入口和分阶段方式见 `docs/phases/p02/p02-4-operations.md` §4。
 
 ## 2. 创建安全的临时演示环境
 

@@ -6,10 +6,10 @@
  * 检查、代码基线、预算与阻塞原因，不调用模型决定调度；返回预览内容与摘要，
  * 不预先创建 Run/Attempt；预览不是批准记录或永久占用）、core-design/04 §6
  * （所有 Run 必须归属用户明确授权的 ExecutionBatch；本阶段范围恰为一个
- * Feature，不自动扩大）、docs/p03-3-execution-budget-contract.md（预算提案
- * 权威校验与并发政策契约）、docs/p03-2-plan-approval-verification-contract.md
+ * Feature，不自动扩大）、docs/phases/p03/p03-3-execution-budget-contract.md（预算提案
+ * 权威校验与并发政策契约）、docs/phases/p03/p03-2-plan-approval-verification-contract.md
  * （批准复合身份 = planDigest + 检查政策内容摘要）。
- * 实施契约：docs/p03-3-execution-preview-contract.md（本模块契约文档）。
+ * 实施契约：docs/phases/p03/p03-3-execution-preview-contract.md（本模块契约文档）。
  *
  * 契约要点：
  * - 命令面 `execution.preview`（capability `execution.start`；与后续 F-005 启动

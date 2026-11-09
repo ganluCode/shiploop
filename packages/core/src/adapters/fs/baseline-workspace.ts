@@ -2,7 +2,7 @@
  * F-008（P02-3）基线工作区读取 fs 适配器（adapters 层）：§6.3 工作区确定性
  * 摘要采集与 cwd realpath 核验的窄端口实现。
  *
- * 契约依据：docs/p02-3-onboarding-contract.md §6.1（cwdRef 仓库内相对子目录；
+ * 契约依据：docs/phases/p02/p02-3-onboarding-contract.md §6.1（cwdRef 仓库内相对子目录；
  * 越界/符号链接逃逸 → invalid_input path_outside_repository）、§6.3
  * （workingTreeDigest 覆盖 tracked+untracked 源文件与必要配置，冻结排除表，
  * 算法纯函数见 ports/baseline.ts）、§6.4（不解析任何环境值）。

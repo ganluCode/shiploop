@@ -59,7 +59,7 @@ import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const REAL_CONFIG_PATH = join(REPO_ROOT, P02_ACCEPT_CONFIG_PATH);
-const CONTRACT_DOC_PATH = join(REPO_ROOT, 'docs', 'p02-4-acceptance-contract.md');
+const CONTRACT_DOC_PATH = join(REPO_ROOT, 'docs', 'phases/p02/p02-4-acceptance-contract.md');
 const CONTRACT_DOC = readFileSync(CONTRACT_DOC_PATH, 'utf-8');
 const PREFLIGHT_ENTRY = join(REPO_ROOT, 'scripts', 'acceptance', 'p02-config.ts');
 
@@ -160,7 +160,7 @@ function baseRaw(): Record<string, unknown> {
       title: 'P02-4 P02 双客户端与初始化验收',
       scope: '控制器回归沙箱',
       version: '0.2',
-      contractDoc: 'docs/p02-4-acceptance-contract.md',
+      contractDoc: 'docs/phases/p02/p02-4-acceptance-contract.md',
     },
     priorBaselines: [
       {
@@ -306,8 +306,8 @@ describe('F-010 配置内容边界（无绝对路径 / 不解析认证 / 不依�
     const plan = raw.plan as Record<string, unknown>;
     expect(plan.phaseId).toBe('2026-10-04-23-19-52_shiploop-p02-hostcli');
     expect(plan.stepId).toBe('p02-acceptance');
-    expect(plan.contractDoc).toBe('docs/p02-4-acceptance-contract.md');
-    expect(existsSync(join(REPO_ROOT, 'docs', 'p02-4-acceptance-contract.md'))).toBe(true);
+    expect(plan.contractDoc).toBe('docs/phases/p02/p02-4-acceptance-contract.md');
+    expect(existsSync(join(REPO_ROOT, 'docs', 'phases/p02/p02-4-acceptance-contract.md'))).toBe(true);
 
     const schemaVersions = raw.schemaVersions as Record<string, unknown>;
     expect(schemaVersions.settingsSchema).toBe(SETTINGS_SCHEMA_VERSION);

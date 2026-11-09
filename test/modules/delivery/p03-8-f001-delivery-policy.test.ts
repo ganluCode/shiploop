@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
  * P03-8 / F-001 Feature 最终提交政策与用户 Git 身份校验
  * （纯契约 + 配置体系集成 + 有效配置合并 + 执行快照固定 + 真实资源纵向）。
@@ -592,7 +593,7 @@ function baseBuildInput(deliveryPolicy?: unknown): Record<string, unknown> {
 }
 
 describe('F-001 执行快照固定（ContextBuilder）', () => {
-  const builder = createContextBuilder({ budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET });
+  const builder = createContextBuilder({ promptTemplates: testPromptTemplates, budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET });
 
   it('未提供 deliveryPolicy 时快照不携带该字段（旧输入形态兼容）', () => {
     const result = builder.build(baseBuildInput());
@@ -729,7 +730,7 @@ async function setupVertical(globalDeliveryPolicy?: Record<string, unknown>): Pr
       },
       nowMs: nowUtcMs,
     }),
-    builder: createContextBuilder({ budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET }),
+    builder: createContextBuilder({ promptTemplates: testPromptTemplates, budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET }),
     publisher,
     verifier,
     permissions: () => ({ grants: [] }),

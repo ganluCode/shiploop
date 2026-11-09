@@ -154,16 +154,27 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       const neverStarted = snapshot.resources.invocationId === null && snapshot.resources.processIdentity === null
         && snapshot.resources.leases.every(lease => lease.processIdentity === null)
         && attempt.startedAtUtcMs === null && attempt.executionStage === 'preflight';
+      // Pi may persist a stopped Session and release every lease before the
+      // host crashes during final settlement. In that state there is no live
+      // process to identify or stop; it is a confirmed terminal observation,
+      // unlike an active or quarantined lease with a missing identity.
+      const stoppedWithoutProcess = snapshot.session?.status === 'stopped'
+        && snapshot.resources.processIdentity === null
+        && snapshot.resources.leases.every(lease => lease.state !== 'held' && lease.state !== 'quarantined')
+        && snapshot.resources.leases.every(lease => lease.processIdentity === null);
       const gaps: string[] = [];
       const ignoredNeverStartedGaps = new Set(['process_identity_missing', 'process_identity_mismatch',
         'invalid_process_identity', 'stop_unconfirmed', 'stop_failed']);
       const startupGaps = source.gaps.filter(gap => gap !== 'workspace_not_reconciled'
-        && !(neverStarted && snapshot.resources.leases.length === 0 && gap === 'incomplete_resource_group')
-        && !(neverStarted && ignoredNeverStartedGaps.has(gap)));
+        && !((neverStarted || stoppedWithoutProcess) && snapshot.resources.leases.length === 0 && gap === 'incomplete_resource_group')
+        && !((neverStarted || stoppedWithoutProcess) && ignoredNeverStartedGaps.has(gap)));
       for (const gap of startupGaps) addGap(gaps, `startup_${gap}`);
-      for (const gap of snapshot.dispatchGaps ?? []) addGap(gaps, gap);
+      const ignoredStoppedDispatchGaps = new Set(['stop_unverified']);
+      for (const gap of snapshot.dispatchGaps ?? []) {
+        if (!(stoppedWithoutProcess && ignoredStoppedDispatchGaps.has(gap))) addGap(gaps, gap);
+      }
       for (const gap of snapshot.verificationGaps ?? []) addGap(gaps, gap);
-      if (!source.stopConfirmed && !neverStarted) addGap(gaps, 'stop_unconfirmed');
+      if (!source.stopConfirmed && !neverStarted && !stoppedWithoutProcess) addGap(gaps, 'stop_unconfirmed');
 
       if (attempt.id !== source.attemptId || attempt.projectId !== source.projectId || attempt.runId !== source.runId
         || attempt.owner !== source.owner || attempt.hostInstanceId !== source.hostInstanceId
@@ -306,9 +317,9 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       const session = snapshot.session;
       const launched = snapshot.resources.invocationId !== null;
       const processIdentity = snapshot.resources.processIdentity !== null
-        ? 'confirmed' as const : neverStarted ? 'not_applicable' as const : 'missing' as const;
+        ? 'confirmed' as const : (neverStarted || stoppedWithoutProcess) ? 'not_applicable' as const : 'missing' as const;
       if (!neverStarted && !launched) addGap(gaps, 'launch_receipt_missing');
-      if (!neverStarted && snapshot.resources.processIdentity === null) addGap(gaps, 'process_identity_missing');
+      if (!neverStarted && !stoppedWithoutProcess && snapshot.resources.processIdentity === null) addGap(gaps, 'process_identity_missing');
       if (launched && (session === null || session.status === 'reserved')) addGap(gaps, 'session_start_receipt_missing');
       if (session !== null) {
         if (session.projectId !== attempt.projectId || session.attemptId !== attempt.id) {
@@ -402,7 +413,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       const runtime = {
         launchReceipt: launched ? 'present' as const : 'missing' as const,
         stopReceipt: neverStarted ? 'not_applicable' as const
-          : session?.status === 'stopped' && source.stopConfirmed ? 'confirmed' as const : 'missing' as const,
+          : session?.status === 'stopped' && (source.stopConfirmed || stoppedWithoutProcess) ? 'confirmed' as const : 'missing' as const,
         sessionId: session?.id ?? null,
         sessionStatus: session?.status ?? null,
         providerSessionId: session?.providerSessionId ?? null,
@@ -420,7 +431,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           && snapshot.artifacts.some(record => record.id === recoverySource.nativeArchiveRef
             && record.contentHash === recoverySource.sourceDigest),
         singleWriter: release.mode === 'unstarted' ? 'never_started' as const
-          : source.stopConfirmed ? 'confirmed_stopped' as const : 'not_referenced' as const,
+          : (source.stopConfirmed || stoppedWithoutProcess) ? 'confirmed_stopped' as const : 'not_referenced' as const,
         opened: false as const,
       };
       const buildEvidence = (): WorkRecoveryReconciliationEvidence => ({

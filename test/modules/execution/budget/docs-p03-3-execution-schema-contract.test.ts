@@ -1,6 +1,6 @@
 import { currentMigrationVersions } from '../../../helpers/current-schema.ts';
 /**
- * P03-3 / F-002 文档核验：`docs/p03-3-execution-schema-contract.md` 记录的执行域
+ * P03-3 / F-002 文档核验：`docs/phases/p03/p03-3-execution-schema-contract.md` 记录的执行域
  * Schema 契约必须与仓库实现事实一致（迁移接续、表与约束词汇、条件唯一活动集、
  * 不可变内容承载、相对设计 11 的登记决策与范围边界），避免「文档另立一套」。
  */
@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite/migrations.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-3-execution-schema-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-3-execution-schema-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

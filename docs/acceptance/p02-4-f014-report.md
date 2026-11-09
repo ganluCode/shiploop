@@ -35,7 +35,7 @@
 - 需求 **FR-1 阶段闭环演示**（双 CLI 同数据根、唯一 Host、共享持久状态、获准基线、
   重启可查询、重复运行不依赖残留）与 **FR-2 负例与证据**（重复初始化/命令冲突、源文件
   保留、认证拒绝、客户端退出、基线失败、报告可验证）；验收标准 §3.3 共 5 条。
-- 实施前置契约：[p02-4-acceptance-contract.md](../p02-4-acceptance-contract.md)
+- 实施前置契约：[p02-4-acceptance-contract.md](../phases/p02/p02-4-acceptance-contract.md)
   （F-001 冻结：15 个稳定必需检查 ID、断言三轴、报告 Schema 与 fail-closed 聚合约定）。
 - 机器可读必需检查清单：`acceptance/p02.config.json`（`configVersion: 1`）。
 
@@ -95,7 +95,7 @@
   见 [verification-record](evidence-p02-4-final/verification-record.md)：
   单次深度 0 `npm run accept:p02` 内含完整干净快照复跑（两次嵌套 `npm run accept:p02`），
   总时长约 13 分钟，超出本执行环境单命令 600s 预算，故按
-  [p02-4-operations.md](../p02-4-operations.md) §4.4 的分阶段复跑入口
+  [p02-4-operations.md](../phases/p02/p02-4-operations.md) §4.4 的分阶段复跑入口
   （`--phase prepare | accept-1 | accept-2 | finalize`）顺序执行全部必需检查；各阶段
   实际执行的命令仍是 `npm run accept:p02` 本体（exit 0 证据逐份留存）。这是运行环境
   资源限制的如实记录，不是检查跳过，任何必需检查都没有被免跑或折算通过。

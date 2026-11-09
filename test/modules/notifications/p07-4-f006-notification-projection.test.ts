@@ -31,6 +31,7 @@ import {
   type NotificationDeliveryRecord,
 } from '../../../packages/core/src/ports/notification-delivery.ts';
 import type { PublicStateEvent } from '../../../packages/core/src/ports/events.ts';
+import { validateExecutionEventAppendInput } from '../../../packages/core/src/ports/execution-store.ts';
 import { createSqliteNotificationDeliveryStore } from '../../../packages/core/src/adapters/sqlite/notification-delivery-store.ts';
 import { createNotificationProjectionService } from '../../../packages/core/src/application/notification-projection.ts';
 import { migrateSqliteStorage } from '../../../packages/core/src/adapters/sqlite/migrator.ts';
@@ -150,9 +151,38 @@ async function withProjectionHarness(
   }
 }
 
+it('freezes outbox locale across replay after global language changes', async () => {
+  await withProjectionHarness(mixedEvents(), harness => {
+    const db = harness.session.database;
+    const first = harness.store.projectNotificationBatch({ channelId: CHANNEL });
+    expect(first.createdDeliveries[0]!.summary.locale).toBe('en-US');
+    db.prepare('INSERT INTO global_settings (id,created_at,revision,updated_at,schema_version,payload) VALUES (?,?,?,?,?,?)')
+      .run('global', NOW_MS, 1, NOW_MS, 2, JSON.stringify({ schemaVersion: 2, locale: 'zh-CN' }));
+    db.prepare('UPDATE notification_scan_state SET last_scanned_sequence=0 WHERE channel_id=?').run(CHANNEL);
+    expect(harness.store.projectNotificationBatch({ channelId: CHANNEL }).createdDeliveries).toHaveLength(0);
+    for (const row of deliveryRows(db)) expect(JSON.parse(String(row.summary_json)).locale).toBe('en-US');
+  });
+});
+
 function deliveryRows(db: SqliteStorageSession['database']): Array<Record<string, unknown>> {
   return db.prepare('SELECT * FROM notification_deliveries ORDER BY event_sequence').all() as Array<Record<string, unknown>>;
 }
+
+it('freezes readable names and codes on outbox replay after a Feature rename', async () => {
+  const fixture = await openBudgetFixture();
+  try {
+    const db = fixture.session.database;
+    seedEvents(db, [{ sequence: 1000, type: 'feature.finalized', aggregateType: 'feature',
+      aggregateId: fixture.featureId, projectId: fixture.projectId, payload: { finalized: true } }], NOW);
+    const store = createSqliteNotificationDeliveryStore({ session: fixture.session, nowUtcMs: () => NOW + 1000 });
+    const first = store.projectNotificationBatch({ channelId: CHANNEL });
+    expect(first.createdDeliveries.at(-1)?.summary).toMatchObject({ featureCode: 'P01-F01', featureTitle: 'Budget race' });
+    db.prepare('UPDATE features SET title=? WHERE id=?').run('Renamed after delivery', fixture.featureId);
+    db.prepare('UPDATE notification_scan_state SET last_scanned_sequence=0 WHERE channel_id=?').run(CHANNEL);
+    expect(store.projectNotificationBatch({ channelId: CHANNEL }).createdDeliveries).toHaveLength(0);
+    expect(JSON.parse(String(deliveryRows(db).at(-1)?.summary_json))).toEqual(first.createdDeliveries.at(-1)?.summary);
+  } finally { fixture.close(); }
+});
 
 function scanRow(db: SqliteStorageSession['database']): { last_scanned_sequence: number; revision: number } | undefined {
   return db.prepare('SELECT last_scanned_sequence, revision FROM notification_scan_state WHERE channel_id = ?').get(CHANNEL) as
@@ -166,6 +196,7 @@ function scanRow(db: SqliteStorageSession['database']): { last_scanned_sequence:
 describe('P07-4 / F-006 notification projection port contract', () => {
   it('[case:registry-and-request-validation] 冻结订阅注册表；批大小默认/上限与未知渠道写入前拒绝', () => {
     expect([...NOTIFICATION_SUBSCRIPTION_EVENT_TYPES]).toEqual([
+      'task.attempt.updated',
       'task.terminal', 'task.action_required', 'execution.run.ended', 'feature.finalized', 'feature.finalization_blocked',
     ]);
     expect(validateNotificationProjectionBatchRequest({ channelId: CHANNEL })).toMatchObject({
@@ -227,6 +258,9 @@ describe('P07-4 / F-006 notification projection port contract', () => {
     expect(deriveNotificationSummary(mkEvent('execution.batch.ended', { type: 'execution_batch' as PublicStateEvent['aggregate']['type'], id: 'batch-1', revision: 3 },
       { schemaVersion: 1, status: 'failed', resultCategory: 'budget_exhausted', resultRef: null, batchId: 'batch-1', featureId: 'feature-1' }))).toBeNull();
     expect(deriveNotificationSummary(mkEvent('task.attempt.updated', taskAggregate, { updated: true }))).toBeNull();
+    expect(deriveNotificationSummary(mkEvent('task.attempt.updated', taskAggregate, { updated: true,
+      fallback: { runId: 'run-1', category: 'quota_blocked', provider: 'offline', model: 'backup' } })))
+      .toMatchObject({ kind: 'model_fallback', resultCategory: 'quota_blocked', provider: 'offline', model: 'backup' });
     expect(deriveNotificationSummary(mkEvent('execution.run.cancelled', { type: 'run' as const, id: 'run-9', revision: 3 }, { cancelled: true }))).toBeNull();
   });
 
@@ -243,6 +277,19 @@ describe('P07-4 / F-006 notification projection port contract', () => {
 // ---------------------------------------------------------------------------
 
 describe('P07-4 / F-006 notification projection (real SQLite)', () => {
+  it('retains actual fallback metadata at the write boundary and projects one replay-safe notification', async () => {
+    const fallback = { runId: 'run-1', category: 'quota_blocked', provider: 'backup', model: 'model', fromModel: 'preferred/model' };
+    const valid = validateExecutionEventAppendInput({ projectId: PROJ_A, aggregateId: 'task-1', aggregateRevision: 1,
+      aggregateType: 'task', eventType: 'task.attempt.updated', payload: { updated: true, fallback } }, 'NotificationFallback.test');
+    expect(valid.payload).toEqual({ updated: true, fallback });
+    await withProjectionHarness([{ sequence: 1, type: valid.eventType, aggregateType: 'task', aggregateId: 'task-1',
+      projectId: PROJ_A, payload: valid.payload as Record<string, unknown> }], harness => {
+      const result = harness.store.projectNotificationBatch({ channelId: CHANNEL });
+      expect(result.createdDeliveries).toHaveLength(1);
+      expect(result.createdDeliveries[0].summary).toMatchObject({ kind: 'model_fallback', fromModel: 'preferred/model', provider: 'backup' });
+      expect(harness.store.projectNotificationBatch({ channelId: CHANNEL }).createdDeliveries).toHaveLength(0);
+    });
+  });
   it('[case:projects-subscription-events] 单事务投影订阅事件，摘要/身份可追溯，非订阅事件只推进水位', async () => {
     const events = mixedEvents();
     await withProjectionHarness(events, (harness) => {
@@ -265,7 +312,7 @@ describe('P07-4 / F-006 notification projection (real SQLite)', () => {
         expect(row.policy_version).toBe(1);
         expect(row.policy_digest).toBe(computeNotificationPolicyDigest(DEFAULT_NOTIFICATION_DELIVERY_POLICY));
         // 摘要为冻结形状（深度相等），不携带 payload 原文之外的任何自由文本。
-        expect(JSON.parse(String(row.summary_json))).toEqual(EXPECTED_SUMMARIES[sequence]);
+        expect(JSON.parse(String(row.summary_json))).toEqual({ ...EXPECTED_SUMMARIES[sequence], locale: 'en-US' });
       }
       // 源事件身份可追溯：delivery.eventId 命中真实 state_events 行。
       for (const row of rows) {
@@ -324,7 +371,7 @@ describe('P07-4 / F-006 notification projection (real SQLite)', () => {
       const events = harness.session.database.prepare(
         "SELECT id FROM state_events WHERE event_type = 'task.terminal' AND project_id = ?",
       ).all(PROJ_A) as Array<{ id: string }>;
-      const direct = harness.store.createDelivery({ eventId: events[0]!.id, channelId: CHANNEL, summary: EXPECTED_SUMMARIES[2] });
+      const direct = harness.store.createDelivery({ eventId: events[0]!.id, channelId: CHANNEL, summary: { ...EXPECTED_SUMMARIES[2], locale: 'en-US' } });
       expect(direct.created).toBe(false);
       expect(deliveryRows(harness.session.database)).toHaveLength(5);
     });
@@ -481,8 +528,8 @@ describe('P07-4 / F-006 notification projection (real SQLite)', () => {
       }));
       // 真实结算事务写入 Run/Batch 终态事件（F-005 已证）。
       const runEnded = db.prepare(
-        "SELECT id, sequence, payload FROM state_events WHERE event_type = 'execution.run.ended'",
-      ).get() as { id: string; sequence: number; payload: string };
+        "SELECT id, sequence, payload,occurred_at FROM state_events WHERE event_type = 'execution.run.ended'",
+      ).get() as { id: string; sequence: number; payload: string; occurred_at: number };
       expect(runEnded).toBeDefined();
       expect(db.prepare("SELECT COUNT(*) AS count FROM state_events WHERE event_type = 'execution.batch.ended'").get())
         .toEqual({ count: 1 });
@@ -509,9 +556,12 @@ describe('P07-4 / F-006 notification projection (real SQLite)', () => {
       expect(deliveries[0]!.project_id).toBe(ids.projectId);
       const runPayload = JSON.parse(runEnded.payload) as Record<string, unknown>;
       expect(JSON.parse(String(deliveries[0]!.summary_json))).toEqual({
+        locale: 'en-US',
         schemaVersion: 1, kind: 'run_ended', runId: ids.runId,
         status: runPayload.status, resultCategory: runPayload.resultCategory,
         resultRef: runPayload.resultRef, batchId: runPayload.batchId, featureId: runPayload.featureId,
+        projectName: 'Budget race', occurredAt: new Date(runEnded.occurred_at).toISOString(),
+        phaseId: 'phase-1', phaseCode: 'P01', phaseTitle: 'Budget', featureCode: 'P01-F01', featureTitle: 'Budget race',
       });
       // 投影零业务副作用：Run/Attempt/Task/预算/结算事实不变。
       expect(db.prepare('SELECT COUNT(*) AS count FROM runs').get()).toEqual(before.runs);

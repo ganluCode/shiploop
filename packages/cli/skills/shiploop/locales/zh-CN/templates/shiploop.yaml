@@ -1,0 +1,72 @@
+# ShipLoop 项目配置示例。先确认分档和备用顺序，再同步数据库。
+# 不要写入 API Key；credentialRef 只引用 ShipLoop 私有凭据。
+schemaVersion: 2
+
+strategies:
+  modelMap:
+    low:
+      runtime: pi
+      model: xiaomi-token-plan-cn/mimo-v2.6-pro
+
+    medium:
+      runtime: pi
+      model: zai-coding-cn/glm-5.3
+      # 限流后按数组顺序尝试；连接/服务端错误先完成同次执行的重试。
+      fallbacks:
+        - runtime: pi
+          model: ark-agentplan/glm-5.3
+        - runtime: pi
+          model: wlb/gpt-6.1-sol
+      fallbackPolicy:
+        onQuotaBlocked: switch
+        onTransientConnection: switch
+        onTransientServer: switch
+        onAuthentication: switch
+
+    high:
+      runtime: pi
+      model: wlb/gpt-6.1-sol
+      # 高难度不默认降低能力；确认替代模型能力后再增加 fallbacks。
+
+  purposeStrategies:
+    planner:
+      runtime: pi
+      model: ark-agentplan/ark-code-latest
+      # 只生成候选；仍需正式审阅/批准，保存配置不启动 planner。
+
+policies:
+  piAgent:
+    transient_retry_attempts: 10
+    transient_retry_backoff_base_seconds: 1
+    fallback_on_connection_exhausted: true
+    fallback_on_server_exhausted: true
+    fallback_on_authentication: true
+  piExecution:
+    maxRequests: 256
+    maxInputBytes: 512000
+    maxOutputTokens: 16384
+    thinkingLevel: off
+    commandTimeoutMs: 600000
+    codemode: true
+  featureAutoFix:
+    enabled: false
+    # strategy 省略使用 high；maxRepairs 省略为 3，上限也为 3。
+    # maxTokenTotal/timeoutMs/maxTurns 可选；省略不增加 Feature 专属限制。
+  deliveryPolicy:
+    auto_push: false
+    push_remote: origin
+    # 开启正式交付还需要 commitMode 和已确认 gitIdentity，见 production-runtime.md。
+  feishu:
+    enabled: false
+    # Webhook/签名密钥只填私有 pi/auth.json；未指定事件默认开启。
+    notify:
+      task_completed: true
+      feature_completed: true
+      rate_limited: true
+      model_fallback: true
+      error_stopped: true
+      human_blocked: true
+
+# 文件不会自己生效。用户确认后可持续同步：
+# shiploop config watch --project <项目UUID> --confirm
+# 更新默认配置不自动改变已规划 Task；需要时显式重新应用策略并核对审批。

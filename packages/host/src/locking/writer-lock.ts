@@ -12,6 +12,31 @@ const OPERATION = 'host.discovery';
 const RELATIVE_PATH = 'host/writer.lock';
 interface NativeLock { tryLock(fd: number): boolean }
 
+/** OS-owned lock for private credentials; closing the fd also releases it after a crash. */
+export async function acquirePrivateFileLock(path: string, signal?: AbortSignal): Promise<() => void> {
+  if (!isAbsolute(path)) throw new Error('private_lock_path_invalid');
+  const native = loadNative();
+  const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+  let acquired = false;
+  try {
+    const deadline = performance.now() + 30000;
+    for (;;) {
+      signal?.throwIfAborted();
+      const actual = fstatSync(fd), target = lstatSync(path);
+      if (!actual.isFile() || target.isSymbolicLink() || actual.nlink !== 1
+        || actual.uid !== process.getuid?.() || (actual.mode & 0o777) !== 0o600
+        || actual.dev !== target.dev || actual.ino !== target.ino) throw new Error('private_lock_unsafe');
+      if (native.tryLock(fd)) {
+        acquired = true;
+        let released = false;
+        return () => { if (!released) { closeSync(fd); released = true; } };
+      }
+      if (performance.now() >= deadline) throw new Error('private_lock_timeout');
+      await delay(25, undefined, { signal });
+    }
+  } finally { if (!acquired) closeSync(fd); }
+}
+
 export interface WriterLockOptions {
   readonly canonicalRoot: string;
   /** Internal bounded budget: 0 is a single nonblocking attempt. */

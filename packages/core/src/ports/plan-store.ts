@@ -4,7 +4,7 @@
  * 定义于 ports/atomic-commands.ts 的 CommandTransaction，本模块提供其输入/
  * 输出契约与纯校验器；SQLite 实现见 adapters/sqlite/plan-store.ts）。
  *
- * 协议依据：docs/p03-1-plan-import-contract.md（§2 计划 payload 契约与 §6 导入
+ * 协议依据：docs/phases/p03/p03-1-plan-import-contract.md（§2 计划 payload 契约与 §6 导入
  * CAS 契约——Task/依赖边无独立 CAS，计划修订在 Feature 聚合事务内整体替换；
  * §9.1 requirements 多引用形态由本 Feature 定案为 JSON 数组 requirements_refs）、
  * core-design/02 §1/§10（Project → Phase → Feature → Task 层级；标题/描述/标签
@@ -32,6 +32,7 @@
  *   Attempt/Approval 或配置/计划版本表。
  */
 import { StorageError } from './errors.js';
+import { normalizeTaskLanguages } from './task-languages.js';
 import type { StorageEntityRef } from './errors.js';
 import {
   PLAN_DEPENDENCY_EDGES_MAX_COUNT,
@@ -145,6 +146,8 @@ export interface FeatureRecord {
   readonly projectId: string;
   /** 所属 Phase（同项目，由复合外键与写入核验共同保证）。 */
   readonly phaseId: string;
+  /** Frozen managed branch, independent of title/DAG changes. Optional on old receipts. */
+  readonly branchName?: string | null;
   readonly title: string;
   readonly description: string | null;
   readonly labels: readonly string[];
@@ -272,6 +275,8 @@ export function validateTaskApprovalItemInput(value: unknown, operation: string)
 }
 
 export interface TaskRecord {
+  /** Omitted by legacy in-memory callers; persisted records always return an array. */
+  readonly languages?: readonly string[];
   /** 计划作者指定的稳定 ID（不是适配器生成的 UUID）。 */
   readonly id: string;
   readonly projectId: string;
@@ -816,6 +821,7 @@ export function validateCreateFeatureInput(value: unknown, operation: string): V
 }
 
 export interface ValidatedCreateTaskInput {
+  readonly languages: string[];
   readonly projectId: string;
   readonly featureId: string;
   readonly id: string;
@@ -832,6 +838,7 @@ export interface ValidatedCreateTaskInput {
 
 /** Task 成员业务/策略字段（F-005 创建与 F-008 替换共用；不含归属字段）。 */
 const PLAN_TASK_MEMBER_KEYS = [
+  'languages',
   'id',
   'title',
   'description',
@@ -845,6 +852,7 @@ const PLAN_TASK_MEMBER_KEYS = [
 ] as const;
 
 export interface ValidatedPlanTaskMemberFields {
+  readonly languages: string[];
   readonly id: string;
   readonly title: string;
   readonly description: string | null;
@@ -913,6 +921,7 @@ function validatePlanTaskMemberFields(
 
   const configSourceKey = object.configSourceKey;
   return {
+    languages: normalizeTaskLanguages(object.languages, context, field('languages')),
     id: validateStableId(object.id, context, field('id')),
     title: validatePlanTitle(object.title, context, field('title')),
     description: validatePlanDescription(object.description, context, field('description')),

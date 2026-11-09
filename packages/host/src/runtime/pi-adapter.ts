@@ -142,6 +142,8 @@ export interface PiTrustedAssembly {
   readonly settingsManager?: CreateAgentSessionOptions['settingsManager'];
   /** Trusted permission mapping, evaluated per Attempt; default keeps built-in tools disabled. */
   readonly resolveBuiltInTools?: (request: RuntimeExecutionRequest) => readonly string[];
+  /** Explicit compiled-in extensions only; no arbitrary project/plugin names. */
+  readonly extensionTools?: readonly 'codemode'[];
 
   /** Core-approved immutable Artifact access and exclusive writer authority. */
   readonly recoverySourceManager?: PiRecoverySourceManager;
@@ -334,7 +336,9 @@ export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessio
     if (submissionTools.some(tool => (PI_BUILT_IN_TOOL_NAMES as readonly string[]).includes(tool.name))) {
       throw startupError('custom_tool_builtin_collision', 'customTools');
     }
-    const activeTools = [...validateBuiltInTools(builtInTools ?? []), ...submissionTools.map(tool => tool.name)];
+    const extensions = assembly.extensionTools ?? [];
+    if (extensions.some(name => name !== 'codemode') || new Set(extensions).size !== extensions.length) throw startupError('extension_tool_invalid', 'extensionTools');
+    const activeTools = [...validateBuiltInTools(builtInTools ?? []), ...submissionTools.map(tool => tool.name), ...extensions];
     const result = await createAgentSession({
       cwd,
       agentDir,
@@ -574,9 +578,20 @@ function textOf(value: unknown): string {
   }).join('');
 }
 
+function nativeFailedUsagePlaceholder(message: unknown, native: boolean): boolean {
+  if (!native || messageRole(message) !== 'assistant' || !['error', 'aborted'].includes(messageStopReason(message) ?? '')) return false;
+  const raw = (message as { usage?: Record<string, unknown> }).usage;
+  if (!raw || raw.input !== 0 || raw.output !== 0) return false;
+  const cost = raw.cost as { total?: unknown; totalFromProvider?: unknown } | undefined;
+  return cost?.totalFromProvider !== true && (cost?.total === undefined || cost.total === 0)
+    && ['cacheRead', 'cacheWrite', 'reasoning', 'totalTokens'].every(key => raw[key] === undefined || raw[key] === 0);
+}
+
 function usageOf(message: unknown, nativeSdkMessageUsage = false): RuntimeUsageReport | null {
   if (message === null || typeof message !== 'object') return null;
   if ((message as Record<symbol, unknown>)[Symbol.for('shiploop.pi.usageUnavailable')] === true) return null;
+  // A rejected native request's initialized zero counters are not a provider usage report.
+  if (nativeFailedUsagePlaceholder(message, nativeSdkMessageUsage)) return null;
   const usage = (message as { usage?: unknown }).usage;
   if (usage === null || typeof usage !== 'object') return null;
   const raw = usage as Record<string, unknown>;
@@ -882,7 +897,14 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const rememberMessage = (type: string, message: unknown): string => {
         const key = messageKeyFor(type, message);
         const previous = pendingMessages.get(key);
-        pendingMessages.set(key, { message, usage: usageOf(message, nativeSdkMessageUsage) ?? previous?.usage ?? null });
+        let usage = usageOf(message, nativeSdkMessageUsage) ?? previous?.usage ?? null;
+        if (nativeFailedUsagePlaceholder(message, nativeSdkMessageUsage)) {
+          const prior = previous?.usage;
+          const positive = prior && [prior.inputTokens, prior.outputTokens, prior.cacheReadTokens, prior.cacheWriteTokens,
+            prior.reasoningTokens, prior.providerTotalTokens, prior.costUsdMicros].some(n => typeof n === 'number' && n > 0);
+          usage = positive ? { ...prior, completeness: 'unknown', accounting: 'unknown' } : null;
+        }
+        pendingMessages.set(key, { message, usage });
         return key;
       };
       const flushMessage = (key: string): void => {
@@ -945,7 +967,15 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
             if (finalized) return;
             const usage = usageOf(message, nativeSdkMessageUsage);
             if (usage !== null) publish('usage', { kind: 'usage', usage });
-          }, failure => { if (!finalized) lastRequestFailure = failure; });
+          }, failure => {
+            if (finalized) return;
+            lastRequestFailure = failure;
+            if (failure !== null) diagnostic('pi.request.failure', JSON.stringify({
+              category: failure.category, reason: failure.reason,
+              httpStatus: failure.evidence.httpStatus,
+              diagnostics: failure.evidence.diagnostics,
+            }));
+          });
           restoreRequestStream = () => { agent.streamFunction = original; };
         }
         unsubscribe = session.subscribe((raw) => {

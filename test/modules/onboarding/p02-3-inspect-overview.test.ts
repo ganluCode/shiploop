@@ -3,7 +3,7 @@
  * （真实临时 SQLite + 真实 Git 仓库变体 + 真实组合根装配，非 mock；
  * 健康派生表与未注册形态用显式窄端口桩件，桩件不冒充持久实现）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md §4.3/§7.2/§7.3/§8.2 与 §15.1：
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md §4.3/§7.2/§7.3/§8.2 与 §15.1：
  * - projects.inspect：project.register 能力（无项目范围约束），只读返回
  *   {schemaVersion:3, canonicalPath, repoIdentity, headCommit|null,
  *   hasInitialCommit, hasUncommittedChanges, alreadyRegistered:{projectId}|null,

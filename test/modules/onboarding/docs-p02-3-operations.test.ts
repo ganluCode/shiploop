@@ -1,7 +1,7 @@
 /**
- * F-019 文档核验：`docs/p02-3-operations.md` 的项目接入、基线授权与故障处理示例
+ * F-019 文档核验：`docs/phases/p02/p02-3-operations.md` 的项目接入、基线授权与故障处理示例
  * 必须与真实 dist CLI（`runAppCli`/`runHostCli`，即 `packages/cli/dist/bin.js`
- * 同一路径）一致，`docs/p02-3-handoff.md` 必须指向真实 Schema、Core 窄服务、
+ * 同一路径）一致，`docs/phases/p02/p02-3-handoff.md` 必须指向真实 Schema、Core 窄服务、
  * Host 路由/能力、HostClient、CLI 退出码、受监督停止与恢复约束、测试/证据入口。
  *
  * 定位：F-019 只交付文档（+ 本守护）。为避免文档与实现漂移，本套件：
@@ -36,8 +36,8 @@ import { runHostCli, type HostCliIo } from '../../../packages/cli/src/host/execu
 import { createBaselineFixture, type BaselineFixture } from '../../helpers/p02-3/index.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OPERATIONS_DOC_PATH = 'docs/p02-3-operations.md';
-const HANDOFF_DOC_PATH = 'docs/p02-3-handoff.md';
+const OPERATIONS_DOC_PATH = 'docs/phases/p02/p02-3-operations.md';
+const HANDOFF_DOC_PATH = 'docs/phases/p02/p02-3-handoff.md';
 const README_PATH = 'README.md';
 
 const operationsDoc = readFileSync(resolve(REPO_ROOT, OPERATIONS_DOC_PATH), 'utf-8');
@@ -678,8 +678,8 @@ describe('F-019 操作/交接文档事实核对', () => {
     }
 
     // README 记录交付入口与文档。
-    expect(readmeDoc).toContain('docs/p02-3-operations.md');
-    expect(readmeDoc).toContain('docs/p02-3-handoff.md');
+    expect(readmeDoc).toContain('docs/phases/p02/p02-3-operations.md');
+    expect(readmeDoc).toContain('docs/phases/p02/p02-3-handoff.md');
 
     // 交接文档与 README 不含开发机路径或真实凭据样例。
     expect(handoffDoc).not.toContain('/Users/ganlu');

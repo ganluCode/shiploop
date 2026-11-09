@@ -15,12 +15,12 @@
 
 - PRD：`p02-host-lifecycle.md` v0.2（2026-10-01，Feature 输入），需求 **FR-1 启动与发现**、
   **FR-2 认证与停止**；共同约束：`execution-contract.md`（2026-10-01）。
-- 实施前置契约：[p02-1-host-lifecycle-contract.md](../p02-1-host-lifecycle-contract.md)（F-001 定案，
+- 实施前置契约：[p02-1-host-lifecycle-contract.md](../phases/p02/p02-1-host-lifecycle-contract.md)（F-001 定案，
   F-002 ~ F-014 共用）：规范数据根与 `dataRootIdentity` 算法、受保护发现/凭据/锁布局、
   发现 Schema、`POST /v1/host/handshake` / `GET /v1/host/status` / `POST /v1/host/stop`
   线协议、版本化 stop 幂等矩阵、Host 生命周期状态机、HostClient/启动器规则、CLI 参数与四档
   退出码、错误码总表、FR/T 编号映射（含 T26 编号不一致核对请求）与明确非目标。
-- 锁实现决定：[p02-1-writer-lock.md](../p02-1-writer-lock.md)（实际写入进程直接持 macOS `flock`
+- 锁实现决定：[p02-1-writer-lock.md](../phases/p02/p02-1-writer-lock.md)（实际写入进程直接持 macOS `flock`
   fd，无辅助进程）。
 - 设计输入为 Harness 知识目录 `architecture-redesign/`（非本仓库）；本 Feature 依据
   `core-design/08-host-api-and-cli.md`、`core-design/12-end-to-end-flows.md`、
@@ -52,8 +52,8 @@
 - **F-011**：CLI 纯解析/帮助/JSON 信封/四档退出码面层。
 - **F-012**：可运行的 `start`/`status`/`stop` 纵向命令与 `dist/bin.js` 显式入口。
 - **F-013**：整 Feature 真实多进程集成回归（29 项）与脱敏证据映射。
-- **F-014**（本报告）：[p02-1-operations.md](../p02-1-operations.md) 操作说明、
-  [p02-1-handoff.md](../p02-1-handoff.md) 接口交接与本文，含文档示例运行核验守护
+- **F-014**（本报告）：[p02-1-operations.md](../phases/p02/p02-1-operations.md) 操作说明、
+  [p02-1-handoff.md](../phases/p02/p02-1-handoff.md) 接口交接与本文，含文档示例运行核验守护
   [test/modules/host/docs-p02-1-operations.test.ts](../../test/modules/host/docs-p02-1-operations.test.ts)。
 
 ## 3. 环境与版本
@@ -89,7 +89,7 @@ F-013 在受测 commit 上完成整 Feature 真实多进程回归，主要命令
 
 ### 4.2 F-014 文档核验与工作区回归
 
-- 操作说明 [p02-1-operations.md](../p02-1-operations.md) 的命令示例使用真实构建入口
+- 操作说明 [p02-1-operations.md](../phases/p02/p02-1-operations.md) 的命令示例使用真实构建入口
   `packages/cli/dist/bin.js` 与真实参数（`--data-root`/`--json`/`--start-timeout-ms`/
   `--stop-command-id`/`--confirm-timeout-ms`）与默认值/范围（`15000` / `1000..60000` /
   `10000` / `0..30000`）。

@@ -79,6 +79,7 @@ export interface DeliveryVertical {
 }
 
 export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean; confirmProjectProfile?: boolean;
+  repairReadme?: string;
   reserveFinalResources?: boolean;
   featureAutoFixPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').FeatureAutoFixPolicyV2;
   verificationPolicy?: import('../../../packages/core/src/ports/settings-schema.ts').VerificationPolicyV2 } = {}): Promise<DeliveryVertical> {
@@ -86,6 +87,7 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
     confirmProjectProfile: options.confirmProjectProfile ?? true,
     verificationPolicy: options.verificationPolicy,
     featureAutoFixPolicy: options.featureAutoFixPolicy,
+    runtimeStartLimit: options.featureAutoFixPolicy?.enabled ? 8 : undefined,
     deliveryPolicy: { commitMode: 'task_and_feature',
       gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true }, deliveryActions: ['commit'] } });
   const db: Database.Database = fixture.session.database;
@@ -110,10 +112,17 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
       ] },
     })(context);
     const first = make(false), second = make(true);
+    const repair = createFakeWorkRuntimeFactory({ providers: [{ providerId: 'test-provider', models: ['fake-model'] }],
+      commandProcess: processes, toolCommands: { probe: { argv: ['/usr/bin/true'], timeoutMs: 5000 } },
+      script: { schemaVersion: 1, steps: [
+        ...(options.repairReadme === undefined ? [] : [{ op: 'write_file' as const, path: 'README.md', content: options.repairReadme }]),
+        { op: 'tool_command', name: 'probe' }, { op: 'message', role: 'assistant', text: 'repair complete' },
+      ] } })(context);
     return { ...first, entries: first.entries.map(entry => ({ ...entry, adapter: {
       async start(request: RuntimeExecutionRequest) {
         runtimeCalls += 1;
-        const selected = request.identity.purpose === 'work' && request.identity.taskId === 't-2' ? second : first;
+        const selected = request.prompt.kind === 'feature-repair-prompt' ? repair
+          : request.identity.purpose === 'work' && request.identity.taskId === 't-2' ? second : first;
         return selected.entries[0]!.adapter.start(request);
       },
     } })) };

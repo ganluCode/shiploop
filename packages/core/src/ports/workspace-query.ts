@@ -2,7 +2,7 @@
  * P03-5 / F-011 工作区状态只读查询端口（ports 契约层，纯类型 + 确定性计算 +
  * 运行时校验，无 I/O）。
  *
- * 依据 docs/p03-5-workspace-host-integration-contract.md §4：
+ * 依据 docs/phases/p03/p03-5-workspace-host-integration-contract.md §4：
  * - 四个查询操作身份冻结于 WORKSPACE_QUERY_OPERATIONS；Host 握手能力清单
  *   与本清单同步（只宣告真实接线）；
  * - 公开投影绝不携带绝对路径（canonicalPath/gitCommonDir）与内部仓库身份

@@ -1,7 +1,7 @@
 /**
  * F-003 受保护 Host 文件存储回归（真实临时文件，无 mock、无网络、无子进程）。
  *
- * 协议依据（唯一）：docs/p02-1-host-lifecycle-contract.md
+ * 协议依据（唯一）：docs/phases/p02/p02-1-host-lifecycle-contract.md
  * - §3.1/§3.2 规范数据根（realpath 固定）与 dataRootIdentity；
  * - §3.3 host/ 0700、discovery.json/auth.token 0600、writer.lock 布局与
  *   fail-closed 权限/属主/符号链接矩阵；

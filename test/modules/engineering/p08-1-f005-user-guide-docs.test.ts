@@ -1,5 +1,5 @@
 /**
- * P08-1 / F-005 文档守护：`docs/p08-1-user-guide.md`（新用户安装与操作指南）
+ * P08-1 / F-005 文档守护：`docs/phases/p08/p08-1-user-guide.md`（新用户安装与操作指南）
  * 必须与真实 CLI/Host 契约和冻结的分发兼容声明一致，且示例保持脱敏。
  *
  * 本套件不新增业务实现、不启动 Host、不调用模型：
@@ -33,7 +33,7 @@ import { parsePlanningStartInput } from '../../../packages/cli/src/app/planning.
 import { validateFeaturePlanInput } from '../../../packages/core/src/ports/feature-plan.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const GUIDE_PATH = 'docs/p08-1-user-guide.md';
+const GUIDE_PATH = 'docs/phases/p08/p08-1-user-guide.md';
 const guide = readFileSync(resolve(REPO_ROOT, GUIDE_PATH), 'utf-8');
 const readme = readFileSync(resolve(REPO_ROOT, 'README.md'), 'utf-8');
 const compatibility = JSON.parse(

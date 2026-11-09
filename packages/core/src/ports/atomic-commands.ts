@@ -152,6 +152,8 @@ export interface CommandTransaction {
   updatePlanEntityLabels(input: unknown): PhaseRecord | FeatureRecord | TaskRecord | RunRecord;
   /** 创建 draft Feature（含最小 plan_status=draft、可选 planDigest 与来源引用）。 */
   insertFeature(input: unknown): FeatureRecord;
+  /** Managed draft paths are bound in the Feature creation transaction, never by a model SQL write. */
+  bindFeatureDocuments?(projectId: string, featureId: string, documents: readonly import('./managed-documents.js').ManagedDocumentSource[]): void;
   /** 创建 pending Task（保存完整验收/引用/complexity/executionConfig 及来源）。 */
   insertTask(input: unknown): TaskRecord;
   /** 插入同 Feature 依赖边（自依赖/重复边/跨 Feature/环均结构化拒绝）。 */
@@ -438,6 +440,7 @@ export interface CommandTransaction {
   };
   /** P05-1 / F-008：规划候选决策与应用关联，同一事务内只写一次。 */
   decidePlanningCandidate(input: unknown): import('./planning-context.js').PlanningContextRecord;
+  retireFailedPlanning(input: import('./planning-retire.js').PlanningRetireInput, evidence?: object): import('./planning-retire.js').PlanningRetireResult;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语，
    * 不经命令面暴露；SDK 启动前的受信边界）

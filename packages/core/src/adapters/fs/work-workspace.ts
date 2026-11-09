@@ -41,6 +41,9 @@ export function createWorkWorkspaceAuthority(options: {
       if (!authorizedRoot || source.binding.projectId !== target.projectId) {
         throw new StorageError('ownership', 'WorkWorkspace.prepare', 'Preparation path outside authorized roots');
       }
+      // 首次 planning claim 发生在 Feature worktree 创建之前。此处只核验
+      // PathService 给出的目标路径和授权根；真实目录身份由 workspace
+      // preparation 创建后，再通过 verify(realpath) 复核。
       return issue(binding, target.absolutePath, authorizedRoot);
     },
     async verify(binding, input) {

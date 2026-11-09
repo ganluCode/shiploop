@@ -1,0 +1,1 @@
+- credentialRef: {{credentialRef}}（凭据只有引用，不内联正文）

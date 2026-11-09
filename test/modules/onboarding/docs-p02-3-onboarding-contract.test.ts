@@ -1,5 +1,5 @@
 /**
- * F-001 文档核验：`docs/p02-3-onboarding-contract.md` 记录的前序基线与 P02-3
+ * F-001 文档核验：`docs/phases/p02/p02-3-onboarding-contract.md` 记录的前序基线与 P02-3
  * 静态接入/基线授权/受监督进程/CLI 实施契约必须与仓库事实一致，避免「文档另立
  * 一套」与后续 F-002 ~ F-020 各自发明协议。
  *
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p02-3-onboarding-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p02/p02-3-onboarding-contract.md';
 const contractDoc = readFileSync(resolve(REPO_ROOT, CONTRACT_DOC_PATH), 'utf-8');
 
 function readJson(relativePath: string): Record<string, unknown> {
@@ -234,7 +234,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     const constants = readText('packages/host/src/contract/constants.ts');
     // F-006 接线 projects.inspect/overview 并扩张握手能力集合，按 §3.1 显式升 v3；
     // P03-1 / F-009 计划域能力后续升 v4；P03-2 / F-007 决策/策略/输入准备与审批
-    // 查询进入能力集合后续升 v5（docs/p03-2-plan-approval-contract.md）。
+    // 查询进入能力集合后续升 v5（docs/phases/p03/p03-2-plan-approval-contract.md）。
     expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 6 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
@@ -359,10 +359,10 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
 
   it('P02-1/P02-2 契约、交接与报告仍在库且被本文显式接续', () => {
     for (const path of [
-      'docs/p02-1-host-lifecycle-contract.md',
-      'docs/p02-1-writer-lock.md',
-      'docs/p02-2-commands-events-contract.md',
-      'docs/p01-3-application-contract.md',
+      'docs/phases/p02/p02-1-host-lifecycle-contract.md',
+      'docs/phases/p02/p02-1-writer-lock.md',
+      'docs/phases/p02/p02-2-commands-events-contract.md',
+      'docs/phases/p01/p01-3-application-contract.md',
     ]) {
       expect(existsSync(resolve(REPO_ROOT, path))).toBe(true);
     }

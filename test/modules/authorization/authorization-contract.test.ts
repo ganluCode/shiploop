@@ -1,7 +1,7 @@
 /**
  * F-005 可信 principal 授权纯契约测试（Core 应用层授权，不经 HTTP）。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md §4：
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md §4：
  * - §4.1 principal 唯一可信来源是 Host/测试可信装配；请求信封/查询中的
  *   actorId/principal/capabilities/scope 提权字段在 F-002 已按未知键拒绝，
  *   本层绝不从请求数据取身份；
@@ -410,6 +410,10 @@ function envelope(
         expectedRevision: expectedRevision ?? 1,
         payload: { candidateId: 'candidate-1', candidateDigest: '0'.repeat(64), decision: 'approve', reason: null },
       };
+    case 'planning.retire':
+      if (scope.kind !== 'project') throw new Error('project scope required');
+      return { ...base, operation, scope, expectedRevision: expectedRevision ?? 1,
+        payload: { featureId:'feature-1', contextId:'context-1', candidateId:'candidate-1',runId:'run-1',workspaceRevision:null } };
     case 'planning.start':
       return {
         ...base,

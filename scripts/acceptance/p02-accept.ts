@@ -2,7 +2,7 @@
  * P02-4 / F-011 `npm run accept:p02` 单次阶段验收控制器。
  * 开发验收工具，不是 ShipLoop 产品能力，不进 packages/，不提供 Host/CLI 业务接口。
  *
- * 依据 `docs/p02-4-acceptance-contract.md`（F-001）§2.1/§2.5/§3.8 与 F-009 报告模块、
+ * 依据 `docs/phases/p02/p02-4-acceptance-contract.md`（F-001）§2.1/§2.5/§3.8 与 F-009 报告模块、
  * F-010 版本化配置实现：
  * - 前提检查复用 `resolveP02AcceptInvocation`（p02-config.ts）：配置 + CLI/env 参数在
  *   启动任何 Host/场景之前完成全部校验，失败 exitCode 1 且零副作用（不产生报告）；

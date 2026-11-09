@@ -41,27 +41,28 @@ scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-
                 acceptance/（P01 阶段验收：p01-accept.ts 控制器、p01-report.ts 报告、
                 build-artifact-scan.ts 可发布产物路径/依赖/迁移扫描）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
+docs/README.md   文档总索引；阶段实施文档按 docs/phases/p01/～p08/ 分类
 docs/acceptance/  P01-1 / P01-2 / P01-3 验收报告与脱敏证据（见下文「集成验收报告」「P01-2 存储与制品」「P01-3 项目身份与当前配置」）
 docs/storage-operations.md  P01-2 存储操作与恢复说明（F-014）
-docs/p01-3-application-contract.md  P01-3 Core 应用契约与范围说明（F-001）
-docs/p01-3-operations.md   P01-3 项目身份与当前配置操作说明（F-014）
-docs/p01-3-handoff.md       P01-2 → P01-3 接口交接（P01-2 F-014）
-docs/p01-4-handoff.md       P01-3 → P01-4 / P02 接口交接（P01-3 F-014）
-docs/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生命周期契约（F-001）
-docs/p02-1-operations.md  P02-1 Host 生命周期操作说明（F-014）
-docs/p02-1-handoff.md  P02-1 → P02-2 接口交接（P02-1 F-014）
+docs/phases/p01/p01-3-application-contract.md  P01-3 Core 应用契约与范围说明（F-001）
+docs/phases/p01/p01-3-operations.md   P01-3 项目身份与当前配置操作说明（F-014）
+docs/phases/p01/p01-3-handoff.md       P01-2 → P01-3 接口交接（P01-2 F-014）
+docs/phases/p01/p01-4-handoff.md       P01-3 → P01-4 / P02 接口交接（P01-3 F-014）
+docs/phases/p02/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生命周期契约（F-001）
+docs/phases/p02/p02-1-operations.md  P02-1 Host 生命周期操作说明（F-014）
+docs/phases/p02/p02-1-handoff.md  P02-1 → P02-2 接口交接（P02-1 F-014）
 docs/acceptance/p02-1-f014-report.md  P02-1 Feature 交付报告（F-014，证据在同目录 evidence-p02-1/）
-docs/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接口契约（F-001，实施前置契约；F-002~F-018 已按其实现路由/回执/事件/SSE）
-docs/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-019）
-docs/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
+docs/phases/p02/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接口契约（F-001，实施前置契约；F-002~F-018 已按其实现路由/回执/事件/SSE）
+docs/phases/p02/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-019）
+docs/phases/p02/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
 docs/acceptance/p02-2-f020-report.md  P02-2 Feature 交付报告（F-020，证据在同目录 evidence-p02-2/）
-docs/p02-3-onboarding-contract.md  P02-3 项目初始化与获准基线检查接口契约（F-001，实施前置契约；F-002~F-020 按其实现静态接入/基线授权/受监督进程/CLI）
-docs/p02-3-command-process.md  受监督命令进程端口与停止路径（F-009/F-010）
-docs/p02-3-baseline-evidence.md  基线输出与证据（F-011）
-docs/p02-3-baseline-execution.md  Core 基线执行编排（F-012）
-docs/p02-3-baseline-recovery.md  基线活动停止与重启恢复（F-013）
-docs/p02-3-operations.md  P02-3 项目接入、基线授权与故障处理操作说明（F-019）
-docs/p02-3-handoff.md  P02-3 → p02-acceptance 接口交接（F-019）
+docs/phases/p02/p02-3-onboarding-contract.md  P02-3 项目初始化与获准基线检查接口契约（F-001，实施前置契约；F-002~F-020 按其实现静态接入/基线授权/受监督进程/CLI）
+docs/phases/p02/p02-3-command-process.md  受监督命令进程端口与停止路径（F-009/F-010）
+docs/phases/p02/p02-3-baseline-evidence.md  基线输出与证据（F-011）
+docs/phases/p02/p02-3-baseline-execution.md  Core 基线执行编排（F-012）
+docs/phases/p02/p02-3-baseline-recovery.md  基线活动停止与重启恢复（F-013）
+docs/phases/p02/p02-3-operations.md  P02-3 项目接入、基线授权与故障处理操作说明（F-019）
+docs/phases/p02/p02-3-handoff.md  P02-3 → p02-acceptance 接口交接（F-019）
 docs/skills/project-init.md  F-017 最小操作 Skill：project init（只经 dist CLI；先只读预览，注册与基线授权分别请求用户确认）
 docs/skills/project-overview.md  F-017 最小操作 Skill：project overview（注册/配置/健康分列；不从日志或模型结论推断 passed）
 docs/skills/host-lifecycle.md  P08-1/F-006 操作 Skill：安装自检、本地 pack 与 Host 生命周期（停止只经显式 host stop；永不 npm publish）
@@ -70,46 +71,46 @@ docs/skills/execution-observe.md  P08-1/F-006 操作 Skill：执行预览/显式
 docs/skills/stop-control.md  P08-1/F-006 操作 Skill：显式取消、暂停/继续与 Host 停止（停止必须显式发起；stop_unconfirmed 不伪装成功）
 docs/skills/backup-restore.md  P08-1/F-006 操作 Skill：受管备份与隔离恢复（核验在前、确认文档审阅在前；fail-closed 不发布坏包）
 docs/skills/troubleshooting.md  P08-1/F-006 操作 Skill：失败诊断速查（回执 completed 才是成功；后置能力不冒充可用）
-docs/p02-4-acceptance-contract.md  P02-4 阶段验收契约与检查清单（F-001：冻结检查 ID/证据字段/接口映射）
-docs/p02-4-operations.md  P02-4 P02 操作指南与验收复跑说明（F-013：双 CLI 闭环、accept:p02 复跑、诊断与边界）
+docs/phases/p02/p02-4-acceptance-contract.md  P02-4 阶段验收契约与检查清单（F-001：冻结检查 ID/证据字段/接口映射）
+docs/phases/p02/p02-4-operations.md  P02-4 P02 操作指南与验收复跑说明（F-013：双 CLI 闭环、accept:p02 复跑、诊断与边界）
 docs/acceptance/p02-4-review-checklist.md  P02-4 人工审阅清单（F-013：FR-1/FR-2 逐项核对；人工未审阅=未完成，不自动签字）
-docs/p03-1-plan-import-contract.md  P03-1 单 Feature 草稿计划校验/DAG/摘要与导入编辑契约（F-001，实施前置契约；纯校验模块已实现，存储/命令随 F-002~ 落地）
-docs/p03-1-task-strategy-selection.md  P03-1 Task 策略副本与来源选择契约（F-003 纯选择模块；导入/修订/查询的协议依据）
-docs/p03-1-handoff.md  P03-1 → P03-2/P03-10 接口交接（F-011 局部集成回归门禁：实现范围/Schema/复用面/负例矩阵复核/验收索引映射/验证记录与已知缺口）
-docs/p03-2-handoff.md  P03-2 → P03-3/4/P03-10 接口交接（F-009 跨模块集成回归门禁：批准/策略/固定输入复用面、T24/T25/T26/T37 映射、验证记录与已知缺口）
-docs/p03-3-execution-budget-contract.md  P03-3 执行预算契约（F-001：前序核对记录、分层预算校验与 reason 词汇、maxCodeAttempts 兼容规则、配置 schemaVersion 维持 2 决策、Task 快照捕获路径、并发授权与纯判定语义）
-docs/p03-3-execution-schema-contract.md  P03-3 执行域 Schema 契约（F-002：迁移 v9 单 Feature ExecutionBatch/Run/预算修订三表、条件唯一与不可变内容触发器、相对设计 11 登记决策与范围边界）
-docs/p03-3-work-command-receipts-contract.md  P03-3 Work accepted 回执契约（F-003：迁移 v10 真实 Batch/Run 关联、v5/v6 显式兼容、查询与事务回滚、命令能力暂未接线；F-005 起启动命令接线、重试回执与工厂边界更新）
-docs/p03-3-execution-preview-contract.md  P03-3 执行预览契约（F-004：单 Feature prepare 预览、固定授权范围、完整输入身份 previewDigest、no_work 与阻塞原因词汇、授权先于仓库/制品 I/O、只读边界）
-docs/p03-3-execution-start-contract.md  P03-3 显式执行启动契约（F-005：ExecutionController 启动与同父 Batch 重试派发、原子提交范围与 runsCreated、workKey 工作身份、拒绝/冲突词汇、提交后唤醒窄端口与 queued 可查询原因）
-docs/p03-3-attempt-budget-contract.md  P03-3 Task 尝试预算预占契约（F-006：迁移 v11 tasks 双计数列与预占账本表、同事务 reserveTaskAttempt 三层额度判定与幂等身份去重、受信 Core 基础设施重分类仅退代码额度、P03-4 同事务 Attempt 创建交接）
-docs/p03-3-runtime-start-contract.md  P03-3 Runtime 启动额度预占契约（F-007：迁移 v12 启动预占账本表、SDK 启动前同事务 reserveRuntimeStart 父 Batch 启动额度/deadline/控制状态原子检查、幂等启动身份与过期身份拒绝、启动失败保守保留计数无退额、区分准备失败/启动失败/实际用量）
-docs/p03-3-run-outcome-settlement-contract.md  P03-3 Run 结果幂等结算契约（F-008：迁移 v13 不可变结果账本与首次通过事实、受信内部事务/CAS、连续无进展上限、预算不退款、时间持久化及成功 workKey 不重派发）
-docs/p03-3-budget-revision-contract.md  P03-3 批次预算显式修订契约（F-009：execution.budget.revise 命令面与能力位、reviseBatchBudget 短事务预算版本 CAS 原语、仅增额或延期单调判定、不可变修订历史与脱敏事件/回执、仅增额不自动启动或恢复 Run、Task 代码尝试上限唯一显式通道）
-docs/p03-3-execution-budget-query-contract.md  P03-3 执行预算只读查询契约（F-010：execution.budget.get/revisions 一致读视图、固定 Feature 范围与各层上限/已用/剩余、绝对 deadline 与阻塞原因冻结词汇、修订历史有界分页与受控游标、未知字段不填零与启动预占/实际用量分离、输出脱敏边界）
+docs/phases/p03/p03-1-plan-import-contract.md  P03-1 单 Feature 草稿计划校验/DAG/摘要与导入编辑契约（F-001，实施前置契约；纯校验模块已实现，存储/命令随 F-002~ 落地）
+docs/phases/p03/p03-1-task-strategy-selection.md  P03-1 Task 策略副本与来源选择契约（F-003 纯选择模块；导入/修订/查询的协议依据）
+docs/phases/p03/p03-1-handoff.md  P03-1 → P03-2/P03-10 接口交接（F-011 局部集成回归门禁：实现范围/Schema/复用面/负例矩阵复核/验收索引映射/验证记录与已知缺口）
+docs/phases/p03/p03-2-handoff.md  P03-2 → P03-3/4/P03-10 接口交接（F-009 跨模块集成回归门禁：批准/策略/固定输入复用面、T24/T25/T26/T37 映射、验证记录与已知缺口）
+docs/phases/p03/p03-3-execution-budget-contract.md  P03-3 执行预算契约（F-001：前序核对记录、分层预算校验与 reason 词汇、maxCodeAttempts 兼容规则、配置 schemaVersion 维持 2 决策、Task 快照捕获路径、并发授权与纯判定语义）
+docs/phases/p03/p03-3-execution-schema-contract.md  P03-3 执行域 Schema 契约（F-002：迁移 v9 单 Feature ExecutionBatch/Run/预算修订三表、条件唯一与不可变内容触发器、相对设计 11 登记决策与范围边界）
+docs/phases/p03/p03-3-work-command-receipts-contract.md  P03-3 Work accepted 回执契约（F-003：迁移 v10 真实 Batch/Run 关联、v5/v6 显式兼容、查询与事务回滚、命令能力暂未接线；F-005 起启动命令接线、重试回执与工厂边界更新）
+docs/phases/p03/p03-3-execution-preview-contract.md  P03-3 执行预览契约（F-004：单 Feature prepare 预览、固定授权范围、完整输入身份 previewDigest、no_work 与阻塞原因词汇、授权先于仓库/制品 I/O、只读边界）
+docs/phases/p03/p03-3-execution-start-contract.md  P03-3 显式执行启动契约（F-005：ExecutionController 启动与同父 Batch 重试派发、原子提交范围与 runsCreated、workKey 工作身份、拒绝/冲突词汇、提交后唤醒窄端口与 queued 可查询原因）
+docs/phases/p03/p03-3-attempt-budget-contract.md  P03-3 Task 尝试预算预占契约（F-006：迁移 v11 tasks 双计数列与预占账本表、同事务 reserveTaskAttempt 三层额度判定与幂等身份去重、受信 Core 基础设施重分类仅退代码额度、P03-4 同事务 Attempt 创建交接）
+docs/phases/p03/p03-3-runtime-start-contract.md  P03-3 Runtime 启动额度预占契约（F-007：迁移 v12 启动预占账本表、SDK 启动前同事务 reserveRuntimeStart 父 Batch 启动额度/deadline/控制状态原子检查、幂等启动身份与过期身份拒绝、启动失败保守保留计数无退额、区分准备失败/启动失败/实际用量）
+docs/phases/p03/p03-3-run-outcome-settlement-contract.md  P03-3 Run 结果幂等结算契约（F-008：迁移 v13 不可变结果账本与首次通过事实、受信内部事务/CAS、连续无进展上限、预算不退款、时间持久化及成功 workKey 不重派发）
+docs/phases/p03/p03-3-budget-revision-contract.md  P03-3 批次预算显式修订契约（F-009：execution.budget.revise 命令面与能力位、reviseBatchBudget 短事务预算版本 CAS 原语、仅增额或延期单调判定、不可变修订历史与脱敏事件/回执、仅增额不自动启动或恢复 Run、Task 代码尝试上限唯一显式通道）
+docs/phases/p03/p03-3-execution-budget-query-contract.md  P03-3 执行预算只读查询契约（F-010：execution.budget.get/revisions 一致读视图、固定 Feature 范围与各层上限/已用/剩余、绝对 deadline 与阻塞原因冻结词汇、修订历史有界分页与受控游标、未知字段不填零与启动预占/实际用量分离、输出脱敏边界）
 docs/acceptance/p03-3-f014-report.md  F-014 交付报告（完整门禁、输入/实现提交、逐命令退出码、脱敏证据摘要和 not_run 边界）
-docs/p03-3a-runtime-recovery-contract.md  P03-3A F-001 恢复契约（Work/Chat 身份、稳定调用 ID、不可变来源引用、五项运行期能力证据、纯校验/能力判定与前置核验职责）
-docs/p03-3a-synthetic-recovery-fixtures.md  P03-3A F-003 Synthetic 恢复夹具边界（确定性故障注入、可识别副作用去重、事件水位与用量范围；非真实 SDK/生产 Recorder）
-docs/p03-3a-pi-durable-capability-matrix.md  P03-3A F-004 Pi Durable 1.2.0 锁定实验与 P04 决策（真实 SDK 能力矩阵、证据/版本锁定、not_run 门槛；默认保留标准 Pi SDK）
-docs/p03-3a-handoff.md  P03-3A F-005 通用恢复协议交接（实际交付接口索引、Core 权威与 Work/Chat 独立控制、公共入口兼容冻结断言、P03-4/6/9 实施依据与 P04 门槛追溯）
-docs/p03-3-handoff.md  P03-3 集成验收与 P03-4/6/9 接口交接（F-014：正式构建 CLI 到持久预算、FR-1/FR-2 与预算子集覆盖、显式测试目录边界、accepted 兼容与组合事务）
-docs/p03-3-cli-execution-operations.md  P03-3 执行授权 CLI 操作说明（F-012：execution preview/start/budget/revise 命令面、完整有限预算参数映射与有效并发把关、previewDigest 明确确认、四态结构化输出与 accepted 仅提交成功语义、失败退出码与同请求恢复）
-docs/p03-5-handoff.md  P03-5 → P03-6/8/9 及 P03-10 接口交接（F-013 真实资源集成回归：准备/恢复/保留/清理/丢弃公共面、负例矩阵复核、T08/T29/T36 映射、恢复边界与验证记录）
-docs/p08-1-user-guide.md  P08-1 新用户安装与操作指南（F-005：本地 pack 安装、数据根隔离、Host/CLI 启动与协议检查、认证准备、project init、规划批准、执行、停止、备份恢复、排障与安全清理；脱敏示例与支持边界）
-docs/p08-1-support-matrix.md  P08-1 发布支持矩阵（F-007：macOS/Node/npm、Host 协议、数据库 Schema、分层状态与 Phase 集成 not_run）
-docs/p08-1-artifact-verification.md  P08-1 制品检查说明（F-007：pack:local/verify:artifacts、摘要、状态与真实安装缺口）
+docs/phases/p03/p03-3a-runtime-recovery-contract.md  P03-3A F-001 恢复契约（Work/Chat 身份、稳定调用 ID、不可变来源引用、五项运行期能力证据、纯校验/能力判定与前置核验职责）
+docs/phases/p03/p03-3a-synthetic-recovery-fixtures.md  P03-3A F-003 Synthetic 恢复夹具边界（确定性故障注入、可识别副作用去重、事件水位与用量范围；非真实 SDK/生产 Recorder）
+docs/phases/p03/p03-3a-pi-durable-capability-matrix.md  P03-3A F-004 Pi Durable 1.2.0 锁定实验与 P04 决策（真实 SDK 能力矩阵、证据/版本锁定、not_run 门槛；默认保留标准 Pi SDK）
+docs/phases/p03/p03-3a-handoff.md  P03-3A F-005 通用恢复协议交接（实际交付接口索引、Core 权威与 Work/Chat 独立控制、公共入口兼容冻结断言、P03-4/6/9 实施依据与 P04 门槛追溯）
+docs/phases/p03/p03-3-handoff.md  P03-3 集成验收与 P03-4/6/9 接口交接（F-014：正式构建 CLI 到持久预算、FR-1/FR-2 与预算子集覆盖、显式测试目录边界、accepted 兼容与组合事务）
+docs/phases/p03/p03-3-cli-execution-operations.md  P03-3 执行授权 CLI 操作说明（F-012：execution preview/start/budget/revise 命令面、完整有限预算参数映射与有效并发把关、previewDigest 明确确认、四态结构化输出与 accepted 仅提交成功语义、失败退出码与同请求恢复）
+docs/phases/p03/p03-5-handoff.md  P03-5 → P03-6/8/9 及 P03-10 接口交接（F-013 真实资源集成回归：准备/恢复/保留/清理/丢弃公共面、负例矩阵复核、T08/T29/T36 映射、恢复边界与验证记录）
+docs/phases/p08/p08-1-user-guide.md  P08-1 新用户安装与操作指南（F-005：本地 pack 安装、数据根隔离、Host/CLI 启动与协议检查、认证准备、project init、规划批准、执行、停止、备份恢复、排障与安全清理；脱敏示例与支持边界）
+docs/phases/p08/p08-1-support-matrix.md  P08-1 发布支持矩阵（F-007：macOS/Node/npm、Host 协议、数据库 Schema、分层状态与 Phase 集成 not_run）
+docs/phases/p08/p08-1-artifact-verification.md  P08-1 制品检查说明（F-007：pack:local/verify:artifacts、摘要、状态与真实安装缺口）
 CHANGELOG.md  P08-1 变更说明（0.0.0 本地 pack，未发布；按 Task 记录范围与兼容边界）
 docs/acceptance/p08-1-release-manifest.md  P08-1 发布清单模板（F-007：Git SHA、包版本、协议/Schema、工具链、制品摘要、检查退出码、证据与已知缺口）
 docs/acceptance/p08-1-delivery-report.md  P08-1 交付报告（F-007：代码提交、局部检查、Feature/Phase not_run 与发布身份缺口；供 P08-4 读取，不代签）
-docs/p08-2-todo-planning.md  P08-2 Todo 规划/人工批准/有限预算与单 Feature 启动接线（F-002：稳定命令 ID、本地记录与恢复、真实 CLI；live not_run）
-docs/p08-2-todo-delivery-check.md  P08-2 Todo 交付局部契约检查器（F-003：九类行为/失败保全/测试产物按退出码判定，真实子进程端口；集成与 live not_run）
-docs/p08-2-todo-live.md  P08-2 Todo 正常 live 交付编排（F-004：真实 Pi、Task 依赖门禁、局部检查和本地提交证据；阶段组合场景后置）
-docs/p08-2-todo-live-negatives.md  P08-2 Todo live 确定性负例夹具（F-005：认证、依赖/预算、取消和未确认中断的持久证据与资源边界）
-docs/p08-2-todo-live-report.md  P08-2 Todo live 结构化报告与证据聚合（F-006：需求/运行/代码身份绑定、四态状态语义、凭据与绝对路径脱敏、受控制品完整性复验；入口 not_run 报告）
-docs/p08-2-todo-install-smoke.md  P08-2 干净安装目录启动打包 CLI 安装冒烟（F-007：离线安装本地 tarball、入口/运行时依赖清单、隔离数据根与最小协议回执、与源码模式一致性；真实安装矩阵 not_run）
-docs/p08-2-existing-demo.md  P08-2 非 Nezha 存量仓库增量变更契约（F-008：脏文件/已有测试/已知失败基线、初始化保护、批准范围、增量提交证据；真实跨层集成 not_run）
-docs/p08-2-live-acceptance-entry.md  P08-2 `accept:p08:live` 正式入口（F-009：固定五阶段顺序、退出码/报告、人工 pending 与 Phase not_run 缺口）
-docs/p08-2-todo-requirements.md  P08-2 Todo 演示需求输入与验收契约（F-001：九类行为冻结、临时项目/凭据/清理边界、真实 Pi 与 FakeRuntime 分界、≥3 依赖 Task 规划政策与六类证据身份链）
+docs/phases/p08/p08-2-todo-planning.md  P08-2 Todo 规划/人工批准/有限预算与单 Feature 启动接线（F-002：稳定命令 ID、本地记录与恢复、真实 CLI；live not_run）
+docs/phases/p08/p08-2-todo-delivery-check.md  P08-2 Todo 交付局部契约检查器（F-003：九类行为/失败保全/测试产物按退出码判定，真实子进程端口；集成与 live not_run）
+docs/phases/p08/p08-2-todo-live.md  P08-2 Todo 正常 live 交付编排（F-004：真实 Pi、Task 依赖门禁、局部检查和本地提交证据；阶段组合场景后置）
+docs/phases/p08/p08-2-todo-live-negatives.md  P08-2 Todo live 确定性负例夹具（F-005：认证、依赖/预算、取消和未确认中断的持久证据与资源边界）
+docs/phases/p08/p08-2-todo-live-report.md  P08-2 Todo live 结构化报告与证据聚合（F-006：需求/运行/代码身份绑定、四态状态语义、凭据与绝对路径脱敏、受控制品完整性复验；入口 not_run 报告）
+docs/phases/p08/p08-2-todo-install-smoke.md  P08-2 干净安装目录启动打包 CLI 安装冒烟（F-007：离线安装本地 tarball、入口/运行时依赖清单、隔离数据根与最小协议回执、与源码模式一致性；真实安装矩阵 not_run）
+docs/phases/p08/p08-2-existing-demo.md  P08-2 非 Nezha 存量仓库增量变更契约（F-008：脏文件/已有测试/已知失败基线、初始化保护、批准范围、增量提交证据；真实跨层集成 not_run）
+docs/phases/p08/p08-2-live-acceptance-entry.md  P08-2 `accept:p08:live` 正式入口（F-009：固定五阶段顺序、退出码/报告、人工 pending 与 Phase not_run 缺口）
+docs/phases/p08/p08-2-todo-requirements.md  P08-2 Todo 演示需求输入与验收契约（F-001：九类行为冻结、临时项目/凭据/清理边界、真实 Pi 与 FakeRuntime 分界、≥3 依赖 Task 规划政策与六类证据身份链）
 docs/acceptance/p08-3-existing-demo-runbook.md  P08-3 非 Nezha 存量演示运行手册（F-005：准备快照/需求范围/获准策略/检查范围/清理责任、代码交付到 Phase 集成与 live 的分层边界、失败处置、归档重开、已核验入口）
 docs/acceptance/p08-3-demo-report-template.md  P08-3 存量演示结果报告模板（F-005：commit/tree、工具版本、命令与退出码、身份与证据、计数、遗留问题、live 授权与禁记凭据）
 ```
@@ -199,7 +200,7 @@ P01-2 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sql
 
 - [docs/storage-operations.md](docs/storage-operations.md)：最小端口使用示例、`schemaVersion`/`revision` 含义、busy 预算、受控 locator、`pending`/`ready`/`failed` 与 corrupt 诊断、核对与迁移失败的恢复步骤、备份边界。
 - [docs/acceptance/p01-2-f014-report.md](docs/acceptance/p01-2-f014-report.md)：输入文档版本、实现范围、受测 commit、命令与退出码、证据相对路径、已建表/字段/约束、已知缺口与 `not_run`（证据在同目录 `evidence-p01-2/`，已脱敏）。
-- [docs/p01-3-handoff.md](docs/p01-3-handoff.md)：P01-3 可复用的项目/配置/CAS/制品端口、受控文件定位边界与待定组合根。
+- [docs/phases/p01/p01-3-handoff.md](docs/phases/p01/p01-3-handoff.md)：P01-3 可复用的项目/配置/CAS/制品端口、受控文件定位边界与待定组合根。
 
 该验收仅限 P01-2 存储与制品落盘，不代表 P01 阶段验收或任何业务 Live 验收通过。
 
@@ -207,10 +208,10 @@ P01-2 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sql
 
 P01-3 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sqlite3 13.0.3 / drizzle-orm 0.45.3）上交付可独立调用的 Core 应用服务：仓库注册与幂等复用（稳定 `projectId` + 规范 `canonicalPath`）、项目元数据 CAS 编辑与标签筛选/计数、全局/项目当前配置的 insert-only 创建与 CAS 更新、有效配置合并与逐项来源、脱敏导出、统一 `PathService` 受权定位；迁移 v2 新增 `state_events` 脱敏审计。干净快照六条命令（`npm ci` / `npm test` / `npm run typecheck` / `npm run build` / `npm run verify` / dist 非源码 cwd 装配闭环）真实退出码全部为 0。
 
-- [docs/p01-3-application-contract.md](docs/p01-3-application-contract.md)：P01-3 Core 应用契约、配置语义、存储最小扩展、范围边界与待核对的设计张力。
-- [docs/p01-3-operations.md](docs/p01-3-operations.md)：项目身份（注册/重复结果、仓库支持范围、标签规则/筛选/计数）、当前配置（scope/schemaVersion/revision、首次写入与 CAS、完整策略覆盖/来源、凭据引用）、`PathService` 稳定 namespace 与最小可运行示例。
+- [docs/phases/p01/p01-3-application-contract.md](docs/phases/p01/p01-3-application-contract.md)：P01-3 Core 应用契约、配置语义、存储最小扩展、范围边界与待核对的设计张力。
+- [docs/phases/p01/p01-3-operations.md](docs/phases/p01/p01-3-operations.md)：项目身份（注册/重复结果、仓库支持范围、标签规则/筛选/计数）、当前配置（scope/schemaVersion/revision、首次写入与 CAS、完整策略覆盖/来源、凭据引用）、`PathService` 稳定 namespace 与最小可运行示例。
 - [docs/acceptance/p01-3-f014-report.md](docs/acceptance/p01-3-f014-report.md)：输入文档版本、受测 commit、命令与退出码、FR 分支映射、已建表/迁移、已知缺口与 `not_run`（证据在同目录 `evidence-p01-3/`，已脱敏）。
-- [docs/p01-4-handoff.md](docs/p01-4-handoff.md)：P01-4 可复跑持久化闭环与失败注入入口、P02 可包装的命令/查询契约及明确未交付边界。
+- [docs/phases/p01/p01-4-handoff.md](docs/phases/p01/p01-4-handoff.md)：P01-4 可复跑持久化闭环与失败注入入口、P02 可包装的命令/查询契约及明确未交付边界。
 
 该验收仅限 P01-3 项目身份与当前配置服务，不代表 P01 阶段验收或任何业务 Live 验收通过；阶段最终报告与 `accept:p01` 由 P01-4 交付。
 
@@ -218,8 +219,8 @@ P01-3 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sql
 
 P01-4 在 macOS 干净源码快照中交付 P01 阶段验收：`npm ci` 后真实运行 `npm test`（45 files / 792 tests）/ `npm run typecheck` / `npm run build` / `npm run verify` / `npm run accept:p01`（连续两次），七条命令退出码均为 0；两次 `accept:p01` 结论均为 `pass`（`pass 14 / fail 0 / not_run 0`），生成独立 `artifacts/acceptance/p01/<run-id>/` 报告与证据。干净快照复跑发现并修复了 F-002 安全清理测试对受测仓库位置的隐式依赖（仓库根位于临时目录内时 `not_authorized`/`symlink_escape` 断言失效）。
 
-- [docs/p01-4-acceptance-contract.md](docs/p01-4-acceptance-contract.md)：P01-4 验收契约、14 个稳定必需检查 ID、FR 分支映射与报告/证据约定。
-- [docs/p01-4-operations.md](docs/p01-4-operations.md)：验收命令、配置与报告位置、结果三态与负例双断言、临时资源安全边界、干净复跑与失败复跑步骤、实际 Core 调用范围、T03/T24/T26/T32 子集。
+- [docs/phases/p01/p01-4-acceptance-contract.md](docs/phases/p01/p01-4-acceptance-contract.md)：P01-4 验收契约、14 个稳定必需检查 ID、FR 分支映射与报告/证据约定。
+- [docs/phases/p01/p01-4-operations.md](docs/phases/p01/p01-4-operations.md)：验收命令、配置与报告位置、结果三态与负例双断言、临时资源安全边界、干净复跑与失败复跑步骤、实际 Core 调用范围、T03/T24/T26/T32 子集。
 - [docs/acceptance/p01-4-f010-report.md](docs/acceptance/p01-4-f010-report.md)：受测 commit、干净复跑命令/退出码/耗时、两次 accept 报告位置与结论、前序回归修复、已知缺口与 `not_run`（证据在同目录 `evidence-p01-4/`，已脱敏）。
 
 该验收仅限 P01 持久化闭环（FR-1/FR-2 子集）；Host/CLI、Runtime/Pi SDK、执行表与 DAG、强 OS 沙箱、非 macOS 平台均 `not_run`/未支持，不计入 P01 必需项通过数。
@@ -228,9 +229,9 @@ P01-4 在 macOS 干净源码快照中交付 P01 阶段验收：`npm ci` 后真�
 
 P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptance/p01-review-results.md](docs/acceptance/p01-review-results.md)，放行基线 `5a43a04`，受测产品 commit `0e96535`）。P02-1 开工首项只交付**生命周期接口契约**，不含实现：
 
-- [docs/p02-1-host-lifecycle-contract.md](docs/p02-1-host-lifecycle-contract.md)：P01 基线与放行依据核对、规范数据根与 `dataRootIdentity` 算法、受保护发现/凭据/锁布局、发现 Schema、`/v1/host/handshake|status|stop` 协议、版本化 stop 幂等矩阵、Host 生命周期状态机、HostClient/启动器规则、CLI `host start/status/stop` 参数与四档退出码、错误码总表、FR/T 编号映射（含 T26 编号不一致核对请求）与明确非目标。F-002 ~ F-014 共用此契约，不各自定义协议。
+- [docs/phases/p02/p02-1-host-lifecycle-contract.md](docs/phases/p02/p02-1-host-lifecycle-contract.md)：P01 基线与放行依据核对、规范数据根与 `dataRootIdentity` 算法、受保护发现/凭据/锁布局、发现 Schema、`/v1/host/handshake|status|stop` 协议、版本化 stop 幂等矩阵、Host 生命周期状态机、HostClient/启动器规则、CLI `host start/status/stop` 参数与四档退出码、错误码总表、FR/T 编号映射（含 T26 编号不一致核对请求）与明确非目标。F-002 ~ F-014 共用此契约，不各自定义协议。
 - 文档守护测试：`test/modules/host/docs-p02-1-host-lifecycle-contract.test.ts`（冻结事实与仓库基线一致性）。
-- F-004 已交付 [macOS 写入锁决定与装配交接](docs/p02-1-writer-lock.md)：实际 Node
+- F-004 已交付 [macOS 写入锁决定与装配交接](docs/phases/p02/p02-1-writer-lock.md)：实际 Node
   写入者直接持 flock fd，无辅助者；有界获取、获锁后打开 Core 的工厂端口、关闭失败保锁。
   `npm run build` 先显式编译极小 N-API 模块；要求 `/usr/bin/clang`、macOS SDK
   （Xcode Command Line Tools）与当前 Node 安装的 `include/node/node_api.h`。不新增 npm
@@ -280,11 +281,11 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - FR-2：token 第三方篡改 unauthorized、假服务与真 Host HTTP 负例矩阵（协议 426/实例与数据根 409/Origin 与伪造 Host 401/302）零文件副作用、不安全发现权限 unsafe_discovery、同 commandId 停止进行中重放（enterQuiesce 恰一次）、quiesce 未确认保留锁且 CLI 竞争者不产生第二写入者、合法 stop 三证据→重启新实例→重开 Core 前序持久数据未损坏且旧身份/token 被拒绝。
   - 脱敏证据映射与 not_run 记录：[docs/acceptance/evidence-p02-1/f013-regression-evidence.md](docs/acceptance/evidence-p02-1/f013-regression-evidence.md)（文档守护核对；不声称项目接入、执行取消或整个 P02 已验收）。
 - F-014 交付 **P02-1 操作说明、Feature 交付报告与接口交接**（仅文档与文档守护测试，不改变受测产品代码）：
-  - [docs/p02-1-operations.md](docs/p02-1-operations.md)：`host start|status|stop` 真实构建入口
+  - [docs/phases/p02/p02-1-operations.md](docs/phases/p02/p02-1-operations.md)：`host start|status|stop` 真实构建入口
     `packages/cli/dist/bin.js` 与参数/默认值/退出码、临时数据根可复跑示例、发现/凭据/锁布局与
     权限、停止三证据与 `stop_not_confirmed`/`owner_unknown` 诊断、证据获取与脱敏、可信本机/
     同用户攻击/macOS 边界、未实现 `not_run`。
-  - [docs/p02-1-handoff.md](docs/p02-1-handoff.md)：`shiploop-host` 公共面（`connectToHost`/
+  - [docs/phases/p02/p02-1-handoff.md](docs/phases/p02/p02-1-handoff.md)：`shiploop-host` 公共面（`connectToHost`/
     `ensureHostRunning`/`acquireWriterLock`/`openLockedWriter`/`createHostFileStore`/`runHostCli`）、
     锁持有要求与装配顺序、组合根/单向依赖、待实现能力与 Harness 验证策略交接。
   - [docs/acceptance/p02-1-f014-report.md](docs/acceptance/p02-1-f014-report.md)：受测 commit
@@ -303,12 +304,12 @@ CAS 更新）、`(principal, commandId)` + 请求摘要幂等、迁移 v3 `comma
 `project.*`/`config.*`/`receipt get`/`events` 纵向接线。F-018 已完成真实 SQLite/HTTP/SSE/CLI
 集成回归，`npm run verify` `PASS 3/3`。
 
-- [docs/p02-2-operations.md](docs/p02-2-operations.md)：`packages/cli/dist/bin.js` 真实入口与
+- [docs/phases/p02/p02-2-operations.md](docs/phases/p02/p02-2-operations.md)：`packages/cli/dist/bin.js` 真实入口与
   `project.*`/`config.*`/`receipt get`/`events` 参数/默认值/退出码、临时仓库注册、配置 CAS、
   重复命令与查回执、授权快照与事件恢复的可复跑示例，超时先查回执/`accepted`与`completed`区别/
   `conflict`/`unsupported`/`snapshot_required`/观察中断/慢客户端重载语义，以及 macOS 可信本机/
   同用户攻击边界与未实现 `not_run`。
-- [docs/p02-2-handoff.md](docs/p02-2-handoff.md)：`shiploop-core/assembly` 的授权主体/原子命令/
+- [docs/phases/p02/p02-2-handoff.md](docs/phases/p02/p02-2-handoff.md)：`shiploop-core/assembly` 的授权主体/原子命令/
   回执/一致快照/持久事件端口、`shiploop-core/protocol`、`shiploop-host` HostClient 方法与
   `/v1` 路由、迁移 v3 与事件白名单、装配顺序/跨包边界、P02-3 待实现能力与验证策略交接。
 - [docs/acceptance/evidence-p02-2/f018-regression-evidence.md](docs/acceptance/evidence-p02-2/f018-regression-evidence.md)：
@@ -333,16 +334,16 @@ P02-3 在 macOS（arm64，Node 22.19.0 / npm 10.9.3）上交付项目静态接�
 HostClient/CLI 纵向接线。F-018 已完成真实 Git/SQLite/进程/Host/CLI 端到端集成回归，
 `npm run verify` 全绿。
 
-- [docs/p02-3-operations.md](docs/p02-3-operations.md)：真实 dist CLI 的临时仓库 init、overview、
+- [docs/phases/p02/p02-3-operations.md](docs/phases/p02/p02-3-operations.md)：真实 dist CLI 的临时仓库 init、overview、
   基线预览/确认/查询/取消、输出证据与 stop/重启示例（可复跑、不要求人工改库）；注册与健康独立、
   拒绝/未知脚本 not_run、失败/超时/取消/停止未确认、输出缺口、过期授权与观察退出语义；
   明确已知基线失败不是后续验收豁免，CLI/Host 不自动安装或修复仓库。
-- [docs/p02-3-handoff.md](docs/p02-3-handoff.md)：实际 Schema（迁移 v1..v4）、Core 窄服务、
+- [docs/phases/p02/p02-3-handoff.md](docs/phases/p02/p02-3-handoff.md)：实际 Schema（迁移 v1..v4）、Core 窄服务、
   Host 路由/能力、HostClient、CLI 退出码、受监督停止与恢复约束、测试/证据入口，供 p02-acceptance
   组合双客户端演示；不在本 Feature 新建 `accept:p02` 或补建后序 Work/Pi。
-- 受监督进程/证据/执行编排/恢复细节见 `docs/p02-3-command-process.md`、
-  `docs/p02-3-baseline-evidence.md`、`docs/p02-3-baseline-execution.md`、
-  `docs/p02-3-baseline-recovery.md`；最小操作 Skill 见 `docs/skills/`。
+- 受监督进程/证据/执行编排/恢复细节见 `docs/phases/p02/p02-3-command-process.md`、
+  `docs/phases/p02/p02-3-baseline-evidence.md`、`docs/phases/p02/p02-3-baseline-execution.md`、
+  `docs/phases/p02/p02-3-baseline-recovery.md`；最小操作 Skill 见 `docs/skills/`。
 - 文档守护 [test/modules/onboarding/docs-p02-3-operations.test.ts](test/modules/onboarding/docs-p02-3-operations.test.ts)：真实纵向跑通
   操作说明示例（init 预览/确认 → overview → 基线预览/授权/查询/证据/拒绝/取消 → stop/重启后
   查询），并与命令契约面（解析、退出码、检查计划校验）交叉核对。
@@ -361,7 +362,7 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
 - 阶段验收自 F-011 起正式提供 `npm run accept:p02`（本地控制器
   `scripts/acceptance/p02-accept.ts` + 版本化配置 `acceptance/p02.config.json`；报告在
   `artifacts/acceptance/p02/<run-id>/`，任一必需检查 `fail`/`not_run` 即非零退出）。
-- [docs/p02-4-operations.md](docs/p02-4-operations.md)：P02 操作指南与验收复跑说明——按真实参数
+- [docs/phases/p02/p02-4-operations.md](docs/phases/p02/p02-4-operations.md)：P02 操作指南与验收复跑说明——按真实参数
   从临时 Git 仓库启动双 CLI、确认配置、注册、授权基线、查询、退出观察、显式 stop/重启与读取
   证据的完整步骤；`accept:p02` 配置/报告位置/非零处理、干净快照连续复跑与深度护栏；诊断表
   （注册与健康独立、重复 init、commandId 重放/冲突、超时先查回执、认证/协议拒绝、
@@ -407,7 +408,7 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
 
 ## P04 Pi 验收入口
 
-P04 的离线矩阵、版本/证据索引和人工门槛见 [最终交付报告](docs/p04-8-f010-delivery-report.md)、[故障矩阵](docs/p04-8-f010-fault-matrix.md)与[人工清单](docs/p04-8-f010-manual-checklist.md)。普通 Task 只运行定向测试；Feature 索引合集交 Nezha 独立验证。完整阶段与真实 live 须单独发起：
+P04 的离线矩阵、版本/证据索引和人工门槛见 [最终交付报告](docs/phases/p04/p04-8-f010-delivery-report.md)、[故障矩阵](docs/phases/p04/p04-8-f010-fault-matrix.md)与[人工清单](docs/phases/p04/p04-8-f010-manual-checklist.md)。普通 Task 只运行定向测试；Feature 索引合集交 Nezha 独立验证。完整阶段与真实 live 须单独发起：
 
 ```sh
 npm run accept:p04 -- --help
@@ -425,10 +426,10 @@ P08-1 只交付本地 pack 候选与操作文档，`published: false`；以下�
 
 | 文档 | 用途 |
 |---|---|
-| [新用户安装与操作指南](docs/p08-1-user-guide.md) | 从本地 pack、独立安装、Host/CLI、认证到规划/执行/停止/备份/排障的完整操作步骤 |
-| [发布支持矩阵](docs/p08-1-support-matrix.md) | macOS、Node/npm、Host 协议、数据库 Schema、已交付层次与未运行项 |
+| [新用户安装与操作指南](docs/phases/p08/p08-1-user-guide.md) | 从本地 pack、独立安装、Host/CLI、认证到规划/执行/停止/备份/排障的完整操作步骤 |
+| [发布支持矩阵](docs/phases/p08/p08-1-support-matrix.md) | macOS、Node/npm、Host 协议、数据库 Schema、已交付层次与未运行项 |
 | [变更说明](CHANGELOG.md) | 0.0.0 未发布变更、兼容范围与未验证边界 |
-| [制品检查说明](docs/p08-1-artifact-verification.md) | `pack:local` / `verify:artifacts` 入口、输出、状态词汇与证据 |
+| [制品检查说明](docs/phases/p08/p08-1-artifact-verification.md) | `pack:local` / `verify:artifacts` 入口、输出、状态词汇与证据 |
 | [发布清单模板](docs/acceptance/p08-1-release-manifest.md) / [P08-1 清单](acceptance/p08-1.release-manifest.json) | 可复用字段说明与实际机器可读清单（含 not_run 和发布身份缺口） |
 | [P08-1 交付报告](docs/acceptance/p08-1-delivery-report.md) | 实现范围、代码提交、工具版本、局部检查与 Phase 集成待运行项；供 P08-4 读取，不替代集成/人工/live |
 | [project init Skill](docs/skills/project-init.md) | 项目静态预览、确认注册与独立基线授权 |
@@ -448,14 +449,14 @@ P08-4 总验收把安装、确定性回归、Todo 新项目与存量仓库两类
 
 | 文档 | 用途 |
 |---|---|
-| [一期能力矩阵](docs/p08-capability-matrix.md) | Core/Host/CLI/Pi Work 能力、macOS/Node/npm 矩阵、协议/Schema 范围、安装产物摘要字段与不支持能力 |
-| [P08 总验收契约](docs/p08-acceptance.md) | 六层验证、三态、运行身份、前置输入与 Nezha 边界 |
+| [一期能力矩阵](docs/phases/p08/p08-capability-matrix.md) | Core/Host/CLI/Pi Work 能力、macOS/Node/npm 矩阵、协议/Schema 范围、安装产物摘要字段与不支持能力 |
+| [P08 总验收契约](docs/phases/p08/p08-acceptance.md) | 六层验证、三态、运行身份、前置输入与 Nezha 边界 |
 | [验收配置](acceptance/p08.config.json) / [检查清单](acceptance/p08.checklist.json) / [入口契约](acceptance/p08.entry.json) | 机器可读的冻结配置、检查 ID 与固定步骤顺序 |
 | [正式验收入口](scripts/acceptance/p08-accept.ts) | `npm run accept:p08` 的步骤、预算、身份、证据与报告发布实现 |
 | [负责人 walkthrough](docs/acceptance/p08-owner-walkthrough.md) | 从干净安装目录启动打包 CLI、Todo 与存量演示核对点，以及脏文件/已有失败/清理/停止未确认/Live 缺失处理 |
 | [交付报告模板](docs/acceptance/p08-delivery-report-template.md) | commit、工具版本、实际命令与退出码、范围与预算、证据路径、计数、人工状态与遗留问题 |
 | [P08-1 交付报告](docs/acceptance/p08-1-delivery-report.md) / [发布清单](acceptance/p08-1.release-manifest.json) | 安装产物、局部检查与 Phase 集成待运行项 |
-| [P08-2 live 入口](docs/p08-2-live-acceptance-entry.md) | Todo 新项目真实模型入口、预算与人工 pending |
+| [P08-2 live 入口](docs/phases/p08/p08-2-live-acceptance-entry.md) | Todo 新项目真实模型入口、预算与人工 pending |
 | [P08-3 存量运行手册](docs/acceptance/p08-3-existing-demo-runbook.md) / [演示报告模板](docs/acceptance/p08-3-demo-report-template.md) | 非 Nezha 存量仓库增量演示与结果记录 |
 
 ```sh

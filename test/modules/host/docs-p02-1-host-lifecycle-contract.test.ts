@@ -1,5 +1,5 @@
 /**
- * F-001 文档核验：`docs/p02-1-host-lifecycle-contract.md` 记录的 P01 放行基线与
+ * F-001 文档核验：`docs/phases/p02/p02-1-host-lifecycle-contract.md` 记录的 P01 放行基线与
  * P02-1 生命周期协议必须与仓库事实一致，避免「文档另立一套」与后续 F-002 ~ F-014
  * 各自发明协议。
  *
@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { currentHostDependencies, piSdkRuntimeFiles } from '../../helpers/current-host-contract.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p02-1-host-lifecycle-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p02/p02-1-host-lifecycle-contract.md';
 const contractDoc = readFileSync(resolve(REPO_ROOT, CONTRACT_DOC_PATH), 'utf-8');
 
 function readJson(relativePath: string): Record<string, unknown> {
@@ -216,7 +216,7 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(contractDoc).toContain('ensureHostRunning');
     expect(contractDoc).toContain('probeDiscoveredHost');
     expect(contractDoc).toContain('flock(LOCK_EX | LOCK_NB)');
-    expect(readText('docs/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
+    expect(readText('docs/phases/p02/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
     expect((readJson('package.json').scripts as Record<string, string>).build).toContain('build-host-lock.ts');
     expect(hostIndex).not.toContain('export {}');
 

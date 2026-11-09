@@ -4,7 +4,7 @@
  *
  * 设计依据：input/p04-dispatch-foundation.md §3.1、§3.2、§3.4 与
  * core-design/15-feature-concurrency-and-integration.md §2；实施理由与不能复用的
- * 具体原因见 docs/p04-9-f001-dispatch-slot-contract.md。
+ * 具体原因见 docs/phases/p04/p04-9-f001-dispatch-slot-contract.md。
  *
  * 事实来源（本模块不新增第二套业务状态机）：
  * - `runs` 的 queued/控制/终态与不可变授权快照仍是 Run 的业务事实；

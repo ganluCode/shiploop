@@ -62,7 +62,7 @@ it('[case:p05-f008-trusted-index-files] indexes every required Feature by comple
 
 it('[case:p05-f008-manual-live-separation] documents temporary A/B/C resources and preserves offline/live/manual boundaries', () => {
   const entry = json(join(ROOT, 'acceptance/p05.entry.json'));
-  const contract = readFileSync(join(ROOT, 'docs/p05-acceptance.md'), 'utf8');
+  const contract = readFileSync(join(ROOT, 'docs/phases/p05/p05-acceptance.md'), 'utf8');
   const walkthrough = readFileSync(join(ROOT, 'docs/acceptance/p05-owner-walkthrough.md'), 'utf8');
 
   expect(entry.explicitOptions.fullRegression).toBe('--full-regression');

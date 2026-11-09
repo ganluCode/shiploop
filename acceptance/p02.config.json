@@ -98,7 +98,7 @@
     "title": "P02-4 P02 双客户端与初始化验收",
     "scope": "FR-1/FR-2 双客户端唯一 Host、共享项目/配置、授权基线、重复初始化/命令重放/源文件保留/认证拒绝/客户端退出/重启查询/基线失败与阶段控制检查（macOS 正式范围）",
     "version": "0.2",
-    "contractDoc": "docs/p02-4-acceptance-contract.md"
+    "contractDoc": "docs/phases/p02/p02-4-acceptance-contract.md"
   },
   "priorBaselines": [
     {

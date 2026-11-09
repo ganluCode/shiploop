@@ -2,7 +2,7 @@
  * F-007（P02-3）SQLite 基线窄存储适配器（adapters 层）：迁移 v4 四表的
  * 读取端口与原子命令事务原语实现。
  *
- * 契约依据：docs/p02-3-onboarding-contract.md §6.2/§8/§9.2/§10/§13；
+ * 契约依据：docs/phases/p02/p02-3-onboarding-contract.md §6.2/§8/§9.2/§10/§13；
  * 端口语义基线见 ports/baseline-store.ts（本模块实现同组行为断言的
  * 真实 SQLite 版本，测试见 test/modules/storage/sqlite/sqlite-baseline-store.test.ts）。
  *

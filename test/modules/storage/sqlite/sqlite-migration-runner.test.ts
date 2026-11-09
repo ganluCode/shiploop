@@ -208,6 +208,8 @@ describe('F-005 迁移执行与记录', () => {
           'execution_stop_operations',
           'feature_closeouts',
           'feature_dependencies',
+          'feature_document_sources',
+          'feature_repair_attempts',
           'feature_resource_leases',
           'features',
           'git_agent_repair_attempts',
@@ -216,10 +218,12 @@ describe('F-005 迁移执行与记录', () => {
           'git_integration_commands',
           'git_integration_observations',
           'git_operations',
+          'git_pushes',
           'global_settings',
           'integration_plans',
           'integration_predecessor_snapshots',
           'maintenance_occupancy',
+          'managed_document_sources',
           'managed_workspaces',
           'memory_records',
           'notification_deliveries',
@@ -310,7 +314,7 @@ describe('F-005 迁移执行与记录', () => {
         expect(listUserTables(session)).toContain('state_events');
         // 既有数据逐字段保留（中文多字节、labels JSON、配置 payload）。
         expect(projectRows(session)).toEqual(before.projects);
-        expect(globalSettingsPayload(session)).toBe(before.payload);
+        expect(JSON.parse(globalSettingsPayload(session)!)).toEqual({ ...JSON.parse(before.payload!), locale: 'en-US' });
 
         const rows = migrationRows(session);
         expect(rows).toHaveLength(BASE_MIGRATIONS.length);

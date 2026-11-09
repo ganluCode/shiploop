@@ -1,6 +1,6 @@
 /**
  * P01-4 / F-003 P01 持久化闭环场景（检查 `P01-FR1-NORMAL` / `P01-FR1-REOPEN`，
- * 契约见 docs/p01-4-acceptance-contract.md §2.1）：经**真实 Core 应用服务**在
+ * 契约见 docs/phases/p01/p01-4-acceptance-contract.md §2.1）：经**真实 Core 应用服务**在
  * F-002 夹具的临时数据根上注册真实 Git 仓库、写全局默认与项目覆盖配置、发布
  * 固定正文制品；关闭全部连接后以**新的装配实例**打开同一数据根，逐字段核对
  * 项目/绑定/元数据、配置 schemaVersion/payload/revision/有效配置来源与制品

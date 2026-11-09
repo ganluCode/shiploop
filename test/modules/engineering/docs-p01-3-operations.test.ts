@@ -1,6 +1,6 @@
 /**
- * F-014 文档核验：`docs/p01-3-operations.md` 的说明与示例必须与真实可调用接口一致
- * （编译检查 + 运行断言），`docs/p01-4-handoff.md` 必须指向真实可复跑入口。
+ * F-014 文档核验：`docs/phases/p01/p01-3-operations.md` 的说明与示例必须与真实可调用接口一致
+ * （编译检查 + 运行断言），`docs/phases/p01/p01-4-handoff.md` 必须指向真实可复跑入口。
  *
  * 定位：F-014 只交付文档；为避免文档与实现漂移，本套件在真实临时 Git 仓库 + 真实临时
  * 数据根上，用公开装配入口 `openCoreApplication` 跑通「注册 → 查询 → CAS 编辑 →
@@ -38,8 +38,8 @@ import { commitAll, initGitRepo } from '../../helpers/git-repo.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OPERATIONS_DOC_PATH = 'docs/p01-3-operations.md';
-const HANDOFF_DOC_PATH = 'docs/p01-4-handoff.md';
+const OPERATIONS_DOC_PATH = 'docs/phases/p01/p01-3-operations.md';
+const HANDOFF_DOC_PATH = 'docs/phases/p01/p01-4-handoff.md';
 const REPORT_DOC_PATH = 'docs/acceptance/p01-3-f014-report.md';
 const operationsDoc = readFileSync(resolve(REPO_ROOT, OPERATIONS_DOC_PATH), 'utf-8');
 const handoffDoc = readFileSync(resolve(REPO_ROOT, HANDOFF_DOC_PATH), 'utf-8');

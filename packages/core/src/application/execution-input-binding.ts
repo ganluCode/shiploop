@@ -292,7 +292,9 @@ export function createExecutionInputBindingService(
       attempt.executionVersion !== claimAttempt.executionVersion ||
       attempt.inputDigest !== claimAttempt.inputDigest ||
       attempt.inputRef !== claimAttempt.inputRef ||
-      attempt.leaseUntilUtcMs !== claimAttempt.leaseUntilUtcMs;
+      // A receipt freezes claim identity, not the renewable ownership deadline.
+      // Only the authoritative same-generation lease may extend that deadline.
+      attempt.leaseUntilUtcMs < claimAttempt.leaseUntilUtcMs;
     if (identityMismatch) {
       return reject('input', 'claim_identity_mismatch', '认领回执与权威 Attempt 身份不一致');
     }
@@ -379,7 +381,8 @@ export function createExecutionInputBindingService(
       leaseOk =
         workspaceLease !== undefined &&
         workspaceLease.owner === attempt.id &&
-        workspaceLease.state === 'held';
+        snapshot.leases.length === 3 &&
+        snapshot.leases.every(lease => lease.state === 'held' && lease.leaseUntilUtcMs > nowMs());
     } catch {
       leaseOk = false;
     }

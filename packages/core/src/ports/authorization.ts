@@ -1,7 +1,7 @@
 /**
  * F-005 可信 principal 授权契约（ports 纯契约层：类型、常量与纯判定函数）。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md §4：
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md §4：
  * - §4.1 principal 的唯一可信来源是 Host 可信装配（生产固定 local-owner）或
  *   F-004 可信测试装配（受限主体）；本模块只接收显式传入的结构，绝不从
  *   HTTP 请求、argv、env 或请求体取身份，产品代码不存在创建/提权主体的
@@ -438,7 +438,7 @@ export function authorizeSnapshot(
 }
 
 /* ------------------------------------------------------------------ *
- * P02-3 §4.3 静态接入授权（docs/p02-3-onboarding-contract.md）
+ * P02-3 §4.3 静态接入授权（docs/phases/p02/p02-3-onboarding-contract.md）
  * ------------------------------------------------------------------ */
 
 /**

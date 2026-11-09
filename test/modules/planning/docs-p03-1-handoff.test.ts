@@ -1,5 +1,5 @@
 /**
- * F-011 文档守护：P03-1 交接文档（docs/p03-1-handoff.md）核对。
+ * F-011 文档守护：P03-1 交接文档（docs/phases/p03/p03-1-handoff.md）核对。
  *
  * 依据 F-011 验收标准 4/5 逐项守护：
  * 1. 交接记录实现范围（F-001 ~ F-011 逐项）、输入文档版本（PRD 0.3 / 共同执行约束 /
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const HANDOFF_PATH = 'docs/p03-1-handoff.md';
+const HANDOFF_PATH = 'docs/phases/p03/p03-1-handoff.md';
 const README_PATH = 'README.md';
 
 function readRepo(relativePath: string): string {
@@ -62,12 +62,12 @@ const F011_FIXTURE_FILES: readonly string[] = [
   'test/modules/planning/p03-1-integration-regression.test.ts',
 ];
 
-describe('F-011 交接文档守护（docs/p03-1-handoff.md）', () => {
+describe('F-011 交接文档守护（docs/phases/p03/p03-1-handoff.md）', () => {
   it('文档存在且登记于 README 文档索引', () => {
     const handoff = readRepo(HANDOFF_PATH);
     expect(handoff).toContain('# P03-1 领域归属与确定性计划导入 — 交接');
     const readme = readRepo(README_PATH);
-    expect(readme).toContain('docs/p03-1-handoff.md');
+    expect(readme).toContain('docs/phases/p03/p03-1-handoff.md');
   });
 
   it('记录实现范围（F-001 ~ F-011 逐项）、输入文档版本与基线/代码 commit', () => {

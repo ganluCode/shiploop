@@ -1,6 +1,6 @@
 /**
  * F-010 QueryService（application 层）：授权项目/配置查询、一致读视图快照
- * 水位与分页事件读取（docs/p02-2-commands-events-contract.md §4/§7/§8/§9.3）。
+ * 水位与分页事件读取（docs/phases/p02/p02-2-commands-events-contract.md §4/§7/§8/§9.3）。
  *
  * 不变量：
  * - 只依赖 ports 窄接口（AuthorizedProjectReadStore / ConsistentSnapshotStore /

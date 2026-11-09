@@ -398,6 +398,7 @@ export interface CreatePhaseInput {
 
 /** feature.plan.import 输入（expectedRevision 为目标 Phase 聚合 CAS）。 */
 export interface ImportFeaturePlanInput {
+  readonly documents?: readonly { readonly path: string; readonly role: 'prd' | 'design' | 'architecture' | 'product' | 'index' }[];
   readonly projectId: string;
   readonly phaseId: string;
   readonly expectedRevision: number;
@@ -631,6 +632,7 @@ export interface StartExecutionInput {
  * 提案；深校验在 Core，客户端只做严格输入形态与未知键拒绝）。
  */
 export interface StartPlanningInput {
+  readonly managedDocuments?: true;
   readonly projectId: string;
   readonly phaseId: string;
   readonly featureId: string;
@@ -640,6 +642,17 @@ export interface StartPlanningInput {
   readonly strategy: { readonly approvalMode: 'manual'; readonly taskLimit: number | null };
   readonly budget: unknown;
   readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+export interface RetirePlanningInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly contextId: string;
+  readonly candidateId: string;
+  readonly runId: string;
+  readonly expectedRevision: number;
+  readonly workspaceRevision: number | null;
   readonly commandId?: string;
 }
 
@@ -846,6 +859,9 @@ export interface ApprovePhaseDeliveryInput extends FinalizeBatchInput {
 
 /** HostClient 应用面方法集（connectToHost 返回对象的一部分）。 */
 export interface HostClientApplication {
+  getProjectDocuments(projectId: string, featureId?: string): Promise<{ schemaVersion: 1; projectId: string; workingDirectory: string;
+    featureId?: string; documents?: readonly { path: string; role: string }[] }>;
+  writeProjectDocument(projectId: string, input: { path: string; content: string; expectedHash?: string }): Promise<{ path: string; sha256: string; status: string }>;
   searchKnowledge(projectId: string, input: KnowledgeSearchInput): Promise<KnowledgeSearchResultSet>;
   readKnowledge(projectId: string, input: Omit<KnowledgeReadInput, 'projectId'>): Promise<KnowledgeReadResult>;
   searchMemories(projectId: string, input: MemorySearchInput): Promise<MemorySearchResultSet>;
@@ -1148,6 +1164,7 @@ export interface HostClientApplication {
    * 重放，连接丢失先查原 commandId 回执）。
    */
   startPlanning(input: StartPlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  retirePlanning(input: RetirePlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /**
    * P05-1 / F-012 planning.candidate.decide：候选人工批准/拒绝（摘要绑定 +
    * Feature revision CAS；批准要求规划 Run 已 succeeded，由 Core 重核）。
@@ -1679,7 +1696,7 @@ function validateSnapshotScope(operation: HostOperation, scope: SettingsScope): 
  * ------------------------------------------------------------------ */
 
 const CREATE_PHASE_INPUT_KEYS = ['projectId', 'id', 'title', 'description', 'labels', 'commandId'] as const;
-const IMPORT_PLAN_INPUT_KEYS = ['projectId', 'phaseId', 'expectedRevision', 'plan', 'commandId'] as const;
+const IMPORT_PLAN_INPUT_KEYS = ['projectId', 'phaseId', 'expectedRevision', 'plan', 'commandId', 'documents'] as const;
 const UPDATE_PLAN_LABELS_INPUT_KEYS = ['projectId', 'entityType', 'id', 'expectedRevision', 'labels', 'commandId'] as const;
 const REVISE_PLAN_INPUT_KEYS = ['projectId', 'featureId', 'expectedRevision', 'plan', 'commandId'] as const;
 const PLAN_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
@@ -1757,7 +1774,7 @@ const INTEGRATION_START_INPUT_KEYS = [...FEATURE_VERIFICATION_CONTINUE_INPUT_KEY
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
 const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'phaseId', 'featureIds', 'budget', 'commandId'] as const;
 // P05-1 / F-012：规划命令/查询输入键冻结（未知键拒绝；深校验在 Core）。
-const START_PLANNING_INPUT_KEYS = ['projectId', 'phaseId', 'featureId', 'requirementRefs', 'constraints', 'acceptance', 'strategy', 'budget', 'expectedRevision', 'commandId'] as const;
+const START_PLANNING_INPUT_KEYS = ['projectId', 'phaseId', 'featureId', 'requirementRefs', 'constraints', 'acceptance', 'strategy', 'budget', 'expectedRevision', 'commandId', 'managedDocuments'] as const;
 const DECIDE_PLANNING_CANDIDATE_INPUT_KEYS = ['projectId', 'candidateId', 'candidateDigest', 'decision', 'reason', 'expectedRevision', 'commandId'] as const;
 const LIST_PLANNING_CONTEXTS_INPUT_KEYS = ['featureId', 'limit', 'cursor'] as const;
 const EXECUTION_BUDGET_REVISE_INPUT_KEYS = ['projectId', 'batchId', 'expectedRevision', 'budget', 'reason', 'commandId'] as const;
@@ -3002,6 +3019,30 @@ export function createHostClientApplication(context: AppClientContext): HostClie
   }
 
   return {
+    async getProjectDocuments(projectId, featureId) {
+      const op = 'documents.locations';
+      const id = requireProjectId(op, projectId);
+      const value = await getJson(op, `${PROJECTS_ROUTE}/${id}/documents${featureId === undefined ? '' : `?featureId=${encodeURIComponent(requireStableIdInput(op, featureId, 'featureId'))}`}`) as
+        { schemaVersion: 1; projectId: string; workingDirectory: string; featureId?: string; documents?: { path: string; role: string }[] };
+      if (!value || value.schemaVersion !== 1 || value.projectId !== id || typeof value.workingDirectory !== 'string'
+        || !value.workingDirectory.startsWith('/') || Object.keys(value).sort().join() !== (featureId === undefined
+          ? 'projectId,schemaVersion,workingDirectory' : 'documents,featureId,projectId,schemaVersion,workingDirectory')
+        || featureId !== undefined && (value.featureId !== featureId || !Array.isArray(value.documents))) throw new HostProtocolError('response_malformed', op);
+      return value;
+    },
+    async writeProjectDocument(projectId, input) {
+      const op = 'documents.write';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const response = await requestLoopbackJson({ port, token, method: 'POST', path: `${PROJECTS_ROUTE}/${id}/documents/write`,
+        operation: op, body: input, connectTimeoutMs: context.connectMs, overallTimeoutMs: requestBudget(), maxResponseBytes: MAX_APP_BODY_BYTES });
+      if (response.statusCode !== 200) throw mapErrorResponse(response.statusCode, response.json, op);
+      const value = response.json as { path: string; sha256: string; status: string };
+      if (!value || value.path !== input.path || typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.sha256)
+        || !['created', 'unchanged', 'updated'].includes(value.status)
+        || Object.keys(value).sort().join() !== 'path,sha256,status') throw new HostProtocolError('response_malformed', op);
+      return value;
+    },
     async searchKnowledge(projectId, input) {
       const op = 'knowledge.search';
       context.assertOpen(op);
@@ -3594,7 +3635,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
           operation: 'feature.plan.import',
           scope: { kind: 'project', projectId },
           expectedRevision,
-          payload: { phaseId, plan: object.plan },
+          payload: { phaseId, plan: object.plan, ...(object.documents === undefined ? {} : { documents: object.documents }) },
         },
         options,
       );
@@ -4277,6 +4318,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
             acceptance,
             strategy,
             budget,
+            ...(object.managedDocuments === undefined ? {} : { managedDocuments: object.managedDocuments }),
           },
         },
         options,
@@ -4285,6 +4327,16 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         throw new HostProtocolError('response_malformed', 'commands.submit', undefined, { details: { reason: 'planning_start_receipt_invalid' } });
       }
       return receipt;
+    },
+
+    async retirePlanning(input: RetirePlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input,
+        ['projectId', 'featureId', 'contextId', 'candidateId', 'runId', 'expectedRevision', 'workspaceRevision', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'planning.retire',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: { featureId: object.featureId, contextId: object.contextId, candidateId: object.candidateId,
+          runId: object.runId, workspaceRevision: object.workspaceRevision } }, options);
     },
 
     async decidePlanningCandidate(

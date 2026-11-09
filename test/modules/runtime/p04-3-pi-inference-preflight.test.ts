@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai';
 import { createPiInferencePreflightAdapter } from '../../../packages/host/src/runtime/pi-inference-preflight.ts';
@@ -64,7 +65,7 @@ it.each(['blank', 'length', 'toolUse', 'error', 'delta-only', 'no-start', 'model
     };
     const adapter = createPiInferencePreflightAdapter([{ selection, isolation: 'inference_only', resolve: async () => ({ model, stream }) }]);
     const records: unknown[] = [];
-    const service = createRuntimeInferencePreflight({ policy: { enabled: true }, adapter,
+    const service = createRuntimeInferencePreflight({ promptTemplates: testPromptTemplates, policy: { enabled: true }, adapter,
       authorize: async () => true, audit: async record => { records.push(record); } });
     expect((await service.check(selection)).dispatchAllowed).toBe(false);
     expect(JSON.stringify(records)).not.toContain('sk-DO-NOT-PERSIST');

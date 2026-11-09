@@ -20,9 +20,9 @@
 
 F-007 新增/更新的主要文件：
 
-- `docs/p08-1-support-matrix.md`：平台、工具链、协议、Schema、分层状态与缺口。
+- `docs/phases/p08/p08-1-support-matrix.md`：平台、工具链、协议、Schema、分层状态与缺口。
 - `CHANGELOG.md`：0.0.0 未发布变更说明。
-- `docs/p08-1-artifact-verification.md`：pack/制品检查入口、输出、状态与 Phase 缺口。
+- `docs/phases/p08/p08-1-artifact-verification.md`：pack/制品检查入口、输出、状态与 Phase 缺口。
 - `docs/acceptance/p08-1-release-manifest.md`：发布清单模板与字段/状态语义。
 - `acceptance/p08-1.release-manifest.json`：P08-1 实际发布清单（机器可读）。
 - `docs/acceptance/p08-1-delivery-report.md`：本报告。

@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -58,7 +59,7 @@ function profileSnapshot(
 }
 
 function buildExecutionInput(profile: ReturnType<typeof profileSnapshot>) {
-  return createContextBuilder({
+  return createContextBuilder({ promptTemplates: testPromptTemplates,
     budget: {
       maxPromptBytes: 100_000,
       maxRequiredSnapshotBytes: 50_000,

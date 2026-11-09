@@ -2,7 +2,7 @@
  * P01-4 / F-007 版本化 P01 阶段验收报告、证据清单与严格结果聚合器
  * （开发验收工具，不是 ShipLoop 产品能力，不进 packages/，不提供 Host/CLI 接口）。
  *
- * 依据 `docs/p01-4-acceptance-contract.md`（F-001）冻结的约定实现：
+ * 依据 `docs/phases/p01/p01-4-acceptance-contract.md`（F-001）冻结的约定实现：
  * - 14 个必需检查 ID 在此以机器可读形式固定（`P01_REQUIRED_CHECKS`，顺序即报告与聚合的
  *   固定顺序）；未知或重复的检查 ID 一律拒绝，不得聚合为通过；
  * - 每个检查结果只有 pass / fail / not_run 三态；未提交结果、启动失败、超时与被跳过的

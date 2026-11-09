@@ -1,7 +1,7 @@
 /**
  * F-002 Core 应用命令契约（纯模块）运行时校验测试。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md
  * - §3.1 线消息 schemaVersion=3（P02-3/F-006 起；与发现/线协议/配置 payload 版本独立）；
  * - §4.2 九项能力冻结清单与 local-owner；
  * - §5.1 命令信封三态 scope、expectedRevision 单一权威来源；
@@ -212,6 +212,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // 更新类 expectedRevision=目标 Batch 当前 budget_revision；仅增额或延期）。
       'execution.budget.revise',
       'planning.start',
+      'planning.retire',
       'planning.candidate.decide',
       // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
       // 创建类不携带 expectedRevision；预览绑定在 payload 内由应用层重核）。
@@ -278,6 +279,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.budget.revise': { scopeKind: 'project', mutation: 'update', capability: 'execution.budget.revise' },
       'planning.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'planning.retire': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'planning.candidate.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'workspace.discard': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
       'workspace.discard.preview': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },

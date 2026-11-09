@@ -43,9 +43,30 @@ async function readReport(f: BudgetFixture): Promise<FeatureExecutionReport> {
   return await reportQueries(f).getFeatureReport(f.owner, { projectId: f.projectId, featureId: f.featureId });
 }
 function render(report: FeatureExecutionReport) {
-  const view = buildFeatureReportTextView(report);
+  const view = buildFeatureReportTextView(report, 'zh-CN');
   return { view, text: formatFeatureReportTextView(view) };
 }
+
+test('report copy defaults to English with Chinese selection and unchanged raw evidence', async () => {
+  const f = await fixture();
+  insertApprovalItem(f, { id: 'locale-approval', kind: 'approval', description: '保留原文：需要负责人确认' });
+  const report = await readReport(f);
+  const before = JSON.stringify(report);
+  const english = buildFeatureReportTextView(report);
+  const chinese = buildFeatureReportTextView(report, 'zh-CN');
+  const en = formatFeatureReportTextView(english), zh = formatFeatureReportTextView(chinese);
+  expect(en).toContain('# ShipLoop Feature Execution Report');
+  expect(en).not.toContain('## 最终检查');
+  expect(zh).toContain('## 最终检查');
+  for (const text of [en, zh]) {
+    expect(text).toContain('保留原文：需要负责人确认');
+    expect(text).toContain(report.feature.featureId);
+    expect(text).toContain('automatic=false');
+  }
+  expect(english.taskRows).toEqual(chinese.taskRows);
+  expect(english.usage).toEqual(chinese.usage);
+  expect(JSON.stringify(report)).toBe(before);
+});
 function insertApprovalItem(f: BudgetFixture, options: {
   id: string; kind: 'block' | 'approval'; description: string; planDigest?: string;
 }) {

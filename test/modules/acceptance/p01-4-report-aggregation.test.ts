@@ -1,7 +1,7 @@
 /**
  * P01-4 / F-007 版本化 P01 阶段报告、证据清单与严格结果聚合器回归。
  *
- * 承接契约（docs/p01-4-acceptance-contract.md §2.1）中的检查
+ * 承接契约（docs/phases/p01/p01-4-acceptance-contract.md §2.1）中的检查
  * `P01-PHASE-NOT-RUN`（必需检查未运行不得聚合为通过）与
  * `P01-PHASE-REPORT`（报告完整性、证据 path/hash/size 可验证）：
  * - 冻结的机器可读必需检查清单与契约文档一致；
@@ -52,7 +52,7 @@ import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CONTRACT_DOC = readFileSync(
-  resolve(REPO_ROOT, 'docs/p01-4-acceptance-contract.md'),
+  resolve(REPO_ROOT, 'docs/phases/p01/p01-4-acceptance-contract.md'),
   'utf-8',
 );
 const SYNTHETIC_SECRET = 'keychain://P01-4-TOP-SECRET-SENTINEL';

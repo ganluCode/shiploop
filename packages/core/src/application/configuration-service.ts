@@ -6,7 +6,7 @@
  *
  * 设计依据：core-design/03 §1-3（短事务、CAS、端口先校验后持久化）、
  * core-design/06 §3 / 11 §3.1（当前配置语义与凭据引用卫生）与
- * docs/p01-3-application-contract.md §4.4/§5（F-008/F-009/F-010 定案）。
+ * docs/phases/p01/p01-3-application-contract.md §4.4/§5（F-008/F-009/F-010 定案）。
  *
  * 不变量：
  * - 只依赖 ports 窄接口（StateStore / RuntimeCapabilityCatalog）与
@@ -57,6 +57,7 @@ import type {
   ProjectStrategiesV1,
   RetentionPolicyV2,
   RuntimeStrategyV1,
+  ConfiguredRuntimeStrategy,
   SecurityPolicyV2,
   SettingsPayload,
   SettingsPoliciesV2,
@@ -94,6 +95,8 @@ export interface ExportedStrategy {
   readonly model: string;
   readonly credentialRef?: string;
   readonly endpointRef?: string;
+  readonly fallbacks?: readonly ExportedStrategy[];
+  readonly fallbackPolicy?: ConfiguredRuntimeStrategy['fallbackPolicy'];
 }
 
 export interface ExportedStrategies {
@@ -104,6 +107,11 @@ export interface ExportedStrategies {
 }
 
 export interface ExportedPolicies {
+  readonly feishu?: SettingsPoliciesV2['feishu'];
+  readonly piAgent?: SettingsPoliciesV2['piAgent'];
+  readonly piExecution?: SettingsPoliciesV2['piExecution'];
+  readonly deliveryPolicy?: SettingsPoliciesV2['deliveryPolicy'];
+  readonly featureAutoFix?: SettingsPoliciesV2['featureAutoFix'];
   readonly executionLimits?: ExecutionLimitsPolicyV2;
   readonly verification?: VerificationPolicyV2;
   readonly securityPolicy?: SecurityPolicyV2;
@@ -113,6 +121,7 @@ export interface ExportedPolicies {
 
 /** 导出中的当前值投影：逐字段白名单，只含确认的非敏感配置与引用。 */
 export interface ExportedCurrentSettings {
+  readonly locale?: import('../ports/locale.js').WorkflowLocale;
   readonly schemaVersion: number;
   readonly revision: number;
   readonly strategies?: ExportedStrategies;
@@ -133,7 +142,7 @@ export interface ExportedSettings {
 }
 
 /** 单条策略的导出投影（字段白名单；引用原样保留、不解析）。 */
-function exportStrategy(strategy: RuntimeStrategyV1): ExportedStrategy {
+function exportStrategy(strategy: ConfiguredRuntimeStrategy): ExportedStrategy {
   const result: {
     runtime: string;
     provider: string;
@@ -147,7 +156,9 @@ function exportStrategy(strategy: RuntimeStrategyV1): ExportedStrategy {
   if (strategy.endpointRef !== undefined) {
     result.endpointRef = strategy.endpointRef;
   }
-  return result;
+  return { ...result,
+    ...(strategy.fallbacks === undefined ? {} : { fallbacks: strategy.fallbacks.map(exportStrategy) }),
+    ...(strategy.fallbackPolicy === undefined ? {} : { fallbackPolicy: { ...strategy.fallbackPolicy } }) };
 }
 
 function exportStrategies(strategies: ProjectStrategiesV1 | undefined): ExportedStrategies | undefined {
@@ -196,11 +207,21 @@ function exportPolicies(policies: SettingsPoliciesV2 | undefined): ExportedPolic
     return undefined;
   }
   const result: {
+    feishu?: SettingsPoliciesV2['feishu'];
+    piAgent?: SettingsPoliciesV2['piAgent'];
+    piExecution?: SettingsPoliciesV2['piExecution'];
+    deliveryPolicy?: SettingsPoliciesV2['deliveryPolicy'];
+    featureAutoFix?: SettingsPoliciesV2['featureAutoFix'];
     executionLimits?: ExecutionLimitsPolicyV2;
     verification?: VerificationPolicyV2;
     securityPolicy?: SecurityPolicyV2;
     retentionPolicy?: RetentionPolicyV2;
   } = {};
+  if (policies.piAgent !== undefined) result.piAgent = { ...policies.piAgent };
+  if (policies.feishu !== undefined) result.feishu = { ...policies.feishu };
+  if (policies.piExecution !== undefined) result.piExecution = { ...policies.piExecution };
+  if (policies.deliveryPolicy !== undefined) result.deliveryPolicy = { ...policies.deliveryPolicy };
+  if (policies.featureAutoFix !== undefined) result.featureAutoFix = { ...policies.featureAutoFix };
   if (policies.executionLimits !== undefined) {
     result.executionLimits =
       policies.executionLimits.envAllowlist === undefined
@@ -226,7 +247,9 @@ function exportCurrentSettings(record: SettingsReadResult): ExportedCurrentSetti
     revision: number;
     strategies?: ExportedStrategies;
     policies?: ExportedPolicies;
+    locale?: import('../ports/locale.js').WorkflowLocale;
   } = { schemaVersion: record.schemaVersion, revision: record.revision };
+  if (record.payload.locale !== undefined) result.locale = record.payload.locale;
   const strategies = exportStrategies(record.payload.strategies);
   if (strategies !== undefined) {
     result.strategies = strategies;

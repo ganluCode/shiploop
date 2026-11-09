@@ -1,7 +1,7 @@
 /**
  * F-010 授权查询响应形状与窄读取端口（ports 纯契约层）。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md §7（查询与分页）与 §8
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md §7（查询与分页）与 §8
  * （快照与水位）：
  * - §7.2 查询响应字段集冻结：projects.list → {schemaVersion:2, scope:
  *   'project-list', records, nextCursor, limit}；projects.get → {project,
@@ -161,6 +161,7 @@ export function toPublicPhaseRecord(phase: PhaseRecord): PublicPhaseRecord {
  * （策略细节经 Task 查询面读取，避免命令结果膨胀）。
  */
 export interface PublicFeatureRecord {
+  readonly branchName?: string | null;
   readonly id: string;
   readonly projectId: string;
   readonly phaseId: string;
@@ -178,6 +179,7 @@ export interface PublicFeatureRecord {
 
 export function toPublicFeatureRecord(feature: FeatureRecord): PublicFeatureRecord {
   return {
+    ...(feature.branchName === undefined ? {} : { branchName: feature.branchName }),
     id: feature.id,
     projectId: feature.projectId,
     phaseId: feature.phaseId,
@@ -337,7 +339,7 @@ export interface ConsistentSnapshotStore {
 }
 
 /* ------------------------------------------------------------------ *
- * P02-3 §7.2 绑定查找窄端口（docs/p02-3-onboarding-contract.md）
+ * P02-3 §7.2 绑定查找窄端口（docs/phases/p02/p02-3-onboarding-contract.md）
  * ------------------------------------------------------------------ */
 
 /**
@@ -376,7 +378,7 @@ export interface BaselineQueryReadStore {
 
 /* ------------------------------------------------------------------ *
  * P03-1 / F-006 计划查询：公开形状、分页游标与窄读取端口
- * （docs/p03-1-plan-import-contract.md §6.6 查询面定案）
+ * （docs/phases/p03/p03-1-plan-import-contract.md §6.6 查询面定案）
  * ------------------------------------------------------------------ */
 
 /**
@@ -404,6 +406,7 @@ export type PlanQueryOperation = (typeof PLAN_QUERY_OPERATIONS)[number];
  * 结果共用同一转换。策略副本是导入事务固化的完整独立副本（不是动态引用）。
  */
 export interface PublicTaskRecord {
+  readonly languages: readonly string[];
   readonly id: string;
   readonly projectId: string;
   readonly featureId: string;
@@ -430,6 +433,7 @@ export function toPublicTaskRecord(task: TaskRecord): PublicTaskRecord {
     title: task.title,
     description: task.description,
     labels: [...task.labels],
+    languages: [...(task.languages ?? [])],
     status: task.status,
     complexity: task.complexity,
     acceptance: { criteria: [...task.acceptance.criteria] },

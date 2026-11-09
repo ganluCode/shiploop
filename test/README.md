@@ -39,31 +39,31 @@ test/
 - `index/phases/P03/features/P03-9/tasks/F-001.json`：单个 Task 的实际测试范围。
 - `index/phases/P03/features/P03-10/feature.json`：已登记的 P03-10 Task；包括 F-001 夹具、F-002 检查清单/配置，以及 F-003 三 Task 链诊断和受影响回归。F-003 当前检测到受控提交缺口，诊断测试通过不代表纵向交付验收或阶段通过。F-004 登记完整 Feature 报告的 SQLite 用例与既有查询回归；F-005 登记授权 Host/HostClient、正式构建 CLI 完整报告及 P01/P02 授权、分页、协议拒绝回归。F-006 登记执行报告文本视图/人工提示用例与构建 CLI 文本回归。F-007 登记持续检查失败纵向负例，以及 SQLite 竞争、累计预算、执行范围、依赖、资源锁和事件归属的 35 个精确 case。本地通过范围见各任务交接。
 
-- `index/phases/P04/features/P04-2/tasks/F-007.json`：真实临时 Host/Core 的允许、越权、幂等与重启验证，以及真实 SDK 显式资源加载、认证/推理区分和合成凭据脱敏。四个文件已本地聚焦验证，另五个回归仅登记交 Nezha；实际 manifest、权限矩阵、日志与 live `not_run` 见 [交接文档](../docs/p04-2-f007-access-integration.md)。
+- `index/phases/P04/features/P04-2/tasks/F-007.json`：真实临时 Host/Core 的允许、越权、幂等与重启验证，以及真实 SDK 显式资源加载、认证/推理区分和合成凭据脱敏。四个文件已本地聚焦验证，另五个回归仅登记交 Nezha；实际 manifest、权限矩阵、日志与 live `not_run` 见 [交接文档](../docs/phases/p04/p04-2-f007-access-integration.md)。
 
-- `index/phases/P04/features/P04-3/tasks/F-007.json`：故障路由组合矩阵、受管查询脱敏/兼容、安装 SDK 重试边界，以及分类/累计重试/备用/预检/停止与架构关联回归。实际本地日志、SDK API 边界和独立验收范围见 [故障路由交接](../docs/p04-3-f007-failure-routing-integration.md)。
+- `index/phases/P04/features/P04-3/tasks/F-007.json`：故障路由组合矩阵、受管查询脱敏/兼容、安装 SDK 重试边界，以及分类/累计重试/备用/预检/停止与架构关联回归。实际本地日志、SDK API 边界和独立验收范围见 [故障路由交接](../docs/phases/p04/p04-3-f007-failure-routing-integration.md)。
 
-- `index/phases/P04/features/P04-6/tasks/F-007.json`：跨 Attempt 恢复/累计/去重、缓存与模型归属、后台测试与并发阶段耗时，以及真实 SQLite/Host/构建 CLI 的只读、分页、授权和脱敏回归。本地通过与仅登记范围见 [P04-6 交接](../docs/p04-6-f007-cross-scenario-regressions.md)；live 保持 `not_run`。
+- `index/phases/P04/features/P04-6/tasks/F-007.json`：跨 Attempt 恢复/累计/去重、缓存与模型归属、后台测试与并发阶段耗时，以及真实 SQLite/Host/构建 CLI 的只读、分页、授权和脱敏回归。本地通过与仅登记范围见 [P04-6 交接](../docs/phases/p04/p04-6-f007-cross-scenario-regressions.md)；live 保持 `not_run`。
 
-- `index/phases/P04/features/P04-7/tasks/F-008.json`：真实三代写入进程、四层超时、Host SIGKILL 后恢复、身份/停止/flush/过期资源隔离及失败清理证据。本地新增四文件 22 项通过，原 Host-loss 兼容用例精确通过 1 项；其余回归交 Nezha。manifest、类型检查既有错误和 `not_run` 边界见 [F-008 交接](../docs/p04-7-f008-process-resource-matrix.md)。
+- `index/phases/P04/features/P04-7/tasks/F-008.json`：真实三代写入进程、四层超时、Host SIGKILL 后恢复、身份/停止/flush/过期资源隔离及失败清理证据。本地新增四文件 22 项通过，原 Host-loss 兼容用例精确通过 1 项；其余回归交 Nezha。manifest、类型检查既有错误和 `not_run` 边界见 [F-008 交接](../docs/phases/p04/p04-7-f008-process-resource-matrix.md)。
 
-- `index/phases/P04/features/P04-8/tasks/F-005.json`：恢复来源/权限/副作用政策、标准 Pi 原生写入者与档案故障、恢复水位及用量去重，组合新增真实 SQLite 记录故障/迟到结果 9 项。新增文件本地通过，其余已存在用例交 Nezha 独立复验；数据库故障不代表 Pi 使用 SQLite，范围与证据见 [F-005 矩阵](../docs/p04-8-f005-recovery-recording-matrix.md)。
+- `index/phases/P04/features/P04-8/tasks/F-005.json`：恢复来源/权限/副作用政策、标准 Pi 原生写入者与档案故障、恢复水位及用量去重，组合新增真实 SQLite 记录故障/迟到结果 9 项。新增文件本地通过，其余已存在用例交 Nezha 独立复验；数据库故障不代表 Pi 使用 SQLite，范围与证据见 [F-005 矩阵](../docs/phases/p04/p04-8-f005-recovery-recording-matrix.md)。
 
-- `index/phases/P04/features/P04-8/tasks/F-006.json`：五类控制事件（请求取消/工具取消/超时/Host 异常/Runner 强杀）、停止不确定保留占用、取消窗口迟到结果与报告证据完整性离线矩阵，组合新增真实进程+SQLite 18 项；本地通过后无遗留进程，其余取消/停止/步骤器回归交 Nezha，场景与证据见 [F-006 矩阵](../docs/p04-8-f006-control-fault-matrix.md)。
+- `index/phases/P04/features/P04-8/tasks/F-006.json`：五类控制事件（请求取消/工具取消/超时/Host 异常/Runner 强杀）、停止不确定保留占用、取消窗口迟到结果与报告证据完整性离线矩阵，组合新增真实进程+SQLite 18 项；本地通过后无遗留进程，其余取消/停止/步骤器回归交 Nezha，场景与证据见 [F-006 矩阵](../docs/phases/p04/p04-8-f006-control-fault-matrix.md)。
 
-- `index/phases/P04/features/P04-8/tasks/F-009.json`：live 授权/零调用、预算、定向检查/Git 交付、证据水位和凭据边界；真实 SDK 在离线 transport 下核对工具循环、401 与取消。阶段入口/报告和既有 SDK/认证回归交 Nezha；真实模型、Core 业务闭环和外部工具进程保持 `not_run`，见 [live 工具说明](../docs/p04-8-f009-live-entry.md)。
+- `index/phases/P04/features/P04-8/tasks/F-009.json`：live 授权/零调用、预算、定向检查/Git 交付、证据水位和凭据边界；真实 SDK 在离线 transport 下核对工具循环、401 与取消。阶段入口/报告和既有 SDK/认证回归交 Nezha；真实模型、Core 业务闭环和外部工具进程保持 `not_run`，见 [live 工具说明](../docs/phases/p04/p04-8-f009-live-entry.md)。
 
-- `index/phases/P04/features/P04-8/feature.json`：F-001 至 F-010 的完整 Task 索引目录，仅作为 Feature 去重选择。F-010 新增干净临时 Git 项目的六种最终接线场景与交付守护；既有步骤器/入口/报告/live 回归交 Nezha。默认无模型/网络调用，不递归启动全量或阶段。版本、实际命令与退出码见 [交付报告](../docs/p04-8-f010-delivery-report.md)，人工阶段及真实 live、签署分别保持独立门槛。
+- `index/phases/P04/features/P04-8/feature.json`：F-001 至 F-010 的完整 Task 索引目录，仅作为 Feature 去重选择。F-010 新增干净临时 Git 项目的六种最终接线场景与交付守护；既有步骤器/入口/报告/live 回归交 Nezha。默认无模型/网络调用，不递归启动全量或阶段。版本、实际命令与退出码见 [交付报告](../docs/phases/p04/p04-8-f010-delivery-report.md)，人工阶段及真实 live、签署分别保持独立门槛。
 
 - `index/phases/P04/features/P04-9/tasks/F-001.json`：Run 级持久派发认领与单执行槽位（迁移 v33）。
   覆盖新端口契约、真实临时 SQLite 约束/升级/回滚/高版本拒写、Drizzle 与迁移对齐、迁移执行器，
   以及因新增迁移而维护的 P03-4/P03-6/P04-5 版本断言；七文件全部本地定向通过，模型、阶段全量与
-  live 保持 `not_run`，范围见 [F-001 契约](../docs/p04-9-f001-dispatch-slot-contract.md)。
+  live 保持 `not_run`，范围见 [F-001 契约](../docs/phases/p04/p04-9-f001-dispatch-slot-contract.md)。
 
 - `index/phases/P04/features/P04-9/tasks/F-002.json`：Run 持久入队（迁移 v34）。
   覆盖入队契约与命令路径原子性/幂等/守卫/回滚/唤醒、v34 约束与 v33→v34 升级，
   以及受影响的启动/重试/resume/仅收尾与迁移版本断言。新增两文件本地 14 项通过，
-  其余登记回归见 [F-002 交接](../docs/p04-9-f002-persistent-enqueue.md)；Host 纵向
+  其余登记回归见 [F-002 交接](../docs/phases/p04/p04-9-f002-persistent-enqueue.md)；Host 纵向
   收尾回归因本 workspace 未构建 Host 原生写入锁而无法运行（与本 Task 无关），
   模型、阶段全量与 live 保持 `not_run`。
 
@@ -72,46 +72,46 @@ test/
   owner、旧 owner/version 与伪造释放围栏、到期只隔离不回收、容量 >1/0/负数/非整数
   与生产并发配置 fail-closed、槽位不改写三组租约/基线/Git 事实，以及项目/工作区/
   Git 短锁既有回归。新增文件本地 8 项通过；三文件索引见
-  [F-003 交接](../docs/p04-9-f003-execution-slot.md)。`p03-4-task-dag`/`p03-4-task-claim`
+  [F-003 交接](../docs/phases/p04/p04-9-f003-execution-slot.md)。`p03-4-task-dag`/`p03-4-task-claim`
   的迁移版本硬编码断言在开工基线即失败（v33/v34 追加后未更新），未纳入本 Task 范围。
 
 - `index/phases/P04/features/P04-9/tasks/F-004.json`：Run 归属/槽位与 Task claim 同事务衔接、
   回执持久关联、正常/返工/备用启动围栏。前七文件本地定向通过，新增派发文件 20 项；
   后三文件交 Nezha 独立复验。首次独立复验的预算迁移旧版本断言已定向修复，索引范围不缩减。
   事务边界、故障证据和后续生命周期范围见
-  [F-004 交接](../docs/p04-9-f004-atomic-dispatch-claim.md)。
+  [F-004 交接](../docs/phases/p04/p04-9-f004-atomic-dispatch-claim.md)。
 
 - `index/phases/P04/features/P04-9/tasks/F-005.json`：有界持久补扫与 Work 组合根。
   覆盖派发意图/续跑 Run 的 keyset 分页、稳定游标、重建调度器补扫、同 Run 两 Task
   复用同一认领/槽位、Runtime completed 不等于 passed、finalization-only 准入与
   handoff 幂等、启动门控与关闭。六文件本地定向通过（新增 6 项）；Host 纵向因本
   workspace 未构建原生写入锁而保持 `not_run`，范围与证据见
-  [F-005 交接](../docs/p04-9-f005-persistent-rescan.md)。
+  [F-005 交接](../docs/phases/p04/p04-9-f005-persistent-rescan.md)。
 - `index/phases/P04/features/P04-9/tasks/F-006.json`：暂停/取消接入派发与槽位生命周期。
   覆盖暂停即时阻止认领、排队控制不启动 Runner、补扫不复活控制状态、终态/暂停/取消
   的安全结算、停止不确定与持久结算失败保留/隔离、owner/认领版本/Attempt 围栏下的
   迟到结果与重复结算、显式继续追加 resume 代次、心跳续租与查询解释。新增 8 项本地
   通过；既有暂停/取消迁移版本断言按当前迁移清单派生后本地通过。范围与证据见
-  [F-006 交接](../docs/p04-9-f006-dispatch-control-settlement.md)。
+  [F-006 交接](../docs/phases/p04/p04-9-f006-dispatch-control-settlement.md)。
 
 - `index/phases/P04/features/P04-9/tasks/F-007.json`：启动恢复核对 Run 认领/槽位、
   Attempt/回执/invocation 与旧资源组；覆盖四类崩溃窗口、快照漂移、恢复事务回滚、
   旧 owner 围栏、显式恢复占用/原 deadline 和旧库兼容及时钟回退。新增三文件本地 21 项通过，
   既有恢复/显式恢复文件及真实 Host 强杀用例有定向证据；其余索引范围交 Nezha。
-  实际日志、进程清理与边界见 [F-007 交接](../docs/p04-9-f007-dispatch-startup-recovery.md)。
+  实际日志、进程清理与边界见 [F-007 交接](../docs/phases/p04/p04-9-f007-dispatch-startup-recovery.md)。
 
 - `index/phases/P04/features/P04-9/tasks/F-008.json`：Core 派发队列与执行槽位只读投影。
   覆盖展示状态派生、容量/隔离/租约阻塞原因、Runtime 未装配与容量限制区分、跨项目
   槽位摘要、稳定分页与跨项目/跨根游标拒绝、授权/损坏行 fail-closed，以及真实 SQLite
   查询前后事实不变和重开一致。新增 8 项本地通过；既有调度/控制恢复查询、派发契约、
   单槽位与计划分页文件本地通过。范围与证据见
-  [F-008 交接](../docs/p04-9-f008-dispatch-slot-query.md)；Host/CLI 接线属 F-009。
+  [F-008 交接](../docs/phases/p04/p04-9-f008-dispatch-slot-query.md)；Host/CLI 接线属 F-009。
 
 - `index/phases/P05/features/P05-1/tasks/F-001.json`：一次性规划候选纯数据契约。
   覆盖规划请求/候选/身份封装校验、执行语义字段冻结拒绝、复用业务计划 v1 的 DAG 负例
   定位、四类摘要区分与审批依据评估、测试候选协议不混用与契约文档守护。
   新增三文件 45 项本地通过；无存储/命令/工具通道变更，较广回归交 Nezha。
-  契约见 [P05-1 规划候选契约](../docs/p05-1-planning-candidate-contract.md)。
+  契约见 [P05-1 规划候选契约](../docs/phases/p05/p05-1-planning-candidate-contract.md)。
 
 - `index/phases/P05/features/P05-1/tasks/F-002.json`：规划上下文窄存储与 planner 用途策略副本
   （迁移 v35）。覆盖 v35 只追加/v1–v34 冻结、空库与 v34 升级保留既有计划/审批/派发/Attempt
@@ -125,7 +125,7 @@ test/
   布尔摘要、未认证/未知参数/可写意图拒绝、客户端解码冻结形状、CLI 参数与结构化/文本
   输出（等待/隔离原因与不验收边界），以及有界构建 CLI 的临时 Host 场景。新增三个文件
   35 项本地通过；五个既有回归文件本地通过，另两个 Core 契约文件本地通过。范围与证据见
-  [F-009 交接](../docs/p04-9-f009-dispatch-query-wiring.md)。
+  [F-009 交接](../docs/phases/p04/p04-9-f009-dispatch-query-wiring.md)。
 
 - `index/phases/P04/features/P04-9/tasks/F-010.json`：生产组合根派发纵向与旧数据升级查询。
   新增文件（5+1 项）覆盖单 Feature 双 Task 串行派发/真实 Task 提交、Feature 最终交付、
@@ -143,13 +143,13 @@ test/
   覆盖清单/配置冻结扩展、可信测试索引发现与去重、缺索引/损坏/合集不一致与旧八项报告
   的 fail-closed，以及受影响清单/入口/集成报告/交付回归。新增文件本地 5 项通过，
   五个文件合并回归本地 43 项通过；真实 `accept:p04`、`verify`、全仓、live 与负责人确认
-  仍未运行。范围与证据见 [P04-9 补充项交接](../docs/p04-9-f011-acceptance-handoff.md)。
+  仍未运行。范围与证据见 [P04-9 补充项交接](../docs/phases/p04/p04-9-f011-acceptance-handoff.md)。
 
 - `index/phases/P05/features/P05-1/tasks/F-012.json`：一次性规划 Host/HostClient 接线。
   新增真实 HTTP/SQLite/Git 与脚本化 Runtime 场景，覆盖 v7 回执恢复、候选查询与人工决定、
   权限隔离、取消/resume、SSE 断开、畸形响应及旧计划兼容；正常规划 Batch 收尾复用恢复规则。
   受影响的 Host/工具/规划执行与恢复、基线、预算和报告回归按文件登记；本地通过与未运行
-  范围见 [F-012 交接](../docs/p05-1-f012-planning-host-protocol.md)，不代表全量/阶段验收。
+  范围见 [F-012 交接](../docs/phases/p05/p05-1-f012-planning-host-protocol.md)，不代表全量/阶段验收。
 
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
@@ -214,9 +214,9 @@ Feature 局部通过不将这些失败清零，不自动把 Phase 标为验收�
 P06-3/F-003 的项目资源配置、授权、CAS/幂等、真实双进程竞争、审计回滚与冻结快照用例见
 `index/phases/P06/features/P06-3/tasks/F-003.json`。本地通过与仅选择交 Nezha 的回归范围、
 构建/类型/边界日志及 F-004 后续接线边界见
-[资源配置服务交接](../docs/p06-3-f003-project-resource-service.md)。
+[资源配置服务交接](../docs/phases/p06/p06-3-f003-project-resource-service.md)。
 
-F-009 的 FakeRuntime 异常、输出、证据与恢复边界见 `index/phases/P03/features/P03-10/tasks/F-009.json` 和 [交接文档](../docs/p03-10-f009-runtime-negatives.md)：本地三个新增文件 23 项通过；八个既有回归文件仅登记，交 Nezha 独立执行。
+F-009 的 FakeRuntime 异常、输出、证据与恢复边界见 `index/phases/P03/features/P03-10/tasks/F-009.json` 和 [交接文档](../docs/phases/p03/p03-10-f009-runtime-negatives.md)：本地三个新增文件 23 项通过；八个既有回归文件仅登记，交 Nezha 独立执行。
 
 F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档守护见
 `index/phases/P03/features/P03-10/tasks/F-019.json`：仅文档/索引守护用例（候选索引），
@@ -293,7 +293,7 @@ main 不重复运行单元/集成全量及 Node 版本矩阵；直接 push main 
   原子记录与保守锁恢复；脚本化传输不构成真实模型通过证明。批准主体来自可信回执，
   对应 Host/SQLite 的 `p05-1-f014-planning-e2e` 回归标为 integration 并绑定当前分配
   指定的 `index/phases/P07/integration.json`，本 Task 不执行该 Phase 入口。跨层和真实
-  模型/live 保持 not_run，操作入口与限制见 [F-002 接线](../docs/p08-2-todo-planning.md)。
+  模型/live 保持 not_run，操作入口与限制见 [F-002 接线](../docs/phases/p08/p08-2-todo-planning.md)。
 
 - `index/phases/P08/features/P08-2/tasks/F-003.json`：Todo 交付结果局部契约检查器。
   unit 在真实临时项目（os.tmpdir()+mkdtemp 沙箱）中用真实子进程验证检查器：参考实现
@@ -302,7 +302,7 @@ main 不重复运行单元/集成全量及 Node 版本矩阵；直接 push main 
   通过；目标越界/绝对路径/.. 逃逸/类别缺口 fail-closed；报告不含绝对路径并显式把
   真实 Host、SQLite 竞争、进程停止与 Git 集成列为阶段集成 outOfScope。检查器本身
   不运行模型、不接触 Host/SQLite/Git；live 临时项目实际检查与 `accept:p08:live`
-  保持 not_run，入口与限制见 [F-003 检查器](../docs/p08-2-todo-delivery-check.md)。
+  保持 not_run，入口与限制见 [F-003 检查器](../docs/phases/p08/p08-2-todo-delivery-check.md)。
 
 - `index/phases/P08/features/P08-2/tasks/F-004.json`：Todo 正常 live 交付编排。
   unit 覆盖真实 Pi 模式门禁、依赖 Task 串行解锁、局部验证失败传播、commit/tree 身份
@@ -324,7 +324,7 @@ main 不重复运行单元/集成全量及 Node 版本矩阵；直接 push main 
   `accept:p08:live` 未授权入口的结构化 not_run 报告。同时重跑 F-004 交付编排回归
 （本 Task 修改了其入口模块）。跨层报告与真实 Git/SQLite/Host/进程资源一致性由
   Phase 集成验收负责，入口与限制见
-  [F-006 报告](../docs/p08-2-todo-live-report.md)。
+  [F-006 报告](../docs/phases/p08/p08-2-todo-live-report.md)。
 
 - `index/phases/P08/features/P08-2/tasks/F-007.json`：干净安装目录启动打包 CLI 的
   Todo 演示安装冒烟。unit 用打包夹具（真实 npm pack 生成三包 tarball 与分发清单）
@@ -334,14 +334,14 @@ main 不重复运行单元/集成全量及 Node 版本矩阵；直接 push main 
   与源码模式协议不一致、token 外泄、输出/报告绝对路径逐项 fail-closed；运行时依赖
   清单与实例/数据根隔离入报告。真实 registry 安装、原生模块矩阵、Git/SQLite 业务流、
   跨进程组合与 live 交付保持 not_run，入口与限制见
-  [F-007 安装冒烟](../docs/p08-2-todo-install-smoke.md)。
+  [F-007 安装冒烟](../docs/phases/p08/p08-2-todo-install-smoke.md)。
 
 - `index/phases/P08/features/P08-2/tasks/F-008.json`：非 Nezha 存量仓库增量变更局部契约。
   使用真实临时 Git 仓库固定脏跟踪文件、暂存文件、未跟踪文件、已有测试和明确已知失败；
   初始化核对项目归属、路径授权、HEAD/脏状态保护和禁止自动提交。增量报告分别登记代码、
   新测试、验证退出码、commit/tree 与未解决基线缺口；已知失败不会被新需求通过自动豁免。
   测试属于 integration，真实 project init、SQLite、Host、进程、Pi、归档恢复和 Phase 报告
-  保持 not_run，入口与限制见 [F-008 存量演示](../docs/p08-2-existing-demo.md)。
+  保持 not_run，入口与限制见 [F-008 存量演示](../docs/phases/p08/p08-2-existing-demo.md)。
 
 - `index/phases/P08/features/P08-2/tasks/F-009.json`：`accept:p08:live` 正式入口编排。
   unit 覆盖正常 live、负例、报告校验、干净安装和存量仓库五阶段的固定选择顺序，记录实际
@@ -349,4 +349,4 @@ main 不重复运行单元/集成全量及 Node 版本矩阵；直接 push main 
   退出码映射。入口报告绑定 commit/tree、Node/npm/platform、预算、人工 pending 和 Phase
   集成 `not_run` 缺口；真实 Pi、Host/SQLite/进程/恢复和存量产品闭环仍须独立 Phase 验收，
   不能由局部测试、Feature 门禁或脚本自报完成替代。范围说明见
-  [F-009 live 入口](../docs/p08-2-live-acceptance-entry.md)。
+  [F-009 live 入口](../docs/phases/p08/p08-2-live-acceptance-entry.md)。

@@ -60,6 +60,7 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
         state = { status: 'blocked', reason: 'restored_data_requires_current_facts' };
         return state;
       }
+      await options.recoverAuxiliaryWriters?.();
       let planning: PlanningStartupRecoveryResult | null = null;
       if (options.planning !== undefined) {
         planning = await options.planning.recover();
@@ -70,7 +71,12 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
       const recheck = async (previous: WorkStartupRecoveryEvidence): Promise<WorkStartupRecoveryEvidence> => {
         // A durable failure is a historical fact, not a release token. On a later
         // controlled startup, recheck only the same committed process identity.
-        if (previous.stopConfirmed || previous.processIdentity === null) return previous;
+        // A stopped Session with no process identity can become safely
+        // reconcilable after the first observation once the Runtime has
+        // persisted its final stop/recording facts. Let the reconciler reload
+        // the durable snapshot instead of treating the old observation as
+        // permanently authoritative.
+        if (previous.stopConfirmed) return previous;
         const gaps = previous.gaps.filter(gap => gap !== 'stop_unconfirmed' && gap !== 'stop_failed');
         let stopConfirmed = false;
         try {

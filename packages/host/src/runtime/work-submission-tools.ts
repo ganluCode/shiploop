@@ -13,12 +13,14 @@
  * Runner 侧传递 token（不经模型请求正文）。
  */
 import type { CommandReceipt } from 'shiploop-core/protocol';
+import { createHash } from 'node:crypto';
 import {
   PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES,
   PLANNING_CANDIDATE_SUBMIT_OPERATION,
   WIRE_MESSAGE_SCHEMA_VERSION,
 } from 'shiploop-core/protocol';
 import type { PiSubmissionToolDefinition } from './pi-adapter.js';
+import { getRuntimePromptTemplates } from './prompt-templates.js';
 
 export const PLANNING_SUBMIT_TOOL_NAME = 'planning_candidate_submit';
 
@@ -26,6 +28,7 @@ export const PLANNING_SUBMIT_TOOL_NAME = 'planning_candidate_submit';
 const PLANNING_SUBMIT_TOOL_RESULT_MAX_CHARS = 4096;
 
 export interface PlanningCandidateSubmitToolOptions {
+  readonly promptTemplates?: import('shiploop-core').PromptTemplateCatalog;
   /** 受限通道调用端（如 Host 环回 WorkToolClient.invoke）；不得是通用 HostClient。 */
   readonly invoke: (input: unknown) => Promise<CommandReceipt | { operation: 'task.read' }>;
   /** 当前 planning Attempt 的绑定身份（可信装配提供；模型不可指定）。 */
@@ -88,19 +91,20 @@ export function createPlanningCandidateSubmitTool(
   const newCommandId = options.newCommandId ?? (() => crypto.randomUUID());
   const nowIso = options.nowIso ?? (() => new Date().toISOString());
   const encoder = new TextEncoder();
+  const candidateCommands = new Map<string, { commandId: string; issuedAt: string }>();
+  const templates = options.promptTemplates ?? getRuntimePromptTemplates();
   return {
     name: PLANNING_SUBMIT_TOOL_NAME,
     label: '提交规划候选',
-    description: '提交一次性规划的候选计划（JSON 正文）。候选必须符合规划候选 v1 契约；'
-      + '同一规划仅接受一个有效候选；同命令同内容重放复用原结果。不接受文件路径或制品 ID。',
-    promptSnippet: 'planning_candidate_submit: 提交规划候选 JSON（有界正文；单候选；重放稳定）。',
+    description: templates.render('runtime/tools/planning-submit.md'),
+    promptSnippet: templates.render('runtime/tools/planning-snippet.md'),
     executionMode: 'sequential',
     parameters: {
       type: 'object',
       properties: {
         candidate: {
           type: 'string',
-          description: '规划候选 payload 的完整 JSON 文本（schemaVersion=1；包含 plan/taskVerification/summary）。',
+          description: templates.render('runtime/tools/planning-parameter.md'),
         },
       },
       required: ['candidate'],
@@ -123,13 +127,18 @@ export function createPlanningCandidateSubmitTool(
       if (candidate.length > maxBodyBytes || encoder.encode(candidate).byteLength > maxBodyBytes) {
         return { content: [{ type: 'text', text: `candidate 正文超过 ${maxBodyBytes} 字节上限` }], isError: true };
       }
-      const commandId = newCommandId();
+      const digest = createHash('sha256').update(candidate).digest('hex');
+      if (!candidateCommands.has(digest)) {
+        if (candidateCommands.size >= 64) return { content: [{ type: 'text', text: 'planning_candidate_submit: candidate limit' }], isError: true };
+        candidateCommands.set(digest, { commandId: newCommandId(), issuedAt: nowIso() });
+      }
+      const { commandId, issuedAt } = candidateCommands.get(digest)!;
       let receipt: Awaited<ReturnType<PlanningCandidateSubmitToolOptions['invoke']>>;
       try {
         receipt = await options.invoke({
           schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
           commandId,
-          issuedAt: nowIso(),
+          issuedAt,
           operation: PLANNING_CANDIDATE_SUBMIT_OPERATION,
           scope: { kind: 'project', projectId: options.projectId },
           payload: {
@@ -141,10 +150,12 @@ export function createPlanningCandidateSubmitTool(
         });
       } catch (error) {
         // 领域/通道失败以 isError 结果回给模型；只携带受控错误码，不回显
-        // 错误原文/凭据/路径（模型可换新命令重试或修正候选）。
+        // 错误原文/凭据/路径。同候选保留 commandId，结果未知时重放同一命令。
         const code = (error as { code?: unknown }).code;
         const safeCode = typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : 'submission_failed';
-        return { content: [{ type: 'text', text: `planning_candidate_submit failed: ${safeCode}` }], isError: true };
+        const reason = (error as { details?: { reason?: unknown } }).details?.reason;
+        const detail = typeof reason === 'string' && /^[a-z0-9_]{1,100}$/.test(reason) ? `:${reason}` : '';
+        return { content: [{ type: 'text', text: `planning_candidate_submit failed: ${safeCode}${detail}` }], isError: true };
       }
       if (receipt.operation !== PLANNING_CANDIDATE_SUBMIT_OPERATION) {
         return { content: [{ type: 'text', text: '受限通道返回了非规划提交结果（拒绝）' }], isError: true };

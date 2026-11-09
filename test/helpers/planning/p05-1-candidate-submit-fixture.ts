@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../prompt-templates.ts';
 /**
  * P05-1 / F-006 规划候选受限提交夹具（真实临时文件/SQLite/Git 纵向）。
  *
@@ -169,7 +170,7 @@ export async function openPlanningSubmitFixture(options: {
       return { worktreeId: row.id, headCommit: inspection.repository.headCommit, codeDigest: inspection.codeDigest };
     };
 
-    const planningInputs: PlanningInputPreparePort = createPlanningInputPrepareService({
+    const planningInputs: PlanningInputPreparePort = createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
       views: createSqlitePlanningContextStore(session, { nowUtcMs }),
       inputs: createExecutionInputService({
         artifacts: artifactStore,
@@ -250,8 +251,8 @@ export async function openPlanningSubmitFixture(options: {
     const accepted = planningReceipt;
 
     /* 真实受管 worktree + managed_workspaces 现场行（与 F-005 同一夹具形态）。 */
-    const { deriveManagedFeatureBranch } = await import('../../../packages/core/src/ports/workspace-preparation.ts');
-    const branch = deriveManagedFeatureBranch(projectId, featureId);
+    const { readFeatureBranch } = await import('../feature-branch.ts');
+    const branch = readFeatureBranch(session, projectId, featureId);
     const worktreePath = join(box.dataRoot, deriveFeatureWorktreeRelativeDir(projectId, featureId));
     mkdirSync(join(worktreePath, '..'), { recursive: true });
     git(['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], box.repoDirA);

@@ -5,7 +5,7 @@
  * Project/Batch/Run/Attempt/Session 身份及分页；输出：状态、代码/检查/记录
  * 引用、Token、缺口和交付结果）、设计 05 §9（Runtime 完成 ≠ Task 验收 ≠
  * Feature 交付）、08 §2（Host/CLI 查询契约）与既有查询纪律
- * （docs/p03-4-schedule-query-contract.md 同一分页/游标/只读规范）。
+ * （docs/phases/p03/p03-4-schedule-query-contract.md 同一分页/游标/只读规范）。
  *
  * 不变量：
  * - 复用既有事实源：Attempt/Run/Batch/Task/Feature 持久行、verification 批次

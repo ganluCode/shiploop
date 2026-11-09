@@ -1,5 +1,5 @@
 /**
- * P03-3 / F-005 文档核验：`docs/p03-3-execution-start-contract.md` 记录的显式
+ * P03-3 / F-005 文档核验：`docs/phases/p03/p03-3-execution-start-contract.md` 记录的显式
  * 执行启动契约必须与仓库实现事实一致（命令面/能力位、payload 形态、workKey 成分、
  * 拒绝/冲突词汇、回执形态、事件白名单、唤醒与排队原因），避免「文档另立一套」。
  */
@@ -28,7 +28,7 @@ import { EXECUTION_START_IMPACT } from '../../../../packages/core/src/applicatio
 import { APPLICATION_COMMAND_CAPABILITIES } from '../../../../packages/host/src/contract/lifecycle.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-3-execution-start-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-3-execution-start-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

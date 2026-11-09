@@ -16,6 +16,37 @@
  *   不重复行或计数。
  */
 import type { FeatureExecutionReport } from 'shiploop-host';
+import { resolveWorkflowLocale, type WorkflowLocale } from 'shiploop-host';
+
+const EN_REPORT_COPY: Readonly<Record<string, string>> = {
+  "无待办显式操作（已完成或需人工按证据引用核查现场）": "No pending explicit action; completed or requiring owner review of evidence",
+  "经授权执行命令继续既有 Task 执行循环（不自动重跑编码）": "Continue the existing Task loop through an authorized execution command; no automatic recoding",
+  "经授权命令 feature.verification.continue 显式重新请求最终收尾": "Explicitly request finalization with authorized feature.verification.continue",
+  "责任主体经 task.approval.* 显式做出当前批准/拒绝决定": "Owner explicitly approves/rejects through task.approval.*",
+  "责任主体经 task.approval.unblock 显式解除当前人工阻塞": "Owner explicitly resolves the manual block with task.approval.unblock",
+  "经授权命令 git.operation.reconcile 显式核对提交事实": "Reconcile Git commit facts through authorized git.operation.reconcile",
+  "最终检查需要代码修复：先明确失效范围与返工授权（不自动新建编码会话）": "Final checks need repair: define failure scope and rework authorization before starting a coding session",
+  "指标口径：basis=fake-synthetic 为 Fake 合成指标，basis=reported 为 Runtime 报告值；null/未知显示 unknown，不以 0 冒充": "Metric basis: fake-synthetic is simulated, reported is Runtime-reported; null/missing remains unknown, never zero",
+  "缓存：cacheRead/cacheWrite=unknown（无归一化缓存测量，不计算加权缓存率）": "Cache: cacheRead/cacheWrite=unknown when normalized measurements are absent; no weighted cache rate is inferred",
+  "费用结论：不生成真实模型分组收益、余额或节省额度结论（真实费用聚合属后续阶段）": "Cost conclusions: no inferred model savings, remaining quota or balance; real cost conclusions require sufficient evidence",
+  "# ShipLoop Feature 执行报告文本视图（由同一报告投影生成，不追加历史报告内容）": "# ShipLoop Feature Execution Report (same structured projection; no appended historical reports)",
+  "（水位引用，不是原生存储版本）": " (event watermark reference, not a native storage version)",
+  "## Attempt 历史（按 Task 分组，number/id 稳定排序；unknown=未知，不以 0 冒充）": "## Attempt History (grouped by Task, sorted by number/id; unknown is not zero)",
+  "## 用量诊断（Core 归一化投影；文本层不重新计算）": "## Usage Diagnostics (normalized Core projection; no text-layer recalculation)",
+  "## 效率与耗时分解（Core 事实投影；running 不是实时进程探测）": "## Efficiency and Timing (Core facts; running is not a live process probe)",
+  "## Run 记录（各 Run 独立列示，不合并历史计数）": "## Run Records (separate Runs; historical counts are not merged)",
+  "## Session 记录（稳定排序；unknown=边界缺失，durationMs 不以 0 冒充）": "## Session Records (stable order; missing boundaries/durations remain unknown)",
+  "## 最终检查（机器检查轴；机器结果不构成人工批准）": "## Final Checks (automated checks do not grant owner approval)",
+  "## 人工批准/阻塞（仅责任人显式决定；机器结果不构成批准）": "## Owner Approval and Blocks (explicit owner decisions only)",
+  "（等待）机器全绿不构成人工批准：保持等待，仅责任人显式决定可生效": "(Waiting) All automated checks passing does not grant owner approval; an explicit owner decision is required",
+  "## 要求的交付状态": "## Required Delivery State",
+  "## 证据引用（仅稳定身份与可用性；不含正文或路径）": "## Evidence References (stable identities/availability only, no bodies/paths)",
+  "## 时间与指标标识": "## Timing and Metric Notes",
+  "## 下一步显式操作（人工/授权命令动作；本视图只读，不执行任何操作）": "## Next Explicit Actions (owner/authorized commands; read-only view)"
+};
+function reportCopy(locale: WorkflowLocale, text: string): string {
+  return locale === 'zh-CN' ? text : EN_REPORT_COPY[text] ?? text;
+}
 
 type ReportTask = FeatureExecutionReport['tasks'][number];
 type ReportAttempt = ReportTask['attempts'][number];
@@ -167,6 +198,7 @@ export interface FeatureReportNextActionView {
 }
 
 export interface FeatureReportTextView {
+  readonly locale?: WorkflowLocale;
   readonly scope: 'feature-execution-report-text';
   readonly summary: {
     readonly featureId: string;
@@ -226,7 +258,8 @@ function usageBasis(basis: ReportAttempt['usage']['basis']): FeatureReportAttemp
   return basis === 'synthetic' ? 'fake-synthetic' : basis === 'reported' ? 'reported' : 'unknown';
 }
 
-export function buildFeatureReportTextView(report: FeatureExecutionReport): FeatureReportTextView {
+export function buildFeatureReportTextView(report: FeatureExecutionReport, language: unknown = 'en-US'): FeatureReportTextView {
+  const locale = resolveWorkflowLocale(language);
   const tasks = [...report.tasks].sort((a, b) => byText(a.current.taskId, b.current.taskId));
   const usageByTask = new Map(report.usage.tasks.map((node) => [node.id, node.aggregate]));
   const attemptRows: FeatureReportAttemptRowView[] = [];
@@ -418,10 +451,11 @@ export function buildFeatureReportTextView(report: FeatureExecutionReport): Feat
     usage: report.usage,
     usageDimensions: [...report.usage.dimensions].sort((a, b) => byText(a.key, b.key)),
     efficiency: report.efficiency,
-    metricNotes: FEATURE_REPORT_METRIC_NOTES,
+    locale,
+    metricNotes: FEATURE_REPORT_METRIC_NOTES.map(note => reportCopy(locale, note)),
     nextActions: [{
       action: report.outcome.nextStep,
-      detail: NEXT_STEP_ACTIONS[report.outcome.nextStep],
+      detail: reportCopy(locale, NEXT_STEP_ACTIONS[report.outcome.nextStep]),
       automatic: false,
     }],
   };
@@ -453,9 +487,11 @@ function list(values: readonly string[]): string {
 }
 
 export function formatFeatureReportTextView(view: FeatureReportTextView): string {
+  const locale = resolveWorkflowLocale(view.locale);
+  const t = (text: string) => reportCopy(locale, text);
   const lines: string[] = [];
   const summary = view.summary;
-  lines.push('# ShipLoop Feature 执行报告文本视图（由同一报告投影生成，不追加历史报告内容）');
+  lines.push(t('# ShipLoop Feature 执行报告文本视图（由同一报告投影生成，不追加历史报告内容）'));
   lines.push(
     `feature=${summary.featureId} outcome=${summary.outcome} ` +
       `completeness=${summary.completeness} issues=${list([...summary.issues].sort(byText))}`,
@@ -463,7 +499,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   lines.push(`outcomeReason=${summary.outcomeReason} nextStep=${summary.nextStep}`);
   lines.push(
     `consistency mode=single-read-transaction eventWatermark=${summary.eventWatermark}` +
-      '（水位引用，不是原生存储版本）',
+      t('（水位引用，不是原生存储版本）'),
   );
   lines.push(
     `counts tasks=${summary.counts.tasks} runs=${summary.counts.runs} attempts=${summary.counts.attempts} ` +
@@ -472,7 +508,8 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
 
   lines.push('');
   lines.push(
-    `## Task 表（稳定排序 ${view.taskRows.length} 项；latest=最新 Attempt，cumulative=累计次数，各 Run 归属见 Attempt 历史）`,
+    locale === 'zh-CN' ? `## Task 表（稳定排序 ${view.taskRows.length} 项；latest=最新 Attempt，cumulative=累计次数，各 Run 归属见 Attempt 历史）`
+      : `## Tasks (${view.taskRows.length}, stable order; latest=latest Attempt, cumulative=all attempts; Run ownership in history)`,
   );
   lines.push(
     '| Task | status | manualBlock | latestAttempt | latestStatus | attempts | succeeded | failed | cancelled | ' +
@@ -491,9 +528,9 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## Attempt 历史（按 Task 分组，number/id 稳定排序；unknown=未知，不以 0 冒充）');
+  lines.push(t('## Attempt 历史（按 Task 分组，number/id 稳定排序；unknown=未知，不以 0 冒充）'));
   for (const row of view.taskRows) {
-    lines.push(`### ${cell(row.taskId)}（${row.attemptIds.length}）`);
+    lines.push(`### ${cell(row.taskId)} (${row.attemptIds.length})`);
     for (const attempt of view.attemptRows.filter((a) => a.taskId === row.taskId)) {
       lines.push(
         `- #${attempt.number} ${attempt.id} run=${attempt.runId} status=${attempt.status} ` +
@@ -515,7 +552,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## 用量诊断（Core 归一化投影；文本层不重新计算）');
+  lines.push(t('## 用量诊断（Core 归一化投影；文本层不重新计算）'));
   const usageLine = (scope: string, id: string, aggregate: ReportUsageAggregate): string =>
     `- ${scope}=${id} basis=${aggregate.basis} coverage=${aggregate.coverage} accounting=${aggregate.accounting} ` +
     `normalization=${aggregate.normalization} inputTokens=${unknown(aggregate.totals.inputTokens)} ` +
@@ -547,7 +584,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## 效率与耗时分解（Core 事实投影；running 不是实时进程探测）');
+  lines.push(t('## 效率与耗时分解（Core 事实投影；running 不是实时进程探测）'));
   lines.push(`- modelRequestTimingBasis=${view.efficiency.modelRequestTimingBasis} coverage=${view.efficiency.coverage} ` +
     `issues=${list([...view.efficiency.issues].sort(byText))}`);
   for (const kind of Object.keys(view.efficiency.stages).sort(byText) as Array<keyof ReportEfficiency['stages']>) {
@@ -570,7 +607,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
     `sourceRefs=${list([...view.efficiency.context.sourceRefs].sort(byText))}`);
 
   lines.push('');
-  lines.push('## Run 记录（各 Run 独立列示，不合并历史计数）');
+  lines.push(t('## Run 记录（各 Run 独立列示，不合并历史计数）'));
   for (const run of view.runRows) {
     lines.push(
       `- run ${run.id} batch=${run.batchId} status=${run.status} reason=${none(run.reason)} ` +
@@ -580,7 +617,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## Session 记录（稳定排序；unknown=边界缺失，durationMs 不以 0 冒充）');
+  lines.push(t('## Session 记录（稳定排序；unknown=边界缺失，durationMs 不以 0 冒充）'));
   for (const session of view.sessionRows) {
     lines.push(
       `- ${session.id} attempt=${session.attemptId} parent=${none(session.parentSessionId)} ` +
@@ -591,7 +628,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## 最终检查（机器检查轴；机器结果不构成人工批准）');
+  lines.push(t('## 最终检查（机器检查轴；机器结果不构成人工批准）'));
   lines.push(`- axis status=${view.verification.axisStatus} batch=${none(view.verification.finalBatchId)}`);
   for (const batch of view.verification.batches) {
     lines.push(
@@ -608,7 +645,7 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## 人工批准/阻塞（仅责任人显式决定；机器结果不构成批准）');
+  lines.push(t('## 人工批准/阻塞（仅责任人显式决定；机器结果不构成批准）'));
   lines.push(
     `approval status=${view.approval.status} reason=${none(view.approval.reason)} ` +
       `items=${view.approval.items.length} truncated=${String(view.approval.itemsTruncated)} ` +
@@ -622,11 +659,11 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
     );
   }
   if (view.approval.waiting) {
-    lines.push('（等待）机器全绿不构成人工批准：保持等待，仅责任人显式决定可生效');
+    lines.push(t('（等待）机器全绿不构成人工批准：保持等待，仅责任人显式决定可生效'));
   }
 
   lines.push('');
-  lines.push('## 要求的交付状态');
+  lines.push(t('## 要求的交付状态'));
   lines.push(`requiredStatus=${view.delivery.requiredStatus} axisStatus=${view.delivery.axisStatus}`);
   const operation = view.delivery.operation;
   if (operation === null) {
@@ -643,15 +680,15 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## 证据引用（仅稳定身份与可用性；不含正文或路径）');
+  lines.push(t('## 证据引用（仅稳定身份与可用性；不含正文或路径）'));
   for (const ref of view.evidenceRows) {
     lines.push(`- ${ref.artifactId} availability=${ref.availability}`);
   }
 
   lines.push('');
-  lines.push('## 时间与指标标识');
-  lines.push(`- cumulativeSessionMs=${unknown(view.timing.cumulativeSessionMs)}（累计 Session 时间，含重叠 Session）`);
-  lines.push(`- wallClockMs=${unknown(view.timing.wallClockMs)}（墙钟时间，Session 首末边界；边界缺失为 unknown）`);
+  lines.push(t('## 时间与指标标识'));
+  lines.push(`- cumulativeSessionMs=${unknown(view.timing.cumulativeSessionMs)}` + (locale === 'zh-CN' ? '（累计 Session 时间，含重叠 Session）' : ' (cumulative Session time, including overlaps)'));
+  lines.push(`- wallClockMs=${unknown(view.timing.wallClockMs)}` + (locale === 'zh-CN' ? '（墙钟时间，Session 首末边界；边界缺失为 unknown）' : ' (Session boundary wall-clock span; missing boundaries remain unknown)'));
   lines.push(
     `- sessions measured=${view.timing.measuredSessions}/${view.timing.totalSessions} ` +
       `timingCompleteness=${view.timing.completeness}`,
@@ -661,10 +698,11 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
   }
 
   lines.push('');
-  lines.push('## 下一步显式操作（人工/授权命令动作；本视图只读，不执行任何操作）');
+  lines.push(t('## 下一步显式操作（人工/授权命令动作；本视图只读，不执行任何操作）'));
   lines.push(`nextStep=${view.summary.nextStep}`);
   for (const action of view.nextActions) {
-    lines.push(`- ${action.action}：${action.detail}（automatic=false）`);
+    lines.push(locale === 'zh-CN' ? `- ${action.action}：${action.detail}（automatic=false）`
+      : `- ${action.action}: ${action.detail} (automatic=false)`);
   }
   return `${lines.join('\n')}\n`;
 }

@@ -3,11 +3,11 @@
 状态：待负责人执行。本文是操作与核对说明，不是验收结论；机器报告、测试数量、文档完整或
 `nezha task report` 的 completed 都不能代替签署。配套文档：
 
-- [P08 一期能力矩阵](../p08-capability-matrix.md)
+- [P08 一期能力矩阵](../phases/p08/p08-capability-matrix.md)
 - [P08 交付报告模板](p08-delivery-report-template.md)
-- [P08 总验收契约](../p08-acceptance.md)、`acceptance/p08.checklist.json` / `p08.config.json` / `p08.entry.json`
-- [P08-1 新用户安装与操作指南](../p08-1-user-guide.md)
-- [P08-2 `accept:p08:live` 入口](../p08-2-live-acceptance-entry.md)
+- [P08 总验收契约](../phases/p08/p08-acceptance.md)、`acceptance/p08.checklist.json` / `p08.config.json` / `p08.entry.json`
+- [P08-1 新用户安装与操作指南](../phases/p08/p08-1-user-guide.md)
+- [P08-2 `accept:p08:live` 入口](../phases/p08/p08-2-live-acceptance-entry.md)
 - [P08-3 存量演示运行手册](p08-3-existing-demo-runbook.md) / [结果报告模板](p08-3-demo-report-template.md)
 
 ## 1. 受测身份与前提

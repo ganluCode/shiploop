@@ -8,7 +8,7 @@
  * - 注入受信测试能力目录（pi/anthropic/openai），使配置命令的策略条目能通过
  *   Core 的能力兼容复检——生产入口的目录为空（fail-closed），此注入只服务于
  *   测试装配，不是产品能力放宽（与 detached-host-entry-catalog.ts 同一纪律；
- *   纯生产构建当前无法装配策略配置是已记录的已知缺口，见 docs/p03-1-handoff.md）。
+ *   纯生产构建当前无法装配策略配置是已记录的已知缺口，见 docs/phases/p03/p03-1-handoff.md）。
  *
  * 纪律同 detached-host-entry.ts：stdio 由启动方置为 ignore；SIGTERM/SIGINT 走
  * 生产 §10.5 安全收尾；120s 兜底避免失败场景泄漏常驻进程。

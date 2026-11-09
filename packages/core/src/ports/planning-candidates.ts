@@ -9,7 +9,7 @@
  * 保存为制品、不建 PlanRevision；批准原子应用，拒绝不倒改已结束 Run）、§4
  * （Task kind=planning/coding；规划任务不在交付图中）、core-design/08 §5.1
  * （受限 Agent 调用通道：默认拒绝未列出的操作；模型不得自批通过）。
- * 实施契约：docs/p05-1-planning-candidate-contract.md（本模块契约文档）。
+ * 实施契约：docs/phases/p05/p05-1-planning-candidate-contract.md（本模块契约文档）。
  *
  * 契约要点：
  * - 业务计划面**原样复用** validateFeaturePlanInput（P03-1 冻结的 v1 输入语义与
@@ -109,7 +109,7 @@ export const PLANNING_INPUT_DIGEST_DOMAIN = 'shiploop:planning-request:v1';
 export const PLANNING_CANDIDATE_DIGEST_DOMAIN = 'shiploop:planning-candidate:v1';
 
 /* ------------------------------------------------------------------ *
- * 边界常量（实施契约值，记录于 docs/p05-1-planning-candidate-contract.md）
+ * 边界常量（实施契约值，记录于 docs/phases/p05/p05-1-planning-candidate-contract.md）
  * ------------------------------------------------------------------ */
 
 /** 请求需求制品引用数量上限（去重后；与 Feature 级来源引用同量级）。 */

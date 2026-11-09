@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
-const reportPath = resolve(repoRoot, 'docs/p06-5-f013-brownfield-integration.md');
+const reportPath = resolve(repoRoot, 'docs/phases/p06/p06-5-f013-brownfield-integration.md');
 const featureIndexPath = resolve(repoRoot, 'test/index/phases/P06/features/P06-5/feature.json');
 const taskIndexPath = resolve(repoRoot, 'test/index/phases/P06/features/P06-5/tasks/F-013.json');
 

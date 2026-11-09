@@ -23,7 +23,7 @@ import { validateWorkspaceBaseline } from '../../../packages/core/src/ports/work
 import type { WorkspacePreparationStore } from '../../../packages/core/src/ports/workspace-preparation.ts';
 import { createWorkspacePreparationService } from '../../../packages/core/src/application/workspace-preparation.ts';
 import { createArtifactPublisher } from '../../../packages/core/src/application/artifact-publish.ts';
-import { deriveManagedFeatureBranch } from '../../../packages/core/src/ports/workspace-preparation.ts';
+import { readFeatureBranch } from '../../helpers/feature-branch.ts';
 import { NOW } from '../../helpers/p03-3/budget-fixture.ts';
 import { commitAll } from '../../helpers/git-repo.ts';
 import { openClaimFixture } from '../../helpers/p03-4/task-claim-fixture.ts';
@@ -350,7 +350,7 @@ async function fixture(edges: string[][] = [[]]) {
     hostInstanceId: claim.attempt.hostInstanceId, executionVersion: claim.attempt.executionVersion };
   const input = { identity, taskId: f.ids.taskId, runId: f.ids.runId, claimKey: claim.claimKey,
     operationId: randomUUID(), workspaceId: randomUUID() };
-  return { ...f, ...options, inputTask: f.input, input, token, options, branch: deriveManagedFeatureBranch(f.ids.projectId, f.box.featureId),
+  return { ...f, ...options, inputTask: f.input, input, token, options, branch: readFeatureBranch(f.box.session, f.ids.projectId, f.box.featureId),
     service: createWorkspacePreparationService(options) };
 }
 

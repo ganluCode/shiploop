@@ -1,5 +1,5 @@
 /**
- * P03-2 / F-003 文档核验：`docs/p03-2-plan-approval-verification-contract.md`
+ * P03-2 / F-003 文档核验：`docs/phases/p03/p03-2-plan-approval-verification-contract.md`
  * 记录的有效批准核验与失效处理契约必须与仓库实现事实一致（检查政策身份
  * 摘要、复合决策身份与迁移 v8、评估纯规则原因词汇、失效语义与边界），
  * 避免「文档另立一套」与后续执行授权任务（P03-3/4）各自发明规则。
@@ -25,7 +25,7 @@ import { approvals as approvalsTable } from '../../../packages/core/src/adapters
 import { getTableColumns, getTableName } from 'drizzle-orm';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-2-plan-approval-verification-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-2-plan-approval-verification-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

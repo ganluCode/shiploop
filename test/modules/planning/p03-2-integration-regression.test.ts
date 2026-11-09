@@ -21,7 +21,7 @@
  * 审批有效性与制品正文读取复验经正式 Host HTTP 传输面（与 HostClient 同一
  * 路由），测试只以只读 SQLite 探针做第三方审计（P03-1 同一纪律）。
  *
- * 覆盖标注（T 矩阵，详见 docs/p03-2-handoff.md）：T24（策略副本/默认更新不
+ * 覆盖标注（T 矩阵，详见 docs/phases/p03/p03-2-handoff.md）：T24（策略副本/默认更新不
  * 追溯/用户覆盖）、T25 输入子集（快照不可变/旧正文逐字节不变；活动 Attempt
  * 竞争与预算清零 not_run——无 Run/Attempt 实体）、T26 审批子集（过期审批
  * 失效：plan_changed/check_policy_changed/纯标签不失效；配置 CAS 冲突沿用

@@ -35,7 +35,7 @@ import { createArtifactPublisher } from '../../../packages/core/src/application/
 import { createCompletedReceipt } from '../../../packages/core/src/ports/commands.ts';
 import { createResultRef } from '../../../packages/core/src/ports/command-receipts.ts';
 import { validateWorkspaceBaseline } from '../../../packages/core/src/ports/workspace.ts';
-import { deriveManagedFeatureBranch } from '../../../packages/core/src/ports/workspace-preparation.ts';
+import { readFeatureBranch } from '../../helpers/feature-branch.ts';
 import type { CommandProcessIdentity } from '../../../packages/core/src/ports/command-process.ts';
 import type { WorkResourceIdentity } from '../../../packages/core/src/ports/work-resources.ts';
 import { createLocalOwnerPrincipal } from '../../helpers/p02-2/principals.ts';
@@ -162,7 +162,7 @@ describe('F-013 真实资源集成回归：首次准备 → 失败保留 → 重
     });
     const projectId = f.box.projectId;
     const featureId = f.box.featureId;
-    chain = { f, app, projectId, featureId, runId: f.ids.runId, source: f.box.box.repoDirA, branch: deriveManagedFeatureBranch(projectId, featureId) };
+    chain = { f, app, projectId, featureId, runId: f.ids.runId, source: f.box.box.repoDirA, branch: readFeatureBranch(f.box.session, projectId, featureId) };
     const { source, branch } = chain;
 
     // 原生 SDK 档案（沙箱内、源码仓库之外）：恢复全程不得读取/复制/修改。
@@ -281,7 +281,7 @@ describe('F-013 真实资源集成回归：首次准备 → 失败保留 → 重
     });
     const projectId = f.box.projectId;
     const featureId = f.box.featureId;
-    chain = { f, app, projectId, featureId, runId: f.ids.runId, source: f.box.box.repoDirA, branch: deriveManagedFeatureBranch(projectId, featureId) };
+    chain = { f, app, projectId, featureId, runId: f.ids.runId, source: f.box.box.repoDirA, branch: readFeatureBranch(f.box.session, projectId, featureId) };
 
     const first = await claimAndPrepare(chain, 0, randomUUID());
     expect(first.prepared.operation.status).toBe('succeeded');

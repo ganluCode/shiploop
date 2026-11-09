@@ -2,7 +2,7 @@
  * F-014 P02-3 基线 /v1 路由与 HostClient 验收（真实 127.0.0.1 HTTP + 真实
  * SQLite/Git/子进程 + 生产 startHost 装配 + 真实 HostClient 发现/握手）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md §3.2（路由总表）、§5.3
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md §3.2（路由总表）、§5.3
  *（accepted → 202）、§6（preview/run/cancel payload 与回执）、§7.4-§7.6
  *（分页/详情/证据正文）、§9.2（基线事件白名单）与 §13（预算）。
  *

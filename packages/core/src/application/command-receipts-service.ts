@@ -1,6 +1,6 @@
 /**
  * F-006 CommandReceiptsService（application 层）：授权回执读取与结果引用解析
- * （docs/p02-2-commands-events-contract.md §4.3/§5.6）。
+ * （docs/phases/p02/p02-2-commands-events-contract.md §4.3/§5.6）。
  *
  * 不变量：
  * - 只依赖 ports 窄接口（CommandReceiptStore）与 F-005 纯授权判定，不接触

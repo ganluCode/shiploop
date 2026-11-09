@@ -2,7 +2,7 @@
  * P02-4 / F-010 版本化 P02 阶段验收配置、稳定场景清单与参数校验
  * （开发验收工具，不是 ShipLoop 产品能力，不进 packages/，不提供 Host/CLI 接口）。
  *
- * 按 `docs/p02-4-acceptance-contract.md`（F-001）§2.1 / §3.7 / §3.8 冻结约定实现：
+ * 按 `docs/phases/p02/p02-4-acceptance-contract.md`（F-001）§2.1 / §3.7 / §3.8 冻结约定实现：
  * - 仓库内版本化配置 `acceptance/p02.config.json`（`configVersion=1`）固定：
  *   必需检查 → 实际场景入口的映射（`scenarios`，顺序与内容与 F-009 冻结的
  *   `P02_REQUIRED_CHECKS` 逐项一致）、报告根（默认 `artifacts/acceptance/p02`，

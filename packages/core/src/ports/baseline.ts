@@ -2,7 +2,7 @@
  * F-002 P02-3 静态接入与获准基线检查纯契约（ports 契约层：类型、常量、纯校验
  * 与纯摘要函数）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md
  * - §3.2 路由与 §6 命令 payload 白名单（baseline.preview/run/cancel）；
  * - §5.7 公开错误码：非法输入一律 invalid_input 并定位字段，未知能力 unsupported；
  * - §6.1 检查计划（checkKey 项目内唯一、非空 argv 数组、cwdRef 仓库内相对、

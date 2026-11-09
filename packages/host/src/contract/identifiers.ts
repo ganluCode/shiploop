@@ -1,7 +1,7 @@
 /**
  * F-002 身份与摘要纯函数（契约纯模块）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md
  * - §3.2 dataRootIdentity = lower_hex(sha256(utf8Bytes(canonicalRoot)))，
  *   Host 与 CLI 必须共用本实现，禁止两边各写一份；
  * - §4.1 hostInstanceId 为 RFC 4122 UUID v4 规范小写字符串；

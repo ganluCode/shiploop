@@ -1,6 +1,6 @@
 /**
- * F-014 文档核验：`docs/p02-1-operations.md` 的操作示例必须与真实 Host 生命周期
- * CLI 一致，`docs/p02-1-handoff.md` 与 `docs/acceptance/p02-1-f014-report.md` 必须
+ * F-014 文档核验：`docs/phases/p02/p02-1-operations.md` 的操作示例必须与真实 Host 生命周期
+ * CLI 一致，`docs/phases/p02/p02-1-handoff.md` 与 `docs/acceptance/p02-1-f014-report.md` 必须
  * 指向真实可复跑入口、锁边界与未实现能力。
  *
  * 定位：F-014 只交付文档（+ 本守护）；为避免文档与实现漂移，本套件在真实临时数据
@@ -25,8 +25,8 @@ import { getHostCliHelp, parseHostCliArgs } from '../../../packages/cli/src/inde
 import { createIsolatedHostEnvironment, type IsolatedHostEnvironment } from '../../helpers/host/index.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OPERATIONS_DOC_PATH = 'docs/p02-1-operations.md';
-const HANDOFF_DOC_PATH = 'docs/p02-1-handoff.md';
+const OPERATIONS_DOC_PATH = 'docs/phases/p02/p02-1-operations.md';
+const HANDOFF_DOC_PATH = 'docs/phases/p02/p02-1-handoff.md';
 const REPORT_DOC_PATH = 'docs/acceptance/p02-1-f014-report.md';
 const F013_EVIDENCE_DOC_PATH = 'docs/acceptance/evidence-p02-1/f013-regression-evidence.md';
 

@@ -1,5 +1,5 @@
 /**
- * F-003 文档核验：`docs/p03-1-task-strategy-selection.md` 记录的 Task 策略副本与
+ * F-003 文档核验：`docs/phases/p03/p03-1-task-strategy-selection.md` 记录的 Task 策略副本与
  * 来源选择契约必须与仓库实现事实一致（选择/回退优先级、来源与 sourceKey 词汇、
  * executionConfig 副本形态、拒绝矩阵、合法 ≠ 可执行、范围边界与张力记录），
  * 避免「文档另立一套」与后续 F-005/F-011 各自发明规则。
@@ -19,9 +19,9 @@ import {
 import { SETTINGS_SCHEMA_VERSION } from '../../../packages/core/src/ports/settings-schema.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-1-task-strategy-selection.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-1-task-strategy-selection.md';
 const contractDocPath = resolve(REPO_ROOT, CONTRACT_DOC_PATH);
-const PLAN_CONTRACT_DOC_PATH = resolve(REPO_ROOT, 'docs/p03-1-plan-import-contract.md');
+const PLAN_CONTRACT_DOC_PATH = resolve(REPO_ROOT, 'docs/phases/p03/p03-1-plan-import-contract.md');
 
 function readContractDoc(): string {
   expect(existsSync(contractDocPath)).toBe(true);

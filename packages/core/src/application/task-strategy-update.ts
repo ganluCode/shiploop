@@ -4,9 +4,9 @@
  *
  * 设计依据：p03-plan-approval PRD（版本 0.3）FR-1「批准前可 CAS 修改副本；
  * 项目默认或 complexity 改变不自动换模型；秘密正文不得落库；活动 Attempt
- * 禁止热改策略」、docs/p03-1-task-strategy-selection.md（F-003 副本/来源契约；
+ * 禁止热改策略」、docs/phases/p03/p03-1-task-strategy-selection.md（F-003 副本/来源契约；
  * 其范围边界将 Task 策略编辑留给本任务定案）与
- * docs/p03-2-task-strategy-edit-contract.md（本模块契约文档）。
+ * docs/phases/p03/p03-2-task-strategy-edit-contract.md（本模块契约文档）。
  *
  * 不变量：
  * - 编辑的是**已创建 Task 的完整 executionConfig 副本**：输入必须是完整

@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = resolve(process.cwd());
-const REPORT = join(ROOT, 'docs/p05-9-f008-delivery-report.md');
+const REPORT = join(ROOT, 'docs/phases/p05/p05-9-f008-delivery-report.md');
 const FEATURE = join(ROOT, 'test/index/phases/P05/features/P05-9/feature.json');
 const F008 = join(ROOT, 'test/index/phases/P05/features/P05-9/tasks/F-008.json');
 

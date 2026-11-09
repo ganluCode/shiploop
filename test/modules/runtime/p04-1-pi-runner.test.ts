@@ -2,6 +2,7 @@ import { recoveryRecordingForRequest } from '../../../packages/core/src/applicat
 import { expect, it, vi } from 'vitest';
 import type { RuntimeExecutionRequest } from '../../../packages/core/src/ports/runtime-execution.ts';
 import type { CommandProcessPort } from '../../../packages/core/src/ports/command-process.ts';
+import { CommandProcessError } from '../../../packages/core/src/ports/command-process.ts';
 import { createPiRunnerAdapter } from '../../../packages/host/src/runtime/pi-runner-adapter.ts';
 import { createPiWorkRunner, runPiWorkRunner } from '../../../packages/host/src/runtime/pi-runner.ts';
 import { piRunnerMessage, encodePiRunnerMessage, PI_RUNNER_MAX_MESSAGE_BYTES } from '../../../packages/host/src/runtime/pi-runner-protocol.ts';
@@ -58,6 +59,23 @@ it('[case:runner-launch-idempotency] concurrent starts and retries after spawn f
 });
 
 const time = '2026-10-20T00:00:00.000Z';
+it('preserves a controlled pre-spawn rejection and never treats unknown launch failures as stopped', async () => {
+  for (const reason of ['invalid_input', 'stop_unconfirmed'] as const) {
+    const adapter = createPiRunnerAdapter({ process: { start: async () => { throw new CommandProcessError(reason); } },
+      argv: ['runner'], cwd: '/trusted', environment: {}, confirm: async identity => ({ launchId: identity.launchId }) });
+    await expect(adapter.start(request())).rejects.toMatchObject({
+      reason: reason === 'invalid_input' ? 'runner_invalid_input' : 'runner_start_stop_unconfirmed',
+      name: 'RuntimeError',
+    });
+  }
+});
+
+it.each(['unsupported_platform','handshake_failed','confirmation_failed','start_aborted'] as const)(
+  'preserves bounded CommandProcess startup diagnostics: %s',async reason=>{
+    const adapter=createPiRunnerAdapter({process:{start:async()=>{throw new CommandProcessError(reason);}},
+      argv:['runner'],cwd:'/trusted',environment:{},confirm:async identity=>({launchId:identity.launchId})});
+    await expect(adapter.start(request())).rejects.toMatchObject({kind:'process',reason:`runner_start_${reason}`});
+  });
 const stop = { schemaVersion: 1 as const, confirmed: true, checkedAtUtc: time, detail: null };
 function event(sequence = 1): RuntimeEvent {
   return { schemaVersion: 1, eventId: `event-${sequence}`, kind: 'usage', sequence, occurredAtUtc: time,

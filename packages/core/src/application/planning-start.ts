@@ -303,6 +303,9 @@ export function createPlanningStartService(deps: PlanningStartServiceDeps = {}):
       const activePlanning = transaction.getActivePlanningContextForFeature(projectId, feature.id);
       if (activePlanning !== null) {
         throw publicError('conflict', PLANNING_IN_PROGRESS_REASON, {
+          contextId: activePlanning.id,
+          runId: activePlanning.runId,
+          constraint: 'planning_contexts_feature_active_unique',
           candidateId: activePlanning.candidateId,
           status: activePlanning.status,
         });

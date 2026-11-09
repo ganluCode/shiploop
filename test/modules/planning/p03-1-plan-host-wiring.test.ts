@@ -100,6 +100,7 @@ function samplePlan(titleSuffix = ''): Record<string, unknown> {
       {
         id: 't-2',
         title: '任务二',
+        languages: ['typescript', 'sql'],
         complexity: 'medium',
         acceptance: { criteria: ['任务二验收'] },
         dependsOn: ['t-1'],
@@ -392,6 +393,7 @@ describe('F-009 计划域 HostClient 纵向（真实 Host + SQLite）', () => {
       // tasks.get：策略副本与来源。
       const task = await s.client.getTask('t-2');
       expect(task.task.featureId).toBe(featureId);
+      expect(task.task.languages).toEqual(['sql', 'typescript']);
       expect(task.task.acceptance.criteria).toEqual(['任务二验收']);
       expect(task.task.configSourceKey).toBe('defaultStrategy');
     } finally {

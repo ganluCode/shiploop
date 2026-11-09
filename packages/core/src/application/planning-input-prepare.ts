@@ -6,7 +6,7 @@
  * I/O 不在数据库事务内；发布 staging→校验→ready）、core-design/04 §3
  * （planning Task 使用已确认的需求与规划输入版本，不要求存在有效交付计划）、
  * core-design/05 §3（Attempt 固定输入引用与摘要）。实施契约：
- * docs/p05-1-planning-candidate-contract.md §6/§7。
+ * docs/phases/p05/p05-1-planning-candidate-contract.md §6/§7。
  *
  * 不变量：
  * - 与编码 execution-input-prepare 同一三阶段纪律，但**不要求业务计划批准**：
@@ -53,7 +53,7 @@ import {
   computePlanningCodeBaselineDigest,
   computePlanningPermissionsDigest,
   computePlanningStrategyCopyDigest,
-  PLANNING_FIXED_GUIDANCE,
+  PLANNING_FIXED_GUIDANCE_TEMPLATE,
   PLANNING_GROUP_JSON_MEDIA_TYPE,
   PLANNING_GROUP_PROMPT_MEDIA_TYPE,
   PLANNING_INPUT_GROUP_LOCATOR_PREFIX,
@@ -144,6 +144,7 @@ const PLANNING_TASK_TERMINAL_STATUSES = ['passed', 'failed', 'skipped', 'cancell
 
 /** 准备服务装配依赖（全部窄端口/用例；不接触具体适配器）。 */
 export interface PlanningInputPrepareServiceDeps {
+  readonly promptTemplates: import('../ports/prompt-templates.js').PromptTemplateCatalog;
   readonly views: PlanningInputPreparationViewStore;
   readonly inputs: ExecutionInputService;
   readonly artifacts: ArtifactStore;
@@ -252,6 +253,7 @@ function recomputeBasisDigest(
 
 /** 纯组装输入（全部为已校验形态；无 I/O）。 */
 export interface PlanningContextBuildInput {
+  readonly promptTemplates: import('../ports/prompt-templates.js').PromptTemplateCatalog;
   readonly view: PlanningInputPreparationView;
   readonly permissions: { readonly grants: readonly string[] };
   readonly requiredInputs: readonly import('../ports/execution-input.js').ExecutionInputRef[];
@@ -303,7 +305,9 @@ export function buildPlanningInputBodies(
   const permissionsDigest = computePlanningPermissionsDigest(permissions.grants);
   const codeBaselineDigest = computePlanningCodeBaselineDigest(codeBaseline);
 
+  const templates = input.promptTemplates.forLocale(view.locale ?? input.promptTemplates.locale);
   const snapshot: PlanningInputSnapshot = {
+    locale: templates.locale,
     schemaVersion: PLANNING_INPUT_GROUP_SCHEMA_VERSION,
     kind: 'planning-input',
     projectId: view.context.projectId,
@@ -345,83 +349,28 @@ export function buildPlanningInputBodies(
 
   /* prompt 骨架（固定指导 + 全部必需内容；不内联正文）。 */
   const strategyCopy = view.planningTask.executionConfig;
-  const lines: string[] = [PLANNING_FIXED_GUIDANCE, ''];
-  lines.push('## Planning target');
-  lines.push(`- projectId: ${snapshot.projectId}`);
-  lines.push(`- phaseId: ${snapshot.phaseId}`);
-  lines.push(`- featureId: ${snapshot.featureId}`);
-  lines.push(`- runId: ${snapshot.runId}（purpose=plan，一次性规划）`);
-  lines.push(`- planningTaskId: ${snapshot.planningTaskId}`);
-  lines.push(`- candidateId: ${snapshot.candidateId}`);
-  lines.push(
-    `- target: featureRevision=${snapshot.target.featureRevision}，planDigest=${snapshot.target.planDigest ?? 'null（首次规划草稿，无既有业务计划）'}，planStatus=${snapshot.target.planStatus}`,
-  );
-  lines.push('');
-  lines.push(`## Planning request (frozen at planning.start; inputDigest=${basis.inputDigest})`);
-  lines.push('### Constraints');
-  if (basis.constraints.length === 0) {
-    lines.push('- （无显式约束）');
-  } else {
-    for (const constraint of basis.constraints) {
-      lines.push(`- ${constraint}`);
-    }
-  }
-  lines.push('### Acceptance (required; complete; 不得删项)');
-  for (const criterion of basis.acceptance.criteria) {
-    lines.push(`- ${criterion}`);
-  }
-  lines.push('### Requirement artifacts (read each via reference and verify hash)');
-  if (basis.requirementRefs.length === 0) {
-    lines.push('- （无需求制品引用）');
-  } else {
-    for (const ref of basis.requirementRefs) {
-      lines.push(
-        `- artifactId=${ref.artifactId}${ref.contentHash === undefined ? '' : ` contentHash=${ref.contentHash}`}`,
-      );
-    }
-  }
-  lines.push('');
-  lines.push('## Approval strategy (human decision boundary)');
-  lines.push(`- approvalMode: ${basis.strategy.approvalMode}（候选由人工批准；模型不能自批通过）`);
-  lines.push(
-    `- taskLimit: ${basis.strategy.taskLimit === null ? 'null（不设上限）' : String(basis.strategy.taskLimit)}`,
-  );
-  lines.push('');
-  lines.push('## Code baseline (designated snapshot; read-only; verify before relying)');
-  lines.push(`- worktreeId: ${codeBaseline.worktreeId}`);
-  lines.push(`- headCommit: ${codeBaseline.headCommit}`);
-  lines.push(`- codeDigest: ${codeBaseline.codeDigest}`);
-  lines.push('');
-  lines.push(
-    `## Purpose strategy (actual copy; source: ${view.planningTask.configSource}${
-      view.planningTask.configSourceKey === null ? '' : `; key: ${view.planningTask.configSourceKey}`
-    })`,
-  );
-  lines.push(`- runtime: ${strategyCopy.runtime}`);
-  lines.push(`- provider: ${strategyCopy.provider}`);
-  lines.push(`- model: ${strategyCopy.model}`);
-  if (strategyCopy.credentialRef !== undefined) {
-    lines.push(`- credentialRef: ${strategyCopy.credentialRef}（凭据只有引用，不内联正文）`);
-  }
-  if (strategyCopy.endpointRef !== undefined) {
-    lines.push(`- endpointRef: ${strategyCopy.endpointRef}`);
-  }
-  lines.push('');
-  lines.push('## Permissions');
-  if (permissions.grants.length === 0) {
-    lines.push('- （空集亦是证据：P03 边界宣告，不是读取失败兜底）');
-  } else {
-    for (const grant of permissions.grants) {
-      lines.push(`- ${grant}`);
-    }
-  }
-  lines.push('');
-  lines.push('## Required inputs (must read each before planning; verify hash)');
-  for (const ref of requiredInputs) {
-    lines.push(
-      `- purpose=${ref.purpose} artifactId=${ref.artifactId} version=${ref.version} contentHash=${ref.contentHash} sizeBytes=${ref.sizeBytes} locator=${ref.locator}`,
-    );
-  }
+  const PLANNING_FIXED_GUIDANCE = templates.render(PLANNING_FIXED_GUIDANCE_TEMPLATE);
+  const moduleIds = ['runtime/reply-language.md', PLANNING_FIXED_GUIDANCE_TEMPLATE, 'planner/complexity.md', 'planner/task-metadata.md', 'planner/candidate-schema.md', 'planner/context.md',
+    ...(strategyCopy.credentialRef === undefined ? [] : ['planner/credential.md'])];
+  const lines = [PLANNING_FIXED_GUIDANCE, templates.render('runtime/reply-language.md'), templates.render('planner/complexity.md'), templates.render('planner/task-metadata.md'),
+    templates.render('planner/candidate-schema.md', { projectId: JSON.stringify(snapshot.projectId), featureId: JSON.stringify(snapshot.featureId),
+      runId: JSON.stringify(snapshot.runId), candidateId: JSON.stringify(snapshot.candidateId) }),
+    templates.render('planner/context.md', {
+      projectId: snapshot.projectId, phaseId: snapshot.phaseId, featureId: snapshot.featureId, runId: snapshot.runId,
+      planningTaskId: snapshot.planningTaskId, candidateId: snapshot.candidateId, revision: String(snapshot.target.featureRevision),
+      planDigest: snapshot.target.planDigest ?? 'null', planStatus: snapshot.target.planStatus, inputDigest: basis.inputDigest,
+      constraints: basis.constraints.map(value => `- ${value}`).join('\n') || '- (none)',
+      acceptance: basis.acceptance.criteria.map(value => `- ${value}`).join('\n'),
+      requirements: basis.requirementRefs.map(ref => `- artifactId=${ref.artifactId}${ref.contentHash === undefined ? '' : ` contentHash=${ref.contentHash}`}`).join('\n') || '- (none)',
+      approvalMode: basis.strategy.approvalMode, taskLimit: basis.strategy.taskLimit === null ? 'null' : String(basis.strategy.taskLimit),
+      worktreeId: codeBaseline.worktreeId, headCommit: codeBaseline.headCommit, codeDigest: codeBaseline.codeDigest,
+      configSource: view.planningTask.configSource, configSourceKey: view.planningTask.configSourceKey === null ? '' : `; key: ${view.planningTask.configSourceKey}`,
+      runtime: String(strategyCopy.runtime), provider: String(strategyCopy.provider), model: String(strategyCopy.model),
+      credentialLine: strategyCopy.credentialRef === undefined ? '' : templates.render('planner/credential.md', { credentialRef: String(strategyCopy.credentialRef) }) + '\n',
+      endpointLine: strategyCopy.endpointRef === undefined ? '' : `- endpointRef: ${strategyCopy.endpointRef}\n`,
+      permissions: permissions.grants.map(value => `- ${value}`).join('\n') || '- (none)',
+      requiredInputs: requiredInputs.map(ref => `- purpose=${ref.purpose} artifactId=${ref.artifactId} version=${ref.version} contentHash=${ref.contentHash} sizeBytes=${ref.sizeBytes} locator=${ref.locator}`).join('\n'),
+    })];
   const prompt = lines.join('\n');
   const promptBytes = utf8Bytes(prompt);
   if (promptBytes > budget.maxPromptBytes) {
@@ -526,6 +475,7 @@ export function buildPlanningInputBodies(
   const promptDigest = domainDigest(PLANNING_PROMPT_DIGEST_DOMAIN, prompt);
   const snapshotDigest = domainDigest(PLANNING_SNAPSHOT_DIGEST_DOMAIN, stableStringify(snapshot));
   const manifest: PlanningInputManifest = {
+    locale: templates.locale,
     schemaVersion: PLANNING_INPUT_GROUP_SCHEMA_VERSION,
     projectId: snapshot.projectId,
     phaseId: snapshot.phaseId,
@@ -535,6 +485,7 @@ export function buildPlanningInputBodies(
     candidateId: snapshot.candidateId,
     sources,
     promptDigest,
+    promptTemplates: templates.provenance(moduleIds),
   };
   const manifestDigest = domainDigest(PLANNING_MANIFEST_DIGEST_DOMAIN, stableStringify(manifest));
 
@@ -841,7 +792,7 @@ export function createPlanningInputPrepareService(
       let built: PlanningContextBuildResult;
       try {
         built = buildPlanningInputBodies(
-          { view, permissions: { grants: [...permissionsFace.grants] }, requiredInputs: captured.refs, codeBaseline },
+          { view, permissions: { grants: [...permissionsFace.grants] }, requiredInputs: captured.refs, codeBaseline, promptTemplates: deps.promptTemplates },
           budget,
         );
       } catch (cause) {
@@ -879,6 +830,7 @@ export function createPlanningInputPrepareService(
         candidateId: view.context.candidateId,
         schemaVersion: built.schemaVersion,
         group: { snapshot: snapshotRef, manifest: manifestRef, prompt: promptRef },
+        codeBaseline,
         requiredInputs: captured.refs,
         digests: { ...built.digests },
         preparedAtUtcMs: nowMs(),

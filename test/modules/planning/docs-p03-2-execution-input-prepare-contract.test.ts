@@ -1,5 +1,5 @@
 /**
- * P03-2 / F-006 文档核验：`docs/p03-2-execution-input-prepare-contract.md` 记录的
+ * P03-2 / F-006 文档核验：`docs/phases/p03/p03-2-execution-input-prepare-contract.md` 记录的
  * 执行输入准备契约必须与仓库实现事实一致（三阶段结构与事务边界、制品组身份、
  * 最终重核与不误报纪律、失败证据与幂等、失败原因词汇与公开错误映射、装配与
  * 预算），避免「文档另立一套」与后续 Host/CLI 接线任务（F-007/F-008）及
@@ -40,7 +40,7 @@ import {
 import { CONTEXT_INPUT_SCHEMA_VERSION } from '../../../packages/core/src/ports/context-build.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-2-execution-input-prepare-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-2-execution-input-prepare-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

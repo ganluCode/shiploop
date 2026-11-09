@@ -186,6 +186,7 @@ function revisedPlan(artifactIds: { readonly src: string; readonly req: string }
       {
         id: 't-2',
         title: '任务二（修订标题）',
+        languages: ['typescript'],
         complexity: 'low',
         acceptance: { criteria: ['任务二验收（修订）'] },
         dependsOn: ['t-1'],
@@ -193,6 +194,7 @@ function revisedPlan(artifactIds: { readonly src: string; readonly req: string }
       {
         id: 't-4',
         title: '任务四',
+        languages: ['typescript', 'sql'],
         complexity: 'low',
         acceptance: { criteria: ['任务四验收'] },
         dependsOn: ['t-2'],
@@ -505,6 +507,8 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
     });
     // t-4（新建）：按修订时当前配置复制策略（modelMap.low 已更新为 claude-sonnet）。
     const t4 = s.rowBy('tasks', 't-4')!;
+    expect(s.rowBy('tasks', 't-2')!.languages).toBe('["typescript"]');
+    expect(t4.languages).toBe('["sql","typescript"]');
     expect(t4).toMatchObject({
       title: '任务四',
       complexity: 'low',

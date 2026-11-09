@@ -1,5 +1,5 @@
 /**
- * F-001 文档核验：`docs/p01-4-acceptance-contract.md` 声明的 P01-4 验收约定与检查清单
+ * F-001 文档核验：`docs/phases/p01/p01-4-acceptance-contract.md` 声明的 P01-4 验收约定与检查清单
  * 必须与仓库中真实存在的前序能力、常量、迁移与测试入口一致，避免「文档另立一套」与
  * 实现漂移，并守护「必需检查未运行/夹具失败不得聚合为通过」的 fail-closed 纪律。
  *
@@ -16,7 +16,7 @@ import { SETTINGS_SCHEMA_VERSION } from '../../../packages/core/src/ports/settin
 import { SETTINGS_EXPORT_FORMAT_VERSION } from '../../../packages/core/src/application/configuration-service.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p01-4-acceptance-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p01/p01-4-acceptance-contract.md';
 const contractDoc = readFileSync(resolve(REPO_ROOT, CONTRACT_DOC_PATH), 'utf-8');
 
 /** F-001 §2.1 冻结的必需检查 ID（顺序即报告与聚合的固定顺序）。 */

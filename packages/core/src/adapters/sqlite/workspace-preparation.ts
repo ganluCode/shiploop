@@ -3,6 +3,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { createCompletedReceipt } from '../../ports/commands.js';
 import { createResultRef } from '../../ports/command-receipts.js';
 import { StorageError } from '../../ports/errors.js';
+import { isPlanningAttemptSnapshot } from '../../ports/attempt-store.js';
+import { computePlanningCodeBaselineDigest } from '../../ports/planning-input-prepare.js';
 import { stableStringify } from '../../ports/feature-plan.js';
 import { validateWorkProcessIdentity, validateWorkResourceIdentity } from '../../ports/work-resources.js';
 import type { WorkResourceAccess, WorkWorkspaceAuthority } from '../../ports/work-resources.js';
@@ -55,18 +57,28 @@ export function createSqliteWorkspacePreparationStore(session: SqliteStorageSess
     const run = executions.getExecutionRunInTransaction(identity.projectId, input.runId);
     const batch = executions.getExecutionBatchInTransaction(identity.projectId, run.batchId);
     if (run.featureId !== attempt.featureId || batch.featureId !== attempt.featureId) fail('authorization_scope_mismatch');
-    if (!db.prepare("SELECT id FROM command_receipts WHERE operation = 'execution.start' AND status = 'accepted' AND operation_id = ? AND project_id = ?").get(batch.id, identity.projectId)) fail('committed_authorization_required');
+    const planning = isPlanningAttemptSnapshot(attempt.inputSnapshot) ? attempt.inputSnapshot : null;
+    const authorizationOperation = planning === null ? 'execution.start' : 'planning.start';
+    if (!db.prepare("SELECT id FROM command_receipts WHERE operation = ? AND status = 'accepted' AND operation_id = ? AND project_id = ?").get(authorizationOperation, batch.id, identity.projectId)) fail('committed_authorization_required');
     if (live && (!['queued', 'running'].includes(run.status) || !['queued', 'running'].includes(batch.status)
       || state.getProject(identity.projectId).status !== 'active'
       || (db.prepare('SELECT status, manual_block FROM tasks WHERE id = ?').get(input.taskId) as { status: string; manual_block: number }).manual_block !== 0
       || (db.prepare('SELECT status FROM tasks WHERE id = ?').get(input.taskId) as { status: string }).status !== 'running')) fail('execution_no_longer_authorized');
     const binding = state.getRepositoryBinding(identity.projectId);
-    const baseline = run.inputSnapshot.workspaceBaseline as { repositoryBindingId?: unknown; repositoryBindingRevision?: unknown; baseCommit?: unknown } | undefined;
+    if (planning !== null && (planning.codeBaseline === undefined ||
+      computePlanningCodeBaselineDigest(planning.codeBaseline) !== planning.digests.codeBaselineDigest)) fail('confirmed_planning_baseline_required');
+    const baseline = (planning === null ? run.inputSnapshot.workspaceBaseline : {
+      repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
+      baseCommit: planning.codeBaseline!.headCommit,
+    }) as { repositoryBindingId?: unknown; repositoryBindingRevision?: unknown; baseCommit?: unknown } | undefined;
     if (!baseline || baseline.repositoryBindingId !== binding.id || baseline.repositoryBindingRevision !== binding.bindingRevision) fail('confirmed_baseline_or_current_binding_required');
     const baseCommit = validateWorkspaceCommit(baseline!.baseCommit);
     options.integrationBaselineGate?.({ projectId: identity.projectId, featureId: attempt.featureId, baseCommit });
     if (binding.gitCommonDir === null) fail('git_common_dir_required');
-    return { binding, featureId: attempt.featureId, baseCommit };
+    const feature = db.prepare<[string, string], { branch_name: string | null }>(
+      'SELECT branch_name FROM features WHERE project_id = ? AND id = ?').get(identity.projectId, attempt.featureId);
+    if (!feature?.branch_name) fail('feature_branch_name_required');
+    return { binding, featureId: attempt.featureId, baseCommit, branchName: feature!.branch_name! };
   }
   function command(input: WorkspacePreparationInput, step: string, result: Record<string, unknown>, commandId = input.operationId) {
     const timestamp = new Date(now()).toISOString();
@@ -126,7 +138,7 @@ export function createSqliteWorkspacePreparationStore(session: SqliteStorageSess
       const baseline = validateWorkspaceBaseline(rawBaseline);
       return session.transactWrite('Workspace.prepare.intent', () => {
         const auth = authorize(input);
-        if (baseline.baseCommit !== auth.baseCommit || baseline.repositoryBindingId !== auth.binding.id
+        if (baseline.branch !== auth.branchName || baseline.baseCommit !== auth.baseCommit || baseline.repositoryBindingId !== auth.binding.id
           || baseline.repositoryBindingRevision !== auth.binding.bindingRevision || baseline.repoIdentity !== auth.binding.repoIdentity
           || baseline.gitCommonDir !== auth.binding.gitCommonDir) fail('confirmed_baseline_mismatch');
         const workspaceKey = `workspace:${createHash('sha256').update(JSON.stringify([baseline.repoIdentity, baseline.canonicalPath])).digest('hex')}`;

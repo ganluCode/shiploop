@@ -1,7 +1,7 @@
 /**
  * F-004 P02-4 重复 init、同命令重放与参数冲突的跨客户端真实验收场景。
  *
- * 对应 docs/p02-4-acceptance-contract.md §2.1 冻结的两个必需检查（全部 required）：
+ * 对应 docs/phases/p02/p02-4-acceptance-contract.md §2.1 冻结的两个必需检查（全部 required）：
  * - `P02-FR2-DUPLICATE-INIT`：两个真实 dist CLI 对同规范路径及其真实路径别名
  *   （fixture symlink，realpath 后同一仓库）重复 init——得到同一 `projectId`；
  *   项目/绑定各只有一份；原名称、描述、标签和项目配置未被重复初始化覆盖

@@ -2,7 +2,7 @@
  * P08-2 / F-001 Todo CLI 演示需求输入与验收契约冻结（纯本地文件/常量断言）。
  *
  * 守护对象：`acceptance/p08.todo-requirements.json`（冻结需求输入）、
- * `docs/p08-2-todo-requirements.md`（人读契约）与
+ * `docs/phases/p08/p08-2-todo-requirements.md`（人读契约）与
  * `scripts/acceptance/p08-todo-requirements.ts`（fail-closed 校验入口）。
  *
  * 覆盖（全部为真实文件/真实校验函数断言，无 mock、无网络、无模型）：
@@ -41,7 +41,7 @@ import {
 } from '../../../scripts/acceptance/p08-todo-requirements.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const DOC_PATH = 'docs/p08-2-todo-requirements.md';
+const DOC_PATH = 'docs/phases/p08/p08-2-todo-requirements.md';
 const TEST_FILE = 'test/modules/acceptance/p08-2-f001-todo-requirements.test.ts';
 const requirements = loadTodoDemoRequirements(REPO_ROOT);
 const rawRequirements: unknown = JSON.parse(readFileSync(resolve(REPO_ROOT, P08_TODO_REQUIREMENTS_PATH), 'utf8'));

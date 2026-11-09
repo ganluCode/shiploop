@@ -1,0 +1,1 @@
+- (index bounded: {{kept}} kept of {{available}} available)

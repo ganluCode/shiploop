@@ -1,0 +1,98 @@
+# P03 阶段文档
+
+[返回文档索引](../../README.md)
+
+契约、操作说明、交接和阶段实施记录按原文件名保留，共 92 份。验收证据仍在 [acceptance](../../acceptance/)。
+
+- [p03-1-handoff.md](p03-1-handoff.md)：P03-1 领域归属与确定性计划导入 — 交接（P03-1 → P03-2 及 P03-10）
+- [p03-1-plan-import-contract.md](p03-1-plan-import-contract.md)：P03-1 单 Feature 草稿计划导入 — 校验、DAG 与摘要契约
+- [p03-1-task-strategy-selection.md](p03-1-task-strategy-selection.md)：P03-1 Task 策略副本与来源选择契约（F-003）
+- [p03-10-f001-fixture.md](p03-10-f001-fixture.md)：P03-10 / F-001 真实资源验收夹具交接
+- [p03-10-f002-checklist.md](p03-10-f002-checklist.md)：P03-10 / F-002 P03 阶段验收检查清单与受校验配置
+- [p03-10-f003-three-task-chain.md](p03-10-f003-three-task-chain.md)：F-003 三 Task 链验收与历史诊断
+- [p03-10-f004-feature-report.md](p03-10-f004-feature-report.md)：F-004：Core Feature 完整执行报告
+- [p03-10-f005-host-cli-report.md](p03-10-f005-host-cli-report.md)：F-005：授权 Host 与构建 CLI 的完整执行报告
+- [p03-10-f006-report-text.md](p03-10-f006-report-text.md)：F-006：执行报告可审阅文本视图与人工操作提示
+- [p03-10-f007-execution-negatives.md](p03-10-f007-execution-negatives.md)：P03-10 / F-007 执行负例组
+- [p03-10-f008-approval-blocking-snapshot-negatives.md](p03-10-f008-approval-blocking-snapshot-negatives.md)：F-008 阶段负例组
+- [p03-10-f009-runtime-negatives.md](p03-10-f009-runtime-negatives.md)：F-009 — FakeRuntime 异常、输出与恢复负例
+- [p03-10-f010-input-assembly-regression.md](p03-10-f010-input-assembly-regression.md)：P03-10 / F-010 输入装配历史增长与必需输入完整性确定性回归
+- [p03-10-f011-selection-gates.md](p03-10-f011-selection-gates.md)：P03-10 / F-011 可信局部测试选择、安全回退与全量门禁阶段负例
+- [p03-10-f012-git-faults.md](p03-10-f012-git-faults.md)：F-012 Git 故障与 worktree 现场保护
+- [p03-10-f015-recovery.md](p03-10-f015-recovery.md)：F-015 Host 强杀恢复与同 Task 续接场景
+- [p03-10-f016-phase-report.md](p03-10-f016-phase-report.md)：F-016 P03 阶段报告聚合、证据索引与严格退出结论
+- [p03-10-f018-manual-acceptance.md](p03-10-f018-manual-acceptance.md)：F-018 定向人工验收与阶段验收分离
+- [p03-10-f019-delivery-report.md](p03-10-f019-delivery-report.md)：F-019 交付报告：P03-10 交付整理、P03 人工验收清单与 P04 进入门槛记录
+- [p03-10-f019-p03-manual-checklist.md](p03-10-f019-p03-manual-checklist.md)：F-019 P03 人工验收清单（待人工核对）
+- [p03-10-f019-p04-gate-record.md](p03-10-f019-p04-gate-record.md)：F-019 P04 进入门槛记录（待负责人签署）
+- [p03-10-task-local-commit.md](p03-10-task-local-commit.md)：Task 本地受控提交与放行
+- [p03-2-cli-approval-input-operations.md](p03-2-cli-approval-input-operations.md)：P03-2 计划决策 / Task 策略编辑 / 固定输入 CLI 操作说明（F-008）
+- [p03-2-context-build-contract.md](p03-2-context-build-contract.md)：P03-2 有版本的 ContextBuilder 契约（F-005；F-011/P03-8-F-001 扩展）
+- [p03-2-execution-input-contract.md](p03-2-execution-input-contract.md)：P03-2 执行必需输入受控采集与校验读取契约（F-004）
+- [p03-2-execution-input-prepare-contract.md](p03-2-execution-input-prepare-contract.md)：P03-2 执行输入准备与制品组契约（F-006）
+- [p03-2-handoff.md](p03-2-handoff.md)：P03-2 计划批准、Task 策略与固定执行输入 — 交接（P03-2 → P03-3/4 及 P03-10）
+- [p03-2-plan-approval-contract.md](p03-2-plan-approval-contract.md)：P03-2 计划批准/拒绝决策契约（F-002）
+- [p03-2-plan-approval-verification-contract.md](p03-2-plan-approval-verification-contract.md)：P03-2 有效批准核验与失效处理契约（F-003）
+- [p03-2-task-strategy-edit-contract.md](p03-2-task-strategy-edit-contract.md)：P03-2 Task 策略副本授权 CAS 编辑契约（F-001）
+- [p03-3-attempt-budget-contract.md](p03-3-attempt-budget-contract.md)：P03-3 / F-006 Task 尝试预算预占与代码尝试分类记账契约
+- [p03-3-budget-revision-contract.md](p03-3-budget-revision-contract.md)：P03-3 / F-009 批次预算显式修订契约
+- [p03-3-cli-execution-operations.md](p03-3-cli-execution-operations.md)：P03-3 执行授权 CLI 操作说明（F-012）
+- [p03-3-execution-budget-contract.md](p03-3-execution-budget-contract.md)：P03-3 执行预算契约（F-001：有限分层预算校验、maxCodeAttempts 兼容规则与并发授权政策）
+- [p03-3-execution-budget-query-contract.md](p03-3-execution-budget-query-contract.md)：P03-3 / F-010 执行预算只读查询契约
+- [p03-3-execution-preview-contract.md](p03-3-execution-preview-contract.md)：P03-3 执行预览契约（F-004：单 Feature prepare 预览、固定授权范围与完整输入身份）
+- [p03-3-execution-schema-contract.md](p03-3-execution-schema-contract.md)：P03-3 执行域 Schema 契约（F-002：单 Feature ExecutionBatch、Run 与预算修订记录迁移 + Drizzle Schema）
+- [p03-3-execution-start-contract.md](p03-3-execution-start-contract.md)：P03-3 显式执行启动契约（F-005：ExecutionController 启动、同 Batch 后续 Run、原子提交范围、runsCreated、Run、回执与事件）
+- [p03-3-handoff.md](p03-3-handoff.md)：P03-3 集成验收与交接（F-014）
+- [p03-3-run-outcome-settlement-contract.md](p03-3-run-outcome-settlement-contract.md)：P03-3 / F-008 Run 结果结算与连续无进展契约
+- [p03-3-runtime-start-contract.md](p03-3-runtime-start-contract.md)：P03-3 / F-007 Runtime 启动额度预占契约
+- [p03-3-work-command-receipts-contract.md](p03-3-work-command-receipts-contract.md)：P03-3 Work accepted Receipt Contract (F-003)
+- [p03-3a-handoff.md](p03-3a-handoff.md)：P03-3A 通用恢复协议交接（F-005）
+- [p03-3a-pi-durable-capability-matrix.md](p03-3a-pi-durable-capability-matrix.md)：F-004: Pi Durable 版本锁定实验与 P04 决策
+- [p03-3a-runtime-recovery-contract.md](p03-3a-runtime-recovery-contract.md)：P03-3A Runtime Recovery Contract
+- [p03-3a-synthetic-recovery-fixtures.md](p03-3a-synthetic-recovery-fixtures.md)：P03-3A Synthetic Recovery Fixtures
+- [p03-4-attempt-lifecycle-contract.md](p03-4-attempt-lifecycle-contract.md)：P03-4 Attempt Lifecycle Contract
+- [p03-4-attempt-persistence-contract.md](p03-4-attempt-persistence-contract.md)：P03-4 Attempt Persistence Contract
+- [p03-4-schedule-query-contract.md](p03-4-schedule-query-contract.md)：P03-4 Schedule & Attempt Audit Query Contract
+- [p03-4-task-claim-contract.md](p03-4-task-claim-contract.md)：P03-4 Atomic Task Claim Contract
+- [p03-4-task-dag-readiness-contract.md](p03-4-task-dag-readiness-contract.md)：P03-4 Task DAG Readiness Contract (F-002)
+- [p03-4-work-resource-contract.md](p03-4-work-resource-contract.md)：P03-4 Work Resource Gates
+- [p03-5-cli-workspace-operations.md](p03-5-cli-workspace-operations.md)：P03-5 工作区 CLI 操作说明（F-012）
+- [p03-5-handoff.md](p03-5-handoff.md)：P03-5 Feature Worktree 与失败现场保留 — 集成回归与交接（P03-5 → P03-6/8/9 及 P03-10）
+- [p03-5-workspace-cleanup-execution-contract.md](p03-5-workspace-cleanup-execution-contract.md)：Workspace Safe Cleanup (F-009)
+- [p03-5-workspace-discard-contract.md](p03-5-workspace-discard-contract.md)：Manual Workspace Discard Preview And Confirm (F-010)
+- [p03-5-workspace-host-integration-contract.md](p03-5-workspace-host-integration-contract.md)：P03-5 / F-011 Workspace Host 接线与状态查询契约
+- [p03-5-workspace-inspection-contract.md](p03-5-workspace-inspection-contract.md)：P03-5 Workspace Inspection Contract
+- [p03-5-workspace-preparation-recovery-contract.md](p03-5-workspace-preparation-recovery-contract.md)：Feature Worktree Preparation Recovery (F-006)
+- [p03-5-workspace-retention-contract.md](p03-5-workspace-retention-contract.md)：Workspace Failure Retention (F-007)
+- [p03-6-handoff.md](p03-6-handoff.md)：P03-6 异步 Runtime 契约与 FakeRuntime 执行接线 — 真实资源纵向集成与交接（P03-6 → P03-7/9、P04 及 P03-10）
+- [p03-6-session-query-contract.md](p03-6-session-query-contract.md)：P03-6 Work Session & Evidence Query Contract
+- [p03-6-work-session-contract.md](p03-6-work-session-contract.md)：P03-6 Work Session Persistence Contract
+- [p03-7-code-attempt-budget-contract.md](p03-7-code-attempt-budget-contract.md)：P03-7 / F-009 代码尝试预算结算
+- [p03-7-f012-handoff.md](p03-7-f012-handoff.md)：P03-7 F-012 有限返工与显式验证继续
+- [p03-7-f013-task-evidence-query-contract.md](p03-7-f013-task-evidence-query-contract.md)：P03-7 F-013 Task 机器证据、人审事项与有限返工链查询契约
+- [p03-7-f014-cli-approval-continue-contract.md](p03-7-f014-cli-approval-continue-contract.md)：P03-7 F-014 人审决定/显式验证继续 CLI-Host 命令链接线契约
+- [p03-7-f016-feature-delivery.md](p03-7-f016-feature-delivery.md)：P03-7 Feature 交付记录（F-016 跨模块接线验收）
+- [p03-8-f001-delivery-policy-contract.md](p03-8-f001-delivery-policy-contract.md)：P03-8 / F-001 交付政策与用户 Git 身份契约（配置体系与执行快照）
+- [p03-8-f002-git-operation-contract.md](p03-8-f002-git-operation-contract.md)：P03-8 / F-002 受控 Git 提交意图与操作回执契约（持久化、幂等与 CAS）
+- [p03-8-f003-controlled-git-commit.md](p03-8-f003-controlled-git-commit.md)：P03-8 F-003：受控 Git 提交执行器
+- [p03-8-f008-delivery-commands.md](p03-8-f008-delivery-commands.md)：P03-8 F-008 Feature delivery command contract
+- [p03-8-f009-git-operation-queries.md](p03-8-f009-git-operation-queries.md)：P03-8 F-009：Git 意图、实际提交与操作回执查询契约
+- [p03-8-f010-feature-delivery-query.md](p03-8-f010-feature-delivery-query.md)：P03-8 F-010：Feature 分轴结果查询契约
+- [p03-8-f011-cli-delivery-operations.md](p03-8-f011-cli-delivery-operations.md)：P03-8 Feature 交付 CLI 操作说明（F-011）
+- [p03-9-f001-pause-control-contract.md](p03-9-f001-pause-control-contract.md)：P03-9 / F-001 Run/Batch Task 边界暂停契约
+- [p03-9-f002-cancel-control-contract.md](p03-9-f002-cancel-control-contract.md)：P03-9 / F-002 Run/Batch 取消意图与终态竞争契约
+- [p03-9-f003-stop-evidence-contract.md](p03-9-f003-stop-evidence-contract.md)：P03-9 / F-003 取消接入 Runtime/Verifier 停止与证据契约
+- [p03-9-f004-time-limits-contract.md](p03-9-f004-time-limits-contract.md)：P03-9 / F-004 分层时间上限与超时归因契约
+- [p03-9-f005-startup-recovery-contract.md](p03-9-f005-startup-recovery-contract.md)：P03-9 / F-005 Work 启动恢复门控
+- [p03-9-f006-recovery-reconciliation-contract.md](p03-9-f006-recovery-reconciliation-contract.md)：P03-9 / F-006 恢复现场核对与占用收尾契约
+- [p03-9-f007-recovery-continuation-contract.md](p03-9-f007-recovery-continuation-contract.md)：P03-9 / F-007 同 Task 通用续接决策与来源快照契约
+- [p03-9-f008-workflow-resume-contract.md](p03-9-f008-workflow-resume-contract.md)：P03-9 / F-008 显式工作流 resume 契约
+- [p03-9-f009-finalization-retry-contract.md](p03-9-f009-finalization-retry-contract.md)：P03-9 / F-009 retryFinal 资格与受限 finalization scope 契约
+- [p03-9-f010-finalization-run-contract.md](p03-9-f010-finalization-run-contract.md)：P03-9 / F-010 finalization-only 新 Run 契约
+- [p03-9-f011-finalization-execution-contract.md](p03-9-f011-finalization-execution-contract.md)：P03-9 / F-011 finalization-only Run 执行契约
+- [p03-9-f012-finalization-completion-contract.md](p03-9-f012-finalization-completion-contract.md)：P03-9 / F-012 finalization-only Run 审批继续与完成契约
+- [p03-9-f013-control-recovery-query-contract.md](p03-9-f013-control-recovery-query-contract.md)：P03-9 / F-013 控制进度、恢复诊断与 finalization 收尾结果查询契约
+- [p03-9-f014-host-control-wiring-contract.md](p03-9-f014-host-control-wiring-contract.md)：P03-9 / F-014 Run/Batch 控制、retryFinal 与恢复诊断 Host 接线
+- [p03-9-f015-cli-control-contract.md](p03-9-f015-cli-control-contract.md)：P03-9 / F-015 Run/Batch 控制、retryFinal 与恢复诊断 CLI 接线
+- [p03-9-f017-e2e-regression.md](p03-9-f017-e2e-regression.md)：P03-9 / F-017 仅收尾重试 Host/CLI 端到端回归
+- [p03-9-handoff.md](p03-9-handoff.md)：P03-9 暂停、取消与幂等恢复收尾 — Feature 交付与前序接口交接

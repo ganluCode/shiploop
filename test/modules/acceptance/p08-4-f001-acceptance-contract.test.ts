@@ -3,7 +3,7 @@
  *
  * 守护对象：`acceptance/p08.checklist.json`、`acceptance/p08.config.json`、
  * `acceptance/p08.entry.json` 与 `scripts/acceptance/p08-config.ts` 的
- * fail-closed 校验入口，以及 `docs/p08-acceptance.md` 契约说明。
+ * fail-closed 校验入口，以及 `docs/phases/p08/p08-acceptance.md` 契约说明。
  *
  * 覆盖（全部为真实文件/真实校验函数断言，无 mock、无网络、无模型）：
  * 1) 清单逐项表达代码交付、Task 局部验证、Feature 门禁、Phase 集成、Live
@@ -421,7 +421,7 @@ it('[case:p08-local-contract-only] 本 Task 只验证结构/唯一性/允许值�
   expect(P08_PREREQUISITE_INPUTS['P08-1'].machineReadable).toEqual(['acceptance/p08-1.release-manifest.json']);
 
   // 契约说明文档存在且明确 not_run 不折算。
-  const doc = readFileSync(join(ROOT, 'docs/p08-acceptance.md'), 'utf8');
+  const doc = readFileSync(join(ROOT, 'docs/phases/p08/p08-acceptance.md'), 'utf8');
   expect(doc).toContain('not_run');
   expect(doc).toContain('Nezha');
 

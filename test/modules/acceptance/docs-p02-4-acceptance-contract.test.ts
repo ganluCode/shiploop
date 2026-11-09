@@ -1,6 +1,6 @@
 import { currentMigrationVersions } from '../../helpers/current-schema.ts';
 /**
- * F-001 文档核验：`docs/p02-4-acceptance-contract.md` 声明的 P02-4 验收清单与接口映射
+ * F-001 文档核验：`docs/phases/p02/p02-4-acceptance-contract.md` 声明的 P02-4 验收清单与接口映射
  * 必须与仓库中真实存在的 dist CLI 入口、Host 路由、回执/基线契约、夹具与前序回归入口一致，
  * 避免「文档另立一套」与实现漂移，并守护「必需检查未运行/夹具失败不得聚合为通过」的
  * fail-closed 纪律。
@@ -17,7 +17,7 @@ import { SETTINGS_SCHEMA_VERSION } from '../../../packages/core/src/ports/settin
 import { SETTINGS_EXPORT_FORMAT_VERSION } from '../../../packages/core/src/application/configuration-service.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p02-4-acceptance-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p02/p02-4-acceptance-contract.md';
 const contractDoc = readFileSync(resolve(REPO_ROOT, CONTRACT_DOC_PATH), 'utf-8');
 
 /** F-001 §2.1 冻结的必需检查 ID（顺序即报告与聚合的固定顺序）。 */

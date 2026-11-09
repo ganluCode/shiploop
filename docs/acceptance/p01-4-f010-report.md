@@ -28,8 +28,8 @@ PRD 为 `p01-acceptance.md`（版本 0.2，2026-10-01）。本阶段实际依据
 | `core-design/11-database-model.md` | `57dc3c6eab520fea43b5078a131821525f5c85336c09990719f10f9b705e5fa9` |
 | `core-design/09-testing-and-implementation.md` | `69912f251a79be62617f80786a5e73e4db90d674977a32fad90282e8b4a213ad` |
 
-前置契约：[docs/p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)（检查清单与报告约定）；
-操作说明：[docs/p01-4-operations.md](../p01-4-operations.md)。
+前置契约：[docs/phases/p01/p01-4-acceptance-contract.md](../phases/p01/p01-4-acceptance-contract.md)（检查清单与报告约定）；
+操作说明：[docs/phases/p01/p01-4-operations.md](../phases/p01/p01-4-operations.md)。
 
 前序基线（均为当前分支祖先，实际端口与测试在库）：
 
@@ -42,7 +42,7 @@ PRD 为 `p01-acceptance.md`（版本 0.2，2026-10-01）。本阶段实际依据
 ## 2. 实现范围（F-001 ~ F-010）
 
 - **F-001**：核验 P01-1/P01-2/P01-3 已验收基线与真实端口；冻结 14 个稳定必需检查 ID、FR 分支
-  映射、报告位置/`run-id`/超时/三态与脱敏规则（[p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)）。
+  映射、报告位置/`run-id`/超时/三态与脱敏规则（[p01-4-acceptance-contract.md](../phases/p01/p01-4-acceptance-contract.md)）。
 - **F-002**：真实临时 Git 仓库 / 隔离 `home` / 受控数据根夹具，固定配置与制品字节，
   安全清理守卫与清理前证据导出（`test/helpers/p01-4-fixture.ts`、`safe-cleanup.ts`）。
 - **F-003**：经真实装配入口的持久化闭环（注册 → 全局/项目配置 → 制品发布 → 关闭重开逐字段一致）。

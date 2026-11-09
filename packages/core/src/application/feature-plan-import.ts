@@ -2,7 +2,7 @@
  * P03-1 / F-005 单 Feature 计划导入应用用例（application 层；在调用方的同一
  * BEGIN IMMEDIATE 写事务内执行，无任何事务外 I/O）。
  *
- * 设计依据：docs/p03-1-plan-import-contract.md §2/§3/§6（计划 payload 契约、
+ * 设计依据：docs/phases/p03/p03-1-plan-import-contract.md §2/§3/§6（计划 payload 契约、
  * 同 Feature DAG 校验、导入 CAS 与事务提交重核）、core-design/06 §3（创建
  * Task 时按复杂度/defaultStrategy 复制完整策略与来源）、core-design/03 §4
  * （受控制品引用）。
@@ -235,6 +235,10 @@ export function submitFeaturePlanImport(
     sourceRefs: plan.feature.sourceRefs.map(ref => ({ ...ref })),
     planDigest: plan.planDigest,
   });
+  if (envelope.payload.documents) {
+    if (!transaction.bindFeatureDocuments) throw new PublicError('unsupported', operation);
+    transaction.bindFeatureDocuments(projectId, feature.id, envelope.payload.documents);
+  }
   for (const task of plan.tasks) {
     const selection = selections.get(task.id);
     if (selection === undefined) {
@@ -247,6 +251,7 @@ export function submitFeaturePlanImport(
       title: task.title,
       description: task.description,
       labels: [...task.labels],
+      languages: [...task.languages],
       ...(task.complexity === null ? {} : { complexity: task.complexity }),
       acceptance: { criteria: [...task.acceptance.criteria] },
       requirementsRefs: task.requirementsRefs.map(ref => ({ ...ref })),

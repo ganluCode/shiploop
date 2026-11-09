@@ -41,6 +41,7 @@ type CoreDatabase = CoreConnection['database'];
 
 /** Drizzle Schema 声明的全部表：名称必须与设计 11 §3/§8/§9 的逻辑表一致。 */
 const SCHEMA_TABLES = [
+  ['entity_display_codes', schema.entityDisplayCodes],
   ['projects', schema.projects],
   ['repository_bindings', schema.repositoryBindings],
   ['repository_binding_snapshots', schema.repositoryBindingSnapshots],
@@ -51,6 +52,8 @@ const SCHEMA_TABLES = [
   ['capability_modules', schema.capabilityModules],
   // P06-2 / F-001：项目隔离文档、不可变文档版本与轻量记忆（迁移 v49）。
   ['documents', schema.documents],
+  ['managed_document_sources', schema.managedDocumentSources],
+  ['feature_document_sources', schema.featureDocumentSources],
   ['document_versions', schema.documentVersions],
   ['memory_records', schema.memoryRecords],
   ['artifacts', schema.artifacts],
@@ -63,7 +66,7 @@ const SCHEMA_TABLES = [
   ['baseline_operations', schema.baselineOperations],
   ['baseline_check_results', schema.baselineCheckResults],
   ['baseline_occupancy', schema.baselineOccupancy],
-  // P03-1 / F-002：计划结构四表（docs/p03-1-plan-import-contract.md 与设计 11 §4，迁移 v6）。
+  // P03-1 / F-002：计划结构四表（docs/phases/p03/p03-1-plan-import-contract.md 与设计 11 §4，迁移 v6）。
   ['phases', schema.phases],
   ['features', schema.features],
   ['tasks', schema.tasks],
@@ -71,9 +74,9 @@ const SCHEMA_TABLES = [
   ['task_dependencies', schema.taskDependencies],
   // P05-2 / F-001：同项目同 Phase 的 Feature DAG 依赖边（迁移 v37）。
   ['feature_dependencies', schema.featureDependencies],
-  // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
+  // P03-2 / F-002：计划决策记录（docs/phases/p03/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
-  // P03-3 / F-002：单 Feature 执行域三表（docs/p03-3-execution-schema-contract.md 与
+  // P03-3 / F-002：单 Feature 执行域三表（docs/phases/p03/p03-3-execution-schema-contract.md 与
   // 设计 11 §5，迁移 v9）；P03-3 / F-006：Task 尝试预占账本（迁移 v11）；
   // P03-3 / F-007：Runtime 启动预占账本（迁移 v12）。
   ['execution_batches', schema.executionBatches],
@@ -135,6 +138,8 @@ const SCHEMA_TABLES = [
   ['project_delete_receipts', schema.projectDeleteReceipts],
   ['schema_migrations', schema.schemaMigrations],
   ['feature_closeouts', schema.featureCloseouts],
+  ['feature_repair_attempts', schema.featureRepairAttempts],
+  ['git_pushes', schema.gitPushes],
 ] as const;
 
 const EXPECTED_TABLE_NAMES = [
@@ -575,9 +580,14 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
       // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键
       // 与 P02-3 / F-007 基线四表的同项目复合外键/制品引用外键。
       const expectedFks = new Set([
+        'entity_display_codes:(project_id)->projects.(id)',
         'feature_closeouts:(project_id)->projects.(id)',
         'feature_closeouts:(project_id,run_id)->runs.(project_id,id)',
         'feature_closeouts:(project_id,feature_id)->features.(project_id,id)',
+        'feature_repair_attempts:(project_id)->projects.(id)',
+        'feature_repair_attempts:(project_id,run_id)->runs.(project_id,id)',
+        'git_pushes:(project_id)->projects.(id)',
+        'git_pushes:(project_id,run_id)->runs.(project_id,id)',
         'project_delete_steps:(operation_id)->project_delete_operations.(id)',
         'verification_processes:(batch_id)->verification_batches.(id)',
         'projects:(repository_binding_id)->repository_bindings.(id)',
@@ -590,6 +600,10 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'project_profiles:(project_id)->projects.(id)',
         'capability_modules:(project_id)->projects.(id)',
         'documents:(project_id)->projects.(id)',
+        'managed_document_sources:(project_id)->projects.(id)',
+        'managed_document_sources:(project_id,document_id)->documents.(project_id,id)',
+        'feature_document_sources:(project_id,feature_id)->features.(project_id,id)',
+        'feature_document_sources:(project_id,path)->managed_document_sources.(project_id,path)',
         'document_versions:(project_id)->projects.(id)',
         'document_versions:(project_id,document_id)->documents.(project_id,id)',
         'document_versions:(project_id,content_ref)->artifacts.(project_id,id)',

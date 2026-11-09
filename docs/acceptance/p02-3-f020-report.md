@@ -27,14 +27,14 @@
   记录授权内容、取消/超时确认停止后收尾、失败不撤销注册、挂起/缺命令/未知脚本/
   被拒授权独立可查询）；验收标准 §3.3 的 5 条（含 `npm run verify` 全通过、`not_run`
   不折算、记录受测 commit）。
-- 实施前置契约：[p02-3-onboarding-contract.md](../p02-3-onboarding-contract.md)
+- 实施前置契约：[p02-3-onboarding-contract.md](../phases/p02/p02-3-onboarding-contract.md)
   （F-001 定案，F-002 ~ F-020 唯一协议依据）：线消息 schemaVersion=3、检查计划与
   授权摘要、§8 操作/检查/原因三轴状态、§10 迁移 v4 基线四表、§13 受监督进程与
   停止核验、§14 FR/阶段验收编号映射、§15 设计差异登记与核对请求、§17 输入哈希。
-- 沿用前序唯一依据：[p02-2-commands-events-contract.md](../p02-2-commands-events-contract.md)、
-  [p02-1-host-lifecycle-contract.md](../p02-1-host-lifecycle-contract.md)、
-  [p01-3-application-contract.md](../p01-3-application-contract.md)、
-  [p01-4-acceptance-contract.md](../p01-4-acceptance-contract.md)；P02-3 只增加项目
+- 沿用前序唯一依据：[p02-2-commands-events-contract.md](../phases/p02/p02-2-commands-events-contract.md)、
+  [p02-1-host-lifecycle-contract.md](../phases/p02/p02-1-host-lifecycle-contract.md)、
+  [p01-3-application-contract.md](../phases/p01/p01-3-application-contract.md)、
+  [p01-4-acceptance-contract.md](../phases/p01/p01-4-acceptance-contract.md)；P02-3 只增加项目
   接入与基线检查面，不重定义 P01/P02-1/P02-2 业务规则。
 - **未解决的契约核对请求（保持未完成，不静默决定）**：契约 §15.1 inspect 身份/权限
   范围、§15.2 独立授权输入（不扩展 `SettingsPayload`）、§15.3 当前工作区基线（无隔离
@@ -80,7 +80,7 @@
 - **F-017**（`ce700cc`）：最小 project init/overview 操作 Skill（只经正式 CLI）。
 - **F-018**（`6c140f8`）：整 Feature 真实 Git/SQLite/进程/Host/CLI 端到端集成回归
   （`test/modules/onboarding/p02-3-integration-regression.test.ts` 10 项）+ `output_overflow` 终态修复。
-- **F-019**（`fdacf25`）：`docs/p02-3-operations.md`、`docs/p02-3-handoff.md`、README
+- **F-019**（`fdacf25`）：`docs/phases/p02/p02-3-operations.md`、`docs/phases/p02/p02-3-handoff.md`、README
   索引与文档守护 `test/modules/onboarding/docs-p02-3-operations.test.ts`。
 - **F-020**（本报告）：交付报告、FR 验收索引、脱敏证据核对与清理记录
   （[evidence-p02-3/f020-verification-evidence.md](evidence-p02-3/f020-verification-evidence.md)、

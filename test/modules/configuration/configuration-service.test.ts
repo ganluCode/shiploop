@@ -203,7 +203,7 @@ describe('F-010 settings create (insert-only, one current record per scope)', ()
         expect(globalCreated.id).toBe('global');
         expect(globalCreated.revision).toBe(1);
         expect(globalCreated.schemaVersion).toBe(2);
-        expect(globalCreated.payload).toEqual(ANTHROPIC_PAYLOAD);
+        expect(globalCreated.payload).toEqual({ ...ANTHROPIC_PAYLOAD, locale: 'en-US' });
 
         const projectCreated = await harness.service.createSettings(
           { kind: 'project', projectId: project.id },
@@ -221,7 +221,7 @@ describe('F-010 settings create (insert-only, one current record per scope)', ()
           harness.service.createSettings({ kind: 'project', projectId: project.id }, { payload: { schemaVersion: 2 } }),
         );
         expect(duplicateProject.entity).toEqual({ type: 'project_settings', projectId: project.id });
-        expect((await harness.store.getGlobalSettings()).payload).toEqual(ANTHROPIC_PAYLOAD);
+        expect((await harness.store.getGlobalSettings()).payload).toEqual({ ...ANTHROPIC_PAYLOAD, locale: 'en-US' });
         expect((await harness.store.getProjectSettings(project.id)).payload).toEqual(openAiPayload('gpt-project'));
         expect(countRows(harness.session, 'global_settings')).toBe(1);
         expect(countRows(harness.session, 'project_settings')).toBe(1);

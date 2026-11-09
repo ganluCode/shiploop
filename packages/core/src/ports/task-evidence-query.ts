@@ -1,7 +1,7 @@
 /**
  * P03-7 / F-013 Task 机器证据、人审事项与有限返工链授权只读查询面（ports 层）。
  *
- * 契约要点（docs/p03-7-f013-task-evidence-query-contract.md）：
+ * 契约要点（docs/phases/p03/p03-7-f013-task-evidence-query-contract.md）：
  * - 三个查询操作分别展示「Task 机器证据」「独立人审事项」「有限返工链」，
  *   不把机器结论折算成有效 Task 状态：机器 passed 只出现在 machine.status，
  *   有效 Task passed 恒以 task.status === 'passed' 为准（effectivePassed）；

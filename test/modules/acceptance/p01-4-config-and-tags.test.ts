@@ -1,6 +1,6 @@
 /**
  * P01-4 / F-006 当前配置与项目标签阶段检查组（检查 `P01-FR2-CONFIG` /
- * `P01-FR2-TAGS`，契约见 docs/p01-4-acceptance-contract.md §2.1 / §4）：
+ * `P01-FR2-TAGS`，契约见 docs/phases/p01/p01-4-acceptance-contract.md §2.1 / §4）：
  *
  * - `P01-FR2-CONFIG`：实际经**真实 Core 应用服务**（openCoreApplication →
  *   ConfigurationService）覆盖完整策略整体替换、政策段级覆盖、当前值与逐项来源

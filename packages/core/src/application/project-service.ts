@@ -5,7 +5,7 @@
  *
  * 设计依据：core-design/06 §1（项目 init：规范路径重复 init 返回已有项目；同
  * remote 不同 clone 可注册不同项目）、core-design/03 §1/§3（canonical_path 全库
- * 唯一；短事务内不做 Git/文件检查）与 docs/p01-3-application-contract.md §4.1。
+ * 唯一；短事务内不做 Git/文件检查）与 docs/phases/p01/p01-3-application-contract.md §4.1。
  *
  * 不变量：
  * - 只依赖 ports 窄接口（StateStore / RepositoryInspector），不接触适配器、

@@ -66,6 +66,6 @@
     "title": "P04 阶段验收契约与执行报告",
     "scope": "FR-1/FR-2/FR-3/FR-4 及 P04-9 补充六项（持久派发、槽位竞争、恢复、控制围栏、额度、查询/迁移）的离线、live、人工和后置能力清单；live 需显式授权，人工确认不得由工具代签",
     "version": "0.5",
-    "contractDoc": "docs/p04-acceptance.md"
+    "contractDoc": "docs/phases/p04/p04-acceptance.md"
   }
 }

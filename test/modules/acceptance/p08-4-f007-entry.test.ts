@@ -58,7 +58,7 @@ it('[case:p08-f007-success-run] 成功执行确定性步骤后仍将 live 与人
     approvedBy: 'owner-1',
     features: ['P08-1', 'P08-2', 'P08-3'].map(feature => ({
       feature, commit: head, delivered: true, interfacesSatisfied: true,
-      deliveryEvidence: ['docs/p08-acceptance.md'], publicInterfaces: ['Core/Host/CLI'],
+      deliveryEvidence: ['docs/phases/p08/p08-acceptance.md'], publicInterfaces: ['Core/Host/CLI'],
     })),
   } as const;
   const result = await runP08Acceptance({
@@ -120,7 +120,7 @@ it('[case:p08-f007-success-run] 成功执行确定性步骤后仍将 live 与人
       commit: head,
       delivered: true,
       interfacesSatisfied: true,
-      deliveryEvidence: ['docs/p08-acceptance.md'],
+      deliveryEvidence: ['docs/phases/p08/p08-acceptance.md'],
       publicInterfaces: ['Core/Host/CLI'],
     })),
   } as const;

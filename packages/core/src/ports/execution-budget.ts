@@ -24,7 +24,7 @@
  *   maxAttemptsPerTask 保持**总 Attempt 上限**语义（不是代码尝试上限），两者同时
  *   生效按 min 解析并显式标记绑定方，旧字段不被重解释。
  *
- * 数值上限为本阶段实施契约值（设计未给定），见 docs/p03-3-execution-budget-contract.md
+ * 数值上限为本阶段实施契约值（设计未给定），见 docs/phases/p03/p03-3-execution-budget-contract.md
  * §数值范围与请求核对记录。
  *
  * 本模块不实现（后续任务）：SQLite 存储/迁移（F-002）、授权命令与回执（F-003+）、

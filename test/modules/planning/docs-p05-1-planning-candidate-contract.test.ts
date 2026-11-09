@@ -1,5 +1,5 @@
 /**
- * P05-1 / F-001 文档核验：`docs/p05-1-planning-candidate-contract.md` 记录的
+ * P05-1 / F-001 文档核验：`docs/phases/p05/p05-1-planning-candidate-contract.md` 记录的
  * 一次性规划候选契约必须与仓库实现事实一致（请求/候选纯数据契约、verification
  * 引用边界、四类摘要区分、单候选与人工决策边界、测试候选操作身份区分），
  * 避免「文档另立一套」与后续接线任务（F-002 起）各自发明规则。
@@ -23,7 +23,7 @@ import {
 } from '../../../packages/core/src/ports/planning-candidates.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p05-1-planning-candidate-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p05/p05-1-planning-candidate-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

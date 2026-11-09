@@ -1,14 +1,14 @@
 /**
  * F-002 Host 生命周期协议冻结常量（契约纯模块）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md
  * - §5.1/§7.1：发现 schemaVersion 与线协议 protocolVersion 独立演进、独立校验；
  * - §5.1：唯一合法监听字面量 127.0.0.1 与三条路由；
  * - §7.2：16 384 B 体积上限与有限客户端预算；
  * - §6：锁获取有限预算；§10.2：quiesce 有限预算；
  * - §8/§10：冻结能力声明（graceful / idle-only）。
  *
- * P02-2（docs/p02-2-commands-events-contract.md §3.1/§15.4）：线消息
+ * P02-2（docs/phases/p02/p02-2-commands-events-contract.md §3.1/§15.4）：线消息
  * schemaVersion 显式升 2（握手 capabilities 从两个 unsupported 字面量演进为
  * §11.3 结构化视图，同版本号改形状违反未知键拒绝纪律）；发现 schemaVersion
  * 与线协议 protocolVersion 不变、不联动。§3.2 应用路由与 §13 预算同步冻结于此。
@@ -26,7 +26,7 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  * P02-2 为 2；P02-3 / F-006 起为 3（§3.1/§15.5：握手能力视图新增
  * projects.inspect/overview，集合变化必须显式升版；2/1 → 400
  * unsupported_schema_version，不降级）；P03-1 / F-009 起为 4
- *（docs/p03-1-plan-import-contract.md §5/§9.6：计划域四命令与六查询进入握手
+ *（docs/phases/p03/p03-1-plan-import-contract.md §5/§9.6：计划域四命令与六查询进入握手
  * 能力集合，同一升版纪律）；P03-2 / F-007 起为 5（docs/p03-2-plan-approval-
  * contract.md：task.strategy.update/feature.plan.decide/execution.input.prepare
  * 三命令与 features.approvals 查询进入能力集合，同一升版纪律；旧 v4/v3/v2/v1
@@ -116,7 +116,7 @@ export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
 /**
  * P06-6 / F-007：四层标签查询路由（GET + Bearer；与 Core runs.list /
- * labels.counts 操作身份一一对应，docs/p06-6-f006-label-queries.md）。
+ * labels.counts 操作身份一一对应，docs/phases/p06/p06-6-f006-label-queries.md）。
  * - GET /v1/runs?projectId=&featureId?=&batchId?=&label(可重复)?=&match?=&limit?=&cursor?=
  *   （Run 集合根；父级可选，取值/标签规范化/游标绑定由 Core 单一权威复核）；
  * - GET /v1/label-counts?entity=phase|feature|task|run&projectId=&phaseId?=&featureId?=&batchId?=&label(可重复)?=&match?
@@ -197,7 +197,7 @@ export const NOTIFICATIONS_ROUTE_PREFIX = '/v1/notifications/';
 export const EXECUTION_RESOURCES_ROUTE = '/v1/execution-resources';
 /**
  * P03-5 / F-011：工作区状态只读查询路由（全部 GET + Bearer；与 Core
- * WORKSPACE_QUERY_OPERATIONS 一一对应，docs/p03-5-workspace-host-integration-contract.md §4）。
+ * WORKSPACE_QUERY_OPERATIONS 一一对应，docs/phases/p03/p03-5-workspace-host-integration-contract.md §4）。
  * - GET /v1/workspaces?projectId=&featureId?=&limit?=&cursor?=（集合根 +
  *   查询参数；Host 不解析归属、不读 SQLite）；
  * - GET /v1/workspaces/:featureId?projectId=（单段路径参数 + 必填 projectId）；

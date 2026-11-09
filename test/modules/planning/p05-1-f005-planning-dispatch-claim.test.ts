@@ -1,3 +1,4 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
  * P05-1 / F-005 planning Run 派发与原子认领（真实临时文件/SQLite/Git 纵向）。
  *
@@ -63,7 +64,7 @@ import type { TaskClaimReceipt } from '../../../packages/core/src/ports/task-cla
 import { PLANNING_START_OPERATION } from '../../../packages/core/src/ports/planning-start.ts';
 import { PLANNING_TASK_KIND } from '../../../packages/core/src/ports/planning-candidates.ts';
 import { validatePlanningStrategyCopy } from '../../../packages/core/src/ports/planning-context.ts';
-import { deriveManagedFeatureBranch } from '../../../packages/core/src/ports/workspace-preparation.ts';
+import { readFeatureBranch } from '../../helpers/feature-branch.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import type { CommandReceipt, PlanningAcceptedCommandReceipt } from '../../../packages/core/src/ports/commands.ts';
@@ -157,7 +158,7 @@ async function openFixture(): Promise<F005Fixture> {
       return { worktreeId: row.id, headCommit: inspection.repository.headCommit, codeDigest: inspection.codeDigest };
     };
 
-    const planningInputs: PlanningInputPreparePort = createPlanningInputPrepareService({
+    const planningInputs: PlanningInputPreparePort = createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
       views: createSqlitePlanningContextStore(session, { nowUtcMs }),
       inputs: createExecutionInputService({
         artifacts: artifactStore,
@@ -233,7 +234,7 @@ async function openFixture(): Promise<F005Fixture> {
     const accepted = planningReceipt as PlanningAcceptedCommandReceipt;
 
     /* 真实受管 worktree：path-service 受控位置（与 claim verifyPreparation 目标一致）。 */
-    const branch = deriveManagedFeatureBranch(projectId, featureId);
+    const branch = readFeatureBranch(session, projectId, featureId);
     const worktreePath = join(box.dataRoot, deriveFeatureWorktreeRelativeDir(projectId, featureId));
     mkdirSync(join(worktreePath, '..'), { recursive: true });
     git(['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], box.repoDirA);
@@ -533,7 +534,7 @@ describe('P05-1 / F-005 planning Run 派发与原子认领', () => {
     }, { scope: { kind: 'project', projectId: projectIdB }, expectedRevision: imported.result.feature.revision }) as PlanningAcceptedCommandReceipt;
 
     /* 项目 B 的受管 worktree + 现场行（与项目 A 同一真实纪律）。 */
-    const branchB = deriveManagedFeatureBranch(projectIdB, imported.result.feature.id);
+    const branchB = readFeatureBranch(f.session, projectIdB, imported.result.feature.id);
     const worktreeB = join(f.box.dataRoot, deriveFeatureWorktreeRelativeDir(projectIdB, imported.result.feature.id));
     mkdirSync(join(worktreeB, '..'), { recursive: true });
     git(['worktree', 'add', '-b', branchB, worktreeB, 'HEAD'], f.box.repoDirB);
@@ -585,7 +586,7 @@ describe('P05-1 / F-005 planning Run 派发与原子认领', () => {
     const inspector = createWorkspaceInspector({ authorizedRoots: [f.box.dataRoot], confirmProcessIdentity: async identity => ({ launchId: identity.launchId }) });
     const dispatchPrepareB = createPlanningDispatchPrepareService({
       views: planningContextsB,
-      planningInputs: createPlanningInputPrepareService({
+      planningInputs: createPlanningInputPrepareService({ promptTemplates: testPromptTemplates,
         views: planningContextsB,
         inputs: createExecutionInputService({
           artifacts: artifactStore, publisher, verifier,

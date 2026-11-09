@@ -65,6 +65,10 @@ export function createRuntimeInferencePreflight(deps: RuntimeInferencePreflightD
   const monotonic = deps.monotonicNow ?? (() => performance.now());
   const cache = new Map<string, number>();
   let busy = false;
+  function requireProbePrompt(): string {
+    if (!deps.promptTemplates) throw new Error('inference_prompt_templates_missing');
+    return deps.promptTemplates.render('runtime/inference-probe.md');
+  }
   return {
     policy,
     async check(value: RuntimeInferenceSelection, signal?: AbortSignal): Promise<RuntimeInferenceDecision> {
@@ -126,7 +130,7 @@ export function createRuntimeInferencePreflight(deps: RuntimeInferencePreflightD
                 consumed = unknownUsage;
                 await record('started', 'started', null, null);
                 const result = await bounded(() => deps.adapter!.probe({ ...selection, signal: controller.signal,
-                  prompt: 'Reply with OK.', maxOutputTokens: 32, maxRetries: 0,
+                  prompt: requireProbePrompt(), maxOutputTokens: 32, maxRetries: 0,
                   observeUsage: value => { if (!controller.signal.aborted) consumed = mergeUsage(value, consumed); } }));
                 consumed = mergeUsage(result?.usage, consumed);
                 if (result?.terminal === 'completed' && typeof result.response === 'string' && result.response.trim()

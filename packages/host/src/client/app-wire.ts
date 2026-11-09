@@ -1179,7 +1179,8 @@ function validateSettingsState(operation: HostOperation, value: unknown): Public
 /** 有效配置/导出投影的结构把关（深度语义校验是服务端职责，客户端校验封套）。 */
 function validateEffectiveSettings(operation: HostOperation, value: unknown): EffectiveSettings {
   const object = requirePlain(operation, value);
-  exactKeys(operation, object, ['configured', 'schemaVersion', 'strategies', 'policies']);
+  exactKeys(operation, object, ['configured', 'schemaVersion', 'locale', 'strategies', 'policies']);
+  if (object.locale !== undefined && object.locale !== 'en-US' && object.locale !== 'zh-CN') malformed(operation, 'locale_invalid');
   if (typeof object.configured !== 'boolean') {
     malformed(operation, 'effective_configured_invalid');
   }
@@ -1197,7 +1198,8 @@ function validateEffectiveSettings(operation: HostOperation, value: unknown): Ef
     'agentOverrides',
   ]);
   const policies = requirePlain(operation, object.policies);
-  exactKeys(operation, policies, ['executionLimits', 'verification', 'securityPolicy']);
+  exactKeys(operation, policies, ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy',
+    'retentionPolicy', 'featureAutoFix', 'piAgent', 'piExecution', 'feishu']);
   return value as EffectiveSettings;
 }
 
@@ -1219,7 +1221,10 @@ function validateExportedSettings(operation: HostOperation, value: unknown): Exp
     malformed(operation, 'export_scope_invalid');
   }
   const current = requirePlain(operation, object.current);
-  exactKeys(operation, current, ['schemaVersion', 'revision', 'strategies', 'policies']);
+  exactKeys(operation, current, ['schemaVersion', 'revision', 'locale', 'strategies', 'policies']);
+  if (current.locale !== undefined && (object.scope !== 'global' || !['en-US', 'zh-CN'].includes(String(current.locale)))) {
+    malformed(operation, 'export_locale_invalid');
+  }
   if (current.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
     if (typeof current.schemaVersion === 'number') {
       unsupportedVersion(operation, 'schemaVersion');
@@ -1347,7 +1352,12 @@ function validateFeatureRecordWire(operation: HostOperation, value: unknown): Pu
     'revision',
     'createdAt',
     'updatedAt',
+    'branchName',
   ]);
+  if (object.branchName !== undefined && object.branchName !== null
+    && (typeof object.branchName !== 'string' || object.branchName.length === 0 || object.branchName.length > 255
+      || /[\x00-\x20\x7f~^:?*\[\\]/.test(object.branchName) || object.branchName.includes('..')
+      || object.branchName.includes('@{'))) malformed(operation, 'feature_branch_name_invalid');
   if (
     object.planDigest !== null &&
     (typeof object.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.planDigest))
@@ -1355,6 +1365,7 @@ function validateFeatureRecordWire(operation: HostOperation, value: unknown): Pu
     malformed(operation, 'plan_digest_invalid');
   }
   const record = {
+    ...(object.branchName === undefined ? {} : { branchName: object.branchName as string | null }),
     id: requireStableId(operation, object.id),
     projectId: requireStableId(operation, object.projectId),
     phaseId: requireStableId(operation, object.phaseId),
@@ -1390,6 +1401,18 @@ function validateFeatureRecordWire(operation: HostOperation, value: unknown): Pu
  * JSON 对象结构把关（深度语义由服务端 validateTaskExecutionConfig 单一权威
  * 校验，客户端不复制第二份配置 Schema）。
  */
+function validateTaskLanguagesWire(operation: HostOperation, value: unknown): string[] {
+  if (value === undefined) return [];
+  requireStringArrayWire(operation, value, 'task_languages_invalid');
+  const languages = value as string[];
+  if (languages.length > 16 || languages.some(language => language.length === 0 || language.length > 64
+    || language !== language.trim().toLowerCase() || /[\u0000-\u001f\u007f]/.test(language))
+    || JSON.stringify([...new Set(languages)].sort()) !== JSON.stringify(languages)) {
+    malformed(operation, 'task_languages_invalid');
+  }
+  return [...languages];
+}
+
 function validateTaskRecordWire(operation: HostOperation, value: unknown): PublicTaskRecord {
   const object = requirePlain(operation, value);
   exactKeys(operation, object, [
@@ -1401,6 +1424,7 @@ function validateTaskRecordWire(operation: HostOperation, value: unknown): Publi
     'labels',
     'status',
     'complexity',
+    'languages',
     'acceptance',
     'requirementsRefs',
     'executionConfig',
@@ -1457,6 +1481,7 @@ function validateTaskRecordWire(operation: HostOperation, value: unknown): Publi
   }
   return {
     ...record,
+    languages: validateTaskLanguagesWire(operation, object.languages),
     status: record.status as PublicTaskRecord['status'],
     complexity: object.complexity as PublicTaskRecord['complexity'],
     createdAt: object.createdAt,
@@ -6908,7 +6933,7 @@ export function validatePlanningDecisionResultWire(
     if (typeof result.summary !== 'string' || result.planningContextStatus !== 'rejected' || result.applied !== false) malformed(operation, 'planning_decision_result_invalid');
     return;
   }
-  exactKeys(operation, result, ['decision', 'candidateId', 'candidateDigest', 'feature', 'application', 'verification', 'approval']);
+  exactKeys(operation, result, ['decision', 'candidateId', 'candidateDigest', 'feature', 'application', 'verification', 'approval', 'taskIdMapping']);
   const feature = requirePlain(operation, result.feature);
   exactKeys(operation, feature, ['id', 'revision', 'planDigest', 'planStatus']);
   requireStableId(operation, feature.id);
@@ -6919,6 +6944,17 @@ export function validatePlanningDecisionResultWire(
   exactKeys(operation, application, ['createdTaskIds', 'keptTaskIds', 'removedTaskIds', 'planningContextStatus']);
   for (const key of ['createdTaskIds', 'keptTaskIds', 'removedTaskIds']) {
     for (const id of requireStringArrayWire(operation, application[key], 'planning_decision_result_invalid')) requireStableId(operation, id);
+  }
+  if (result.taskIdMapping !== undefined) {
+    const mapping = requirePlain(operation, result.taskIdMapping);
+    const appliedIds = [...application.createdTaskIds as string[], ...application.keptTaskIds as string[]];
+    const ids = Object.values(mapping);
+    if (ids.length !== appliedIds.length || new Set(ids).size !== ids.length) malformed(operation, 'planning_task_mapping_invalid');
+    for (const [local, actual] of Object.entries(mapping)) {
+      requireStableId(operation, local);
+      requireStableId(operation, actual);
+      if (!appliedIds.includes(actual as string)) malformed(operation, 'planning_task_mapping_invalid');
+    }
   }
   if (application.planningContextStatus !== 'applied' || !Array.isArray(result.verification)) malformed(operation, 'planning_decision_result_invalid');
   for (const value of result.verification as unknown[]) {
@@ -7251,7 +7287,8 @@ export function validatePlanningCandidateDetailResultWire(
   }
   for (const taskValue of plan.tasks as unknown[]) {
     const task = requirePlain(operation, taskValue);
-    exactKeys(operation, task, ['id', 'title', 'complexity', 'dependsOn']);
+    exactKeys(operation, task, ['id', 'title', 'complexity', 'languages', 'dependsOn']);
+    validateTaskLanguagesWire(operation, task.languages);
     requireStableId(operation, task.id);
     if (typeof task.title !== 'string' || task.title.length === 0 || task.title.length > 512) {
       malformed(operation, 'planning_candidate_plan_invalid');

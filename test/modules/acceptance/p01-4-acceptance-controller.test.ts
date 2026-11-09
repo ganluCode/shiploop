@@ -1,6 +1,6 @@
 /**
  * P01-4 / F-008 `npm run accept:p01` 验收控制器回归（检查 `P01-PHASE-FIXTURE`
- * 与阶段退出语义，契约见 docs/p01-4-acceptance-contract.md §2.1/§2.4/§3.4）。
+ * 与阶段退出语义，契约见 docs/phases/p01/p01-4-acceptance-contract.md §2.1/§2.4/§3.4）。
  *
  * 覆盖：
  * - 执行配置运行时严格校验：未知 configVersion、非法/非正超时、试图移除/关闭/
@@ -49,7 +49,7 @@ import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const REAL_CONFIG_PATH = resolve(REPO_ROOT, P01_ACCEPT_CONFIG_PATH);
-const CONTRACT_DOC = readFileSync(resolve(REPO_ROOT, 'docs/p01-4-acceptance-contract.md'), 'utf-8');
+const CONTRACT_DOC = readFileSync(resolve(REPO_ROOT, 'docs/phases/p01/p01-4-acceptance-contract.md'), 'utf-8');
 const SYNTHETIC_SECRET = 'keychain://P01-4-TOP-SECRET-SENTINEL';
 const FIXED_NOW = new Date(Date.UTC(2026, 9, 3, 1, 2, 3));
 
@@ -93,7 +93,7 @@ function testConfig(overrides: Record<string, unknown> = {}): P01AcceptanceConfi
       title: 'P01 持久化闭环验收（控制器回归）',
       scope: '控制器回归沙箱',
       version: '0.2',
-      contractDoc: 'docs/p01-4-acceptance-contract.md',
+      contractDoc: 'docs/phases/p01/p01-4-acceptance-contract.md',
     },
     priorBaselines: [
       { phase: 'p01-project-config', branch: 'feat/test-baseline', tipCommit: 'd'.repeat(40) },

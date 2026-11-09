@@ -2,7 +2,7 @@
  * P03-5 / F-011 工作区状态只读查询 SQLite 适配器（fail-closed、单次调用单个
  * BEGIN DEFERRED 一致读事务）。
  *
- * 依据 docs/p03-5-workspace-host-integration-contract.md §4：
+ * 依据 docs/phases/p03/p03-5-workspace-host-integration-contract.md §4：
  * - 跨项目/不存在统一返回 undefined（存在性折叠由应用层完成）；持久行/回执
  *   缺失或损坏一律 StorageError(corrupt)，绝不静默降级；
  * - operation 回执投影只读白名单字段（command_id/status/result_ref/

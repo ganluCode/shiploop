@@ -1,7 +1,7 @@
 /**
  * P03-5 / F-011 工作区状态查询（Core 只读面）验收。
  *
- * 依据 docs/p03-5-workspace-host-integration-contract.md §4：
+ * 依据 docs/phases/p03/p03-5-workspace-host-integration-contract.md §4：
  * - 四查询操作 workspaces.list / workspaces.get / workspace.operations.list /
  *   workspace.operations.get；能力位复用 project.read；跨项目/不存在统一
  *   not_found（不泄漏存在性）；能力缺失先行 forbidden。

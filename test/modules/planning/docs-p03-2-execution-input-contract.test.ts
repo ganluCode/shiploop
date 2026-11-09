@@ -1,5 +1,5 @@
 /**
- * P03-2 / F-004 文档核验：`docs/p03-2-execution-input-contract.md` 记录的
+ * P03-2 / F-004 文档核验：`docs/phases/p03/p03-2-execution-input-contract.md` 记录的
  * 执行必需输入采集/读取契约必须与仓库实现事实一致（引用形态、受控源路径
  * 安全、复用 ArtifactPublisher/ArtifactVerifier、预算与秘密纪律、边界），
  * 避免「文档另立一套」与后续 ContextBuilder/输入准备任务各自发明规则。
@@ -28,7 +28,7 @@ import { createArtifactPublisher } from '../../../packages/core/src/application/
 import { createArtifactVerifier } from '../../../packages/core/src/application/artifact-verify.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-2-execution-input-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-2-execution-input-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

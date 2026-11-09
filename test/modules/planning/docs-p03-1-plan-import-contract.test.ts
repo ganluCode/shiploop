@@ -1,5 +1,5 @@
 /**
- * F-001 文档核验：`docs/p03-1-plan-import-contract.md` 记录的 P02 基线、公共端口
+ * F-001 文档核验：`docs/phases/p03/p03-1-plan-import-contract.md` 记录的 P02 基线、公共端口
  * 复用、计划 payload 契约、DAG 错误定位、planDigest 规范与导入/编辑 CAS 契约必须
  * 与仓库事实一致，避免「文档另立一套」与后续 F-002 ~ F-011 各自发明规则。
  *
@@ -43,7 +43,7 @@ import { DESCRIPTION_MAX_LENGTH, LABELS_MAX_COUNT, LABEL_MAX_LENGTH } from '../.
 import * as coreEntry from '../../../packages/core/src/index.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-1-plan-import-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-1-plan-import-contract.md';
 const contractDocPath = resolve(REPO_ROOT, CONTRACT_DOC_PATH);
 
 describe('F-001 P03-1 计划导入契约文档', () => {

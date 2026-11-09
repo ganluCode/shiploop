@@ -7,7 +7,7 @@
  * planDigest；需求或检查政策改动后不能用旧批准执行；标签变化不导致无关
  * 失效）、core-design/02 §10（批准绑定摘要）、core-design/11 §7（approvals
  * 主体摘要变更使旧批准失效）。
- * 实施契约：docs/p03-2-plan-approval-verification-contract.md。
+ * 实施契约：docs/phases/p03/p03-2-plan-approval-verification-contract.md。
  *
  * 不变量：
  * - 核验是纯读评估：不改写任何实体/决策行（旧决策证据保留），不创建

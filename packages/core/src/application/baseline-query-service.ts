@@ -1,6 +1,6 @@
 /**
  * P02-3 / F-014 Core 基线查询服务：baselines.list / baselines.get / artifacts.get
- * 三个只读查询（docs/p02-3-onboarding-contract.md §3.2/§7.4-§7.6）。
+ * 三个只读查询（docs/phases/p02/p02-3-onboarding-contract.md §3.2/§7.4-§7.6）。
  *
  * 安全不变量：
  * - baselines.list / baselines.get 要求 baseline.read 能力（缺失 → forbidden）；

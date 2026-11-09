@@ -18,7 +18,7 @@
  * 该模块不是 ShipLoop 业务 Verifier：unit 守护测试用打包夹具
  * （test/helpers/p08-2/todo-fixture-pack-cli.mjs）在真实临时目录执行真实
  * npm pack/--offline install 与真实子进程；真实三包产物的执行入口与前置见
- * docs/p08-2-todo-install-smoke.md。
+ * docs/phases/p08/p08-2-todo-install-smoke.md。
  */
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';

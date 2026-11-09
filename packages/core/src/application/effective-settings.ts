@@ -2,7 +2,7 @@
  * P01-3 / F-009 有效配置合并（application 层纯函数）：全局默认与项目当前覆盖
  * 的键级继承、完整策略条目整体替换与逐项来源解释。
  *
- * 设计依据：docs/p01-3-application-contract.md §4.4 / §5.3（键级继承、完整
+ * 设计依据：docs/phases/p01/p01-3-application-contract.md §4.4 / §5.3（键级继承、完整
  * 条目整体替换、不跨来源拼接执行身份、未配置不注入默认、来源说明）与
  * core-design/06 §3（RuntimeStrategy / ProjectStrategies）。
  *
@@ -36,13 +36,14 @@ import {
   SETTINGS_SCHEMA_VERSION,
   validateSettingsPayload,
 } from '../ports/settings-schema.js';
+import { resolveWorkflowLocale, type WorkflowLocale } from '../ports/locale.js';
 import type {
   DeliveryPolicyV2,
   FeatureAutoFixPolicyV2,
   ExecutionLimitsPolicyV2,
   ModelComplexity,
   RetentionPolicyV2,
-  RuntimeStrategyV1,
+  ConfiguredRuntimeStrategy,
   SecurityPolicyV2,
   SettingsPayload,
   StrategyPurpose,
@@ -76,7 +77,7 @@ export interface EffectiveSource {
 
 /** 一条有效策略条目：完整 RuntimeStrategyV1 + 来源。 */
 export interface EffectiveStrategyEntry {
-  readonly strategy: RuntimeStrategyV1;
+  readonly strategy: ConfiguredRuntimeStrategy;
   readonly source: EffectiveSource;
 }
 
@@ -96,6 +97,9 @@ export interface EffectivePolicySection<T> {
 
 /** 有效政策集合：未提供的段缺省。 */
 export interface EffectivePolicies {
+  readonly feishu?: EffectivePolicySection<import('../ports/settings-schema.js').SettingsPoliciesV2['feishu']>;
+  readonly piAgent?: EffectivePolicySection<import('../ports/settings-schema.js').SettingsPoliciesV2['piAgent']>;
+  readonly piExecution?: EffectivePolicySection<import('../ports/settings-schema.js').SettingsPoliciesV2['piExecution']>;
   readonly featureAutoFix?: EffectivePolicySection<FeatureAutoFixPolicyV2>;
   readonly executionLimits?: EffectivePolicySection<ExecutionLimitsPolicyV2>;
   readonly verification?: EffectivePolicySection<VerificationPolicyV2>;
@@ -113,6 +117,7 @@ export interface EffectivePolicies {
  * `assessSettingsConfiguration`）。
  */
 export interface EffectiveSettings {
+  readonly locale?: WorkflowLocale;
   readonly configured: boolean;
   readonly schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
   readonly strategies: EffectiveStrategies;
@@ -170,9 +175,9 @@ function validateScopeInput(
 /** 组装一条带来源的策略条目（项目优先，整体替换；否则继承全局；都没有则缺省）。 */
 function pickStrategyEntry(
   sourceKey: string,
-  projectStrategy: RuntimeStrategyV1 | undefined,
+  projectStrategy: ConfiguredRuntimeStrategy | undefined,
   projectScope: ValidatedScopeInput | undefined,
-  globalStrategy: RuntimeStrategyV1 | undefined,
+  globalStrategy: ConfiguredRuntimeStrategy | undefined,
   globalScope: ValidatedScopeInput | undefined,
 ): EffectiveStrategyEntry | undefined {
   if (projectScope !== undefined && projectStrategy !== undefined) {
@@ -299,6 +304,9 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
   const globalPolicies = globalScope?.payload.policies;
   const projectPolicies = projectScope?.payload.policies;
   const policies: {
+    feishu?: EffectivePolicies['feishu'];
+    piAgent?: EffectivePolicies['piAgent'];
+    piExecution?: EffectivePolicies['piExecution'];
     featureAutoFix?: EffectivePolicySection<FeatureAutoFixPolicyV2>;
     executionLimits?: EffectivePolicySection<ExecutionLimitsPolicyV2>;
     verification?: EffectivePolicySection<VerificationPolicyV2>;
@@ -309,6 +317,12 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
   const featureAutoFix = pickPolicySection('policies.featureAutoFix', projectPolicies?.featureAutoFix, projectScope,
     globalPolicies?.featureAutoFix, globalScope);
   if (featureAutoFix !== undefined) policies.featureAutoFix = featureAutoFix;
+  const piAgent = pickPolicySection('policies.piAgent', projectPolicies?.piAgent, projectScope, globalPolicies?.piAgent, globalScope);
+  if (piAgent !== undefined) policies.piAgent = piAgent;
+  const piExecution = pickPolicySection('policies.piExecution', projectPolicies?.piExecution, projectScope, globalPolicies?.piExecution, globalScope);
+  if (piExecution !== undefined) policies.piExecution = piExecution;
+  const feishu = pickPolicySection('policies.feishu', projectPolicies?.feishu, projectScope, globalPolicies?.feishu, globalScope);
+  if (feishu !== undefined) policies.feishu = feishu;
   const executionLimits = pickPolicySection(
     'policies.executionLimits',
     projectPolicies?.executionLimits,
@@ -370,6 +384,7 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
 
   return {
     configured,
+    locale: resolveWorkflowLocale(globalScope?.payload.locale),
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     strategies,
     policies,

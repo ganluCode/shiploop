@@ -75,6 +75,15 @@ function command(operation: string, scope: Record<string, unknown>, payload: Rec
 }
 
 describe('P07-3 F-001 data lifecycle contracts', () => {
+  it('preserves namespaced recording gap reasons emitted by the backup writer', () => {
+    const recorder = [{ sessionId: 'session-1', watermark: null, coverage: 'partial',
+      gaps: ['recording_required', 'recording_failed:aborted'] }];
+    expect(validateBackupManifest(manifest({ recorder })).recorder).toEqual(recorder);
+    for (const gap of ['file:/private/secret', 'bad reason', 'a'.repeat(129)]) {
+      expect(() => validateBackupManifest(manifest({ recorder: [{ ...recorder[0], gaps: [gap] }] })))
+        .toThrowError(expect.objectContaining({ kind: 'validation' }));
+    }
+  });
   it('validates a complete manifest and keeps logical locations separate from host paths', () => {
     const value = validateBackupManifest(manifest());
     expect(value.backupId).toBe(BACKUP_ID);

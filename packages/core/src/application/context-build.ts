@@ -36,12 +36,14 @@
  * 资源加载或原生会话续接。
  */
 import { createHash } from 'node:crypto';
+import { taskLanguagesProjection } from '../ports/task-languages.js';
+import { selectTaskPromptModules, type PromptTemplateCatalog } from '../ports/prompt-templates.js';
 import {
-  CONTEXT_FIXED_GUIDANCE,
+  CONTEXT_FIXED_GUIDANCE_TEMPLATE,
   CONTEXT_INPUT_SCHEMA_VERSION,
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
   CONTEXT_PROMPT_DIGEST_DOMAIN,
-  CONTEXT_REWORK_GUIDANCE,
+  CONTEXT_REWORK_GUIDANCE_TEMPLATE,
   CONTEXT_SNAPSHOT_DIGEST_DOMAIN,
   ContextBuildError,
   validateContextBuildInput,
@@ -94,6 +96,7 @@ export interface ContextBudget {
 }
 
 export interface ContextBuilderDeps {
+  readonly promptTemplates: PromptTemplateCatalog;
   readonly budget: ContextBudget;
 }
 
@@ -317,6 +320,10 @@ function selectKnowledge(
 }
 
 
+function renderInputRef(ref: ContextBuildInput['requiredInputs'][number]): string {
+  return `- ${ref.purpose}: artifact ${ref.artifactId} v${ref.version} sha256:${ref.contentHash} size ${ref.sizeBytes}B media ${ref.mediaType} locator ${ref.locator} ${renderOrigin(ref.origin)}`;
+}
+
 function renderOrigin(origin: ContextBuildInput['requiredInputs'][number]['origin']): string {
   return origin.kind === 'artifact'
     ? 'origin artifact'
@@ -334,14 +341,22 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     throw validationError(context, 'deps', '必须提供 budget 装配依赖');
   }
   const depsRecord = deps as unknown as Record<string, unknown>;
-  rejectUnknownKeys(depsRecord, ['budget'], context, 'deps');
+  rejectUnknownKeys(depsRecord, ['budget', 'promptTemplates'], context, 'deps');
   const budget = validateBudget(depsRecord.budget);
+  const templates = deps.promptTemplates;
+  if (!templates || typeof templates.render !== 'function' || typeof templates.provenance !== 'function') {
+    throw validationError(context, 'deps.promptTemplates', '必须提供内置模板目录快照');
+  }
+  const CONTEXT_FIXED_GUIDANCE = templates.render(CONTEXT_FIXED_GUIDANCE_TEMPLATE);
+  const CONTEXT_REWORK_GUIDANCE = templates.render(CONTEXT_REWORK_GUIDANCE_TEMPLATE);
   const fixedGuidanceHash = digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, CONTEXT_FIXED_GUIDANCE);
 
   return { build };
 
   function build(input: unknown): ContextBuildResult {
     const validated = validateContextBuildInput(input);
+    const locale = validated.locale ?? templates.locale;
+    if (locale !== templates.locale) return createContextBuilder({ ...deps, promptTemplates: templates.forLocale(locale) }).build(validated);
 
     /* 1) 必需输入引用数量预算（fail-fast，不静默丢弃引用）。 */
     if (validated.requiredInputs.length > budget.maxRequiredInputRefs) {
@@ -404,6 +419,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       task: {
         title: validated.task.title,
         description: validated.task.description,
+        ...taskLanguagesProjection(validated.task.languages),
         acceptance: validated.task.acceptance,
         requirementsRefs: validated.task.requirementsRefs,
         dependencies: validated.task.dependencies,
@@ -458,7 +474,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     let selectedEntries: ContextHistoryEntry[] = [];
     let omittedByPrompt = 0;
     if (cappedEntries.length > 0) {
-      const lines: string[] = ['## History index (optional; bounded; not required)'];
+      const lines: string[] = [templates.render('task/history-header.md')];
       const headerBytes = utf8Bytes(`${prompt}${lines[0]}\n`);
       if (headerBytes <= budget.maxPromptBytes) {
         prompt = `${prompt}${lines[0]}\n`;
@@ -474,7 +490,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         }
         const omittedCount =
           totalAvailable - selectedEntries.length > 0 ? totalAvailable - selectedEntries.length : 0;
-        const footer = `- (index bounded: ${selectedEntries.length} kept of ${totalAvailable} available)\n`;
+        const footer = templates.render('task/history-footer.md', { kept: String(selectedEntries.length), available: String(totalAvailable) }) + '\n';
         if (utf8Bytes(prompt + footer) <= budget.maxPromptBytes) {
           prompt += footer;
         }
@@ -508,174 +524,91 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     knowledge: readonly ContextKnowledgeSelection[],
   ): string {
     const parts: string[] = [];
-    parts.push(`ShipLoop task context (schemaVersion ${CONTEXT_INPUT_SCHEMA_VERSION})`);
+    parts.push(templates.render('task/header.md', { schemaVersion: String(CONTEXT_INPUT_SCHEMA_VERSION) }));
     parts.push('');
     parts.push(CONTEXT_FIXED_GUIDANCE);
+    parts.push(templates.render('runtime/reply-language.md'));
     parts.push('');
+    for (const id of selectTaskPromptModules(validated.task.languages)) parts.push(templates.render(id), '');
     const rework = validated.rework ?? null;
     if (rework !== null) {
       parts.push(CONTEXT_REWORK_GUIDANCE);
       parts.push('');
-      parts.push('## Rework handoff (incremental fix; same worktree; verified scene)');
-      parts.push(`- attemptId: ${rework.attemptId}`);
-      parts.push(
-        `- previousAttemptId: ${rework.previousAttemptId} (direct previous attempt, same task ${rework.previousTaskId})`,
-      );
-      parts.push(`- worktreeId: ${rework.scene.worktreeId}`);
-      parts.push(`- headCommit: ${rework.scene.headCommit}`);
-      parts.push(`- codeDigest: sha256:${rework.scene.codeDigest}`);
-      parts.push('');
-      parts.push('## Failure evidence (required; read each via reference and verify hash; bodies not inlined)');
-      for (const ref of rework.failureEvidenceRefs) {
-        parts.push(
-          `- ${ref.purpose}: artifact ${ref.artifactId} v${ref.version} sha256:${ref.contentHash} size ${ref.sizeBytes}B media ${ref.mediaType} locator ${ref.locator} ${renderOrigin(ref.origin)}`,
-        );
-      }
-      parts.push('');
-      parts.push('## Recovery record (source & mode record only; no native continuation implemented)');
       const selection = rework.recovery.selection;
-      parts.push(
-        `- selection: mode ${selection.mode}${selection.mode === 'new' ? '' : ` kind ${selection.kind}`}`,
-      );
       const decision = rework.recovery.decision;
-      parts.push(
-        `- decision: mode ${decision.mode}${decision.mode === 'resume' ? ` kind ${decision.kind}` : ''} reasons: ${
-          decision.reasons.length === 0 ? '(none)' : decision.reasons.join(', ')
-        }`,
-      );
+      parts.push(templates.render('task/rework.md', {
+        attemptId: rework.attemptId, previousAttemptId: rework.previousAttemptId, previousTaskId: rework.previousTaskId,
+        worktreeId: rework.scene.worktreeId, headCommit: rework.scene.headCommit, codeDigest: rework.scene.codeDigest,
+        failures: rework.failureEvidenceRefs.map(renderInputRef).join('\n'),
+        selection: `mode ${selection.mode}${selection.mode === 'new' ? '' : ` kind ${selection.kind}`}`,
+        decision: `mode ${decision.mode}${decision.mode === 'resume' ? ` kind ${decision.kind}` : ''} reasons: ${decision.reasons.length === 0 ? '(none)' : decision.reasons.join(', ')}`,
+      }));
       parts.push('');
     }
     const recovery = validated.recovery ?? null;
     if (recovery !== null) {
-      parts.push('## Recovery continuation (same Task; compact handoff; native history not inlined)');
-      parts.push(`- nextAttemptId: ${recovery.nextAttemptId}`);
-      parts.push(`- requested: mode ${recovery.selection.mode}${recovery.selection.mode === 'new' ? '' : ` kind ${recovery.selection.kind}`}`);
-      parts.push(`- decision: mode ${recovery.decision.mode}${recovery.decision.mode === 'resume' ? ` kind ${recovery.decision.kind}` : ''} reasons: ${recovery.decision.reasons.length === 0 ? '(none)' : recovery.decision.reasons.join(', ')}`);
-      parts.push(`- sourceAttemptId: ${recovery.sourceAttemptId ?? '(none)'}`);
-      parts.push(`- sourceSessionId: ${recovery.sourceSessionId ?? '(none)'}`);
-      parts.push(`- workspace: ${recovery.workspace.workspaceId} ${recovery.workspace.repositoryIdentity} branch ${recovery.workspace.branch}`);
-      parts.push(`- codeDigest: sha256:${recovery.workspace.codeDigest}`);
-      parts.push(`- policy: ${stableStringify(recovery.policy.executionConfig)} (source ${recovery.policy.configSource}${recovery.policy.configSourceKey === null ? '' : `; key ${recovery.policy.configSourceKey}`})`);
-      if (recovery.handoff !== null) {
-        parts.push(`- previous: ${recovery.handoff.previousAttemptId} status ${recovery.handoff.previousStatus} stage ${recovery.handoff.previousExecutionStage}`);
-        parts.push(`- previous endedAtUtcMs: ${recovery.handoff.previousEndedAtUtcMs ?? '(unknown)'}; diagnostic: ${recovery.handoff.previousDiagnosticRef ?? '(none)'}`);
-        parts.push(`- handoff: ${recovery.handoff.note}`);
-      }
-      parts.push('## Recovery required inputs (must read each via reference and verify hash; bodies not inlined)');
-      for (const ref of recovery.requiredInputs) {
-        parts.push(`- ${ref.purpose}: artifact ${ref.artifactId} v${ref.version} sha256:${ref.contentHash} size ${ref.sizeBytes}B media ${ref.mediaType} locator ${ref.locator} ${renderOrigin(ref.origin)}`);
-      }
+      parts.push(templates.render('task/recovery.md', {
+        nextAttemptId: recovery.nextAttemptId,
+        selection: `mode ${recovery.selection.mode}${recovery.selection.mode === 'new' ? '' : ` kind ${recovery.selection.kind}`}`,
+        decision: `mode ${recovery.decision.mode}${recovery.decision.mode === 'resume' ? ` kind ${recovery.decision.kind}` : ''} reasons: ${recovery.decision.reasons.length === 0 ? '(none)' : recovery.decision.reasons.join(', ')}`,
+        sourceAttemptId: recovery.sourceAttemptId ?? '(none)', sourceSessionId: recovery.sourceSessionId ?? '(none)',
+        workspace: `${recovery.workspace.workspaceId} ${recovery.workspace.repositoryIdentity} branch ${recovery.workspace.branch}`,
+        codeDigest: recovery.workspace.codeDigest,
+        policy: `${stableStringify(recovery.policy.executionConfig)} (source ${recovery.policy.configSource}${recovery.policy.configSourceKey === null ? '' : `; key ${recovery.policy.configSourceKey}`})`,
+        handoff: recovery.handoff === null ? '' : templates.render('task/recovery-handoff.md', {
+          attemptId: recovery.handoff.previousAttemptId, status: recovery.handoff.previousStatus,
+          stage: recovery.handoff.previousExecutionStage, endedAt: String(recovery.handoff.previousEndedAtUtcMs ?? '(unknown)'),
+          diagnostic: recovery.handoff.previousDiagnosticRef ?? '(none)', note: recovery.handoff.note,
+        }) + '\n',
+        refs: recovery.requiredInputs.map(renderInputRef).join('\n'),
+      }));
       parts.push('');
     }
-    parts.push('## Task');
-    parts.push(`- taskId: ${validated.taskId}`);
-    parts.push(`- projectId: ${validated.projectId}`);
-    parts.push(`- featureId: ${validated.featureId}`);
-    parts.push(`- title: ${validated.task.title}`);
-    parts.push(
-      `- description: ${validated.task.description === null ? '(none)' : singleLine(validated.task.description)}`,
-    );
-    parts.push('');
-    parts.push('## Acceptance (required; complete; 不得删项)');
-    for (const [index, criterion] of validated.task.acceptance.criteria.entries()) {
-      parts.push(`[${index + 1}] ${singleLine(criterion)}`);
-    }
-    parts.push('');
-    parts.push('## Dependency evidence');
-    if (validated.task.dependencies.length === 0) {
-      parts.push('- (no upstream dependencies)');
-    } else {
-      for (const dependency of validated.task.dependencies) {
-        const refs =
-          dependency.evidenceRefs.length === 0
-            ? '(no evidence refs)'
-            : dependency.evidenceRefs
-                .map((ref) => `artifact ${ref.artifactId}${ref.contentHash === undefined ? '' : ` sha256:${ref.contentHash}`}`)
-                .join(', ');
-        parts.push(`- task ${dependency.taskId}: ${refs}`);
-      }
-    }
-    parts.push('');
-    parts.push('## Requirements evidence');
-    if (validated.task.requirementsRefs.length === 0) {
-      parts.push('- (none)');
-    } else {
-      for (const ref of validated.task.requirementsRefs) {
-        parts.push(`- artifact ${ref.artifactId}${ref.contentHash === undefined ? '' : ` sha256:${ref.contentHash}`}`);
-      }
-    }
-    parts.push('');
-    parts.push(
-      `## Execution strategy (actual copy; source: ${validated.task.configSource}${
-        validated.task.configSourceKey === null ? '' : `; key: ${validated.task.configSourceKey}`
-      })`,
-    );
-    parts.push(stableStringify(validated.task.executionConfig));
-    parts.push('');
-    parts.push('## Applicable check policy');
-    parts.push(`- digest: sha256:${validated.checkPolicy.digest}`);
-    parts.push(
-      `- copy: ${
-        validated.checkPolicy.copy === undefined
-          ? '(copy not provided; digest is identity)'
-          : stableStringify(validated.checkPolicy.copy)
-      }`,
-    );
+    parts.push(templates.render('task/task.md', {
+      taskId: validated.taskId, projectId: validated.projectId, featureId: validated.featureId, title: validated.task.title,
+      description: validated.task.description === null ? '(none)' : singleLine(validated.task.description),
+      languageLine: validated.task.languages?.length ? templates.render('task/languages.md', { languages: validated.task.languages.join(', ') }) + '\n' : '',
+      acceptance: validated.task.acceptance.criteria.map((criterion, index) => `[${index + 1}] ${singleLine(criterion)}`).join('\n'),
+    }), '');
+    const refText = (ref: { artifactId: string; contentHash?: string }) => `artifact ${ref.artifactId}${ref.contentHash === undefined ? '' : ` sha256:${ref.contentHash}`}`;
+    parts.push(templates.render('task/evidence.md', {
+      dependencies: validated.task.dependencies.length === 0 ? '- (no upstream dependencies)' : validated.task.dependencies
+        .map(dependency => `- task ${dependency.taskId}: ${dependency.evidenceRefs.length === 0 ? '(no evidence refs)' : dependency.evidenceRefs.map(refText).join(', ')}`).join('\n'),
+      requirements: validated.task.requirementsRefs.length === 0 ? '- (none)' : validated.task.requirementsRefs.map(ref => `- ${refText(ref)}`).join('\n'),
+    }), '');
+    parts.push(templates.render('task/strategy.md', {
+      source: validated.task.configSource, sourceKey: validated.task.configSourceKey === null ? '' : `; key: ${validated.task.configSourceKey}`,
+      config: stableStringify(validated.task.executionConfig), digest: validated.checkPolicy.digest,
+      copy: validated.checkPolicy.copy === undefined ? '(copy not provided; digest is identity)' : stableStringify(validated.checkPolicy.copy),
+    }));
     if (validated.deliveryPolicy !== undefined) {
       parts.push('');
-      parts.push('## Feature delivery policy (feature final commit only)');
-      parts.push(`- digest: sha256:${validated.deliveryPolicy.digest}`);
-      parts.push(
-        `- copy: ${
-          validated.deliveryPolicy.copy === undefined
-            ? '(copy not provided; digest is identity)'
-            : stableStringify(validated.deliveryPolicy.copy)
-        }`,
-      );
-      parts.push('- boundary: tasks save verification evidence and do NOT commit; the feature final commit happens only after final full checks and required approval');
+      parts.push(templates.render('task/delivery.md', {
+        digest: validated.deliveryPolicy.digest,
+        copy: validated.deliveryPolicy.copy === undefined ? '(copy not provided; digest is identity)' : stableStringify(validated.deliveryPolicy.copy),
+      }));
     }
     parts.push('');
-    parts.push('## Permissions');
-    if (validated.permissions.grants.length === 0) {
-      parts.push('- (none)');
-    } else {
-      for (const grant of validated.permissions.grants) {
-        parts.push(`- ${grant}`);
-      }
-    }
+    parts.push(templates.render('task/permissions.md', { grants: validated.permissions.grants.length === 0 ? '- (none)' : validated.permissions.grants.map(grant => `- ${grant}`).join('\n') }));
     parts.push('');
     if (validated.profile !== undefined) {
-      parts.push('## Confirmed project profile and capability modules (identity snapshot)');
-      parts.push(`- profileVersion: ${validated.profile.profileVersion}`);
-      parts.push(`- profileDigest: sha256:${validated.profile.profileDigest}`);
-      parts.push(`- confirmationDigest: sha256:${validated.profile.confirmationDigest}`);
-      for (const module of validated.profile.modules) {
-        parts.push(`- module ${module.id}@${module.version}: ${module.reason}`);
-      }
-      parts.push('- module bodies, paths and credentials are not included; use only the fixed identity references');
+      parts.push(templates.render('task/profile.md', { version: String(validated.profile.profileVersion), digest: validated.profile.profileDigest,
+        confirmationDigest: validated.profile.confirmationDigest, modules: validated.profile.modules.map(module => `- module ${module.id}@${module.version}: ${module.reason}`).join('\n') }));
       parts.push('');
     }
     if (knowledge.length > 0) {
-      parts.push('## Authorized knowledge selections (managed artifacts; bounded)');
+      const sources: string[] = [];
       for (const source of knowledge) {
         const sourceLabel = source.kind === 'document' ? `document ${source.documentId}` : `memory ${source.memoryId}`;
-        parts.push(
+        sources.push(
           `- ${sourceLabel} v${source.version}: artifact ${source.contentRef.artifactId} v${source.contentRef.version} sha256:${source.contentHash} ${knowledgeRangeText(source)} purpose ${source.purpose} required ${source.required} truncated ${source.truncated} reason ${singleLine(source.reason)}`,
         );
-        if (source.snippet !== undefined) parts.push(`  excerpt: ${singleLine(source.snippet)}`);
+        if (source.snippet !== undefined) sources.push(`  excerpt: ${singleLine(source.snippet)}`);
       }
+      parts.push(templates.render('task/knowledge.md', { sources: sources.join('\n') }));
       parts.push('');
     }
-    parts.push('## Required inputs (must read each before work; verify hash)');
-    if (validated.requiredInputs.length === 0) {
-      parts.push('- (none)');
-    } else {
-      for (const ref of validated.requiredInputs) {
-        parts.push(
-          `- ${ref.purpose}: artifact ${ref.artifactId} v${ref.version} sha256:${ref.contentHash} size ${ref.sizeBytes}B media ${ref.mediaType} locator ${ref.locator} ${renderOrigin(ref.origin)}`,
-        );
-      }
-    }
+    parts.push(templates.render('task/required-inputs.md', { refs: validated.requiredInputs.length === 0 ? '- (none)' : validated.requiredInputs.map(renderInputRef).join('\n') }));
     parts.push('');
     return parts.join('\n');
   }
@@ -691,6 +624,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     const rework = validated.rework ?? null;
     const recovery = validated.recovery ?? null;
     const snapshotBusiness = {
+      locale: templates.locale,
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
       projectId: validated.projectId,
       featureId: validated.featureId,
@@ -698,6 +632,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       task: {
         title: validated.task.title,
         description: validated.task.description,
+        ...taskLanguagesProjection(validated.task.languages),
         acceptance: validated.task.acceptance,
         requirementsRefs: validated.task.requirementsRefs,
         dependencies: validated.task.dependencies,
@@ -717,6 +652,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       ...(recovery === null ? {} : { recovery }),
     };
     const inputSnapshot: ContextInputSnapshot = {
+      locale: templates.locale,
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
       projectId: validated.projectId,
       featureId: validated.featureId,
@@ -724,6 +660,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       task: {
         title: validated.task.title,
         description: validated.task.description,
+        ...taskLanguagesProjection(validated.task.languages),
         acceptance: validated.task.acceptance,
         requirementsRefs: validated.task.requirementsRefs,
         dependencies: validated.task.dependencies,
@@ -795,7 +732,8 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         version: null,
         hash: digestOf(
           CONTEXT_SNAPSHOT_DIGEST_DOMAIN,
-          stableStringify({ title: validated.task.title, description: validated.task.description }),
+          stableStringify({ title: validated.task.title, description: validated.task.description,
+            ...taskLanguagesProjection(validated.task.languages) }),
         ),
         purpose: 'task-identity',
         selection: 'full',
@@ -1055,6 +993,18 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       taskId: validated.taskId,
       sources,
       omissions,
+      locale: templates.locale,
+      promptTemplates: templates.provenance([
+        'runtime/reply-language.md',
+        'task/header.md', CONTEXT_FIXED_GUIDANCE_TEMPLATE, ...selectTaskPromptModules(validated.task.languages),
+        'task/task.md', 'task/evidence.md', 'task/strategy.md', 'task/permissions.md', 'task/required-inputs.md',
+        ...(validated.task.languages?.length ? ['task/languages.md'] : []),
+        ...(validated.rework ? [CONTEXT_REWORK_GUIDANCE_TEMPLATE, 'task/rework.md'] : []),
+        ...(validated.recovery ? ['task/recovery.md', ...(validated.recovery.handoff ? ['task/recovery-handoff.md'] : [])] : []),
+        ...(validated.deliveryPolicy ? ['task/delivery.md'] : []), ...(validated.profile ? ['task/profile.md'] : []),
+        ...(knowledge.length ? ['task/knowledge.md'] : []),
+        ...(historyIndex ? ['task/history-header.md', 'task/history-footer.md'] : []),
+      ]),
       ...(validated.knowledgeBudget === undefined ? {} : { knowledgeBudget: validated.knowledgeBudget }),
       promptDigest,
     };

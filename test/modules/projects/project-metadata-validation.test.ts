@@ -44,7 +44,7 @@ const CONTEXT: ValidationContext = {
 };
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const contractDoc = readFileSync(resolve(REPO_ROOT, 'docs/p01-3-application-contract.md'), 'utf-8');
+const contractDoc = readFileSync(resolve(REPO_ROOT, 'docs/phases/p01/p01-3-application-contract.md'), 'utf-8');
 
 function expectValidationError(fn: () => unknown, field?: string): StorageError {
   try {

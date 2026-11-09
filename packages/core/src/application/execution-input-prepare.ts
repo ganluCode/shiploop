@@ -5,7 +5,7 @@
  * 设计依据：core-design/06（Attempt 固定输入引用和摘要；snapshot/manifest/
  * prompt 是可验证的不可变制品组）、core-design/13 §2（InputManifest 记录选取
  * 与读取证据）、core-design/03 §4（发布 staging→校验→ready；文件 I/O 不在
- * 数据库事务内）。实施契约：docs/p03-2-execution-input-prepare-contract.md。
+ * 数据库事务内）。实施契约：docs/phases/p03/p03-2-execution-input-prepare-contract.md。
  *
  * 不变量：
  * - 三阶段结构（与基线命令同一纪律）：
@@ -538,6 +538,7 @@ export function createExecutionInputPrepareService(
       let built;
       try {
         built = builder.build({
+          locale: effective.locale ?? 'en-US',
           projectId,
           featureId: view.feature.id,
           taskId: task.id,
@@ -551,6 +552,7 @@ export function createExecutionInputPrepareService(
             configSource: task.configSource,
             configSourceKey: task.configSourceKey,
             labels: task.labels,
+            languages: task.languages ?? [],
           },
           checkPolicy: {
             digest: checkPolicyDigest,

@@ -57,6 +57,14 @@ export function createSqliteAtomicCommandStore(
           if (!active) throw new TypeError('命令事务上下文已失效');
           return fn(...args);
         };
+        const bindFeatureDocuments = (projectId: string, featureId: string, documents: readonly import('../../ports/managed-documents.js').ManagedDocumentSource[]) => {
+          plan.getFeaturePlanInTransaction(projectId, featureId);
+          for (const doc of documents) {
+            session.database.prepare('INSERT OR IGNORE INTO managed_document_sources(project_id,path) VALUES (?,?)').run(projectId, doc.path);
+            session.database.prepare('INSERT INTO feature_document_sources(project_id,feature_id,path,role) VALUES (?,?,?,?)')
+              .run(projectId, featureId, doc.path, doc.role);
+          }
+        };
         const finalizeFeatureDeliveryInTransaction = (input: unknown, transaction: CommandTransaction): FeatureFinalizationRecord => {
           if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new StorageError('validation', operation, '最终收尾输入必须是对象');
           const value = input as Record<string, unknown>;
@@ -80,6 +88,12 @@ export function createSqliteAtomicCommandStore(
           if (outcome === 'awaiting_approval' && deliveryStatus !== 'not_requested') throw new StorageError('validation', operation, 'awaiting_approval 不得具有交付结果');
           const snapshot = plan.getFeaturePlanInTransaction(projectId, featureId);
           if (outcome === 'completed' && snapshot.tasks.some(task => task.status !== 'passed')) throw new StorageError('conflict', operation, '必需 Task 尚未全部有效通过');
+          if (outcome === 'completed' && session.database.prepare(`SELECT 1 FROM git_pushes
+            WHERE project_id=? AND run_id=? AND status <> 'succeeded' LIMIT 1`).get(projectId, runId)) {
+            throw new StorageError('conflict', operation, 'Automatic push outcome requires reconciliation', {
+              details: { reason: 'auto_push_outcome_unconfirmed' },
+            });
+          }
           const currentRun = executions.getExecutionRunInTransaction(projectId, runId);
           const currentBatch = executions.getExecutionBatchInTransaction(projectId, batchId);
           const members = executions.listExecutionBatchMemberFeatureIdsInTransaction(projectId, batchId);
@@ -203,6 +217,7 @@ export function createSqliteAtomicCommandStore(
           moveFeaturePhase: guarded(plan.moveFeaturePhaseInTransaction),
           updateFeatureDag: guarded(plan.updateFeatureDagInTransaction),
           insertFeature: guarded(plan.insertFeatureInTransaction),
+          bindFeatureDocuments: guarded(bindFeatureDocuments),
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),
           // P03-1 / F-007：纯标签 CAS 编辑（只触达 labels/revision/updated_at）。
@@ -306,6 +321,7 @@ export function createSqliteAtomicCommandStore(
           getPlanningContextByCandidate: guarded(planningContexts.getPlanningContextByCandidate),
           getPlanningContextByRun: guarded(planningContexts.getPlanningContextByRun),
           decidePlanningCandidate: guarded(planningContexts.decidePlanningCandidateInTransaction),
+          retireFailedPlanning: guarded(planningContexts.retireFailedPlanningInTransaction),
           publishPlanningCandidate: guarded(planningContexts.publishPlanningCandidateInTransaction),
           // P03-3 / F-007：Runtime 启动额度预占原语（迁移 v12；同一 BEGIN IMMEDIATE
           // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。

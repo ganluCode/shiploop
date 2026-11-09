@@ -36,6 +36,7 @@
  * 候选提交通道（F-006）、Runtime 执行（F-007）、取消/超时结算（F-009）。
  */
 import type { PreparedPlanningInputGroup } from './planning-input-prepare.js';
+import { validatePlanningCodeBaseline } from './planning-input-prepare.js';
 import type { ExecutionInputRef } from './execution-input.js';
 import { validateExecutionInputRef } from './execution-input.js';
 import type { VerifiedWorkWorkspace } from './work-resources.js';
@@ -127,6 +128,7 @@ export type PlanningClaimEligibilityReason = (typeof PLANNING_CLAIM_ELIGIBILITY_
  * 永远不携带它们）。
  */
 export interface PlanningAttemptInputSnapshot {
+  readonly codeBaseline?: import('./planning-input-prepare.js').PlanningCodeBaseline;
   readonly schemaVersion: typeof PLANNING_CLAIM_SNAPSHOT_SCHEMA_VERSION;
   readonly purpose: typeof PLANNING_CLAIM_SNAPSHOT_PURPOSE;
   readonly projectId: string;
@@ -173,7 +175,7 @@ export interface PlanningClaimBodyRef {
 
 const SNAPSHOT_KEYS = [
   'schemaVersion', 'purpose', 'projectId', 'phaseId', 'featureId', 'runId', 'taskId',
-  'candidateId', 'group', 'requiredInputs', 'digests', 'preparedAtUtcMs',
+  'candidateId', 'group', 'requiredInputs', 'digests', 'preparedAtUtcMs', 'codeBaseline',
   // 编码专属键：读取侧允许缺席（undefined/null），出现即拒绝（判别失败）。
   'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'rework', 'recovery', 'runtimeFallback',
 ] as const;
@@ -231,6 +233,7 @@ export function validatePlanningAttemptInputSnapshot(value: unknown): PlanningAt
   const requiredInputs = raw.requiredInputs.map((ref, index) =>
     validateExecutionInputRef(ref, `${PLANNING_CLAIM_OPERATION}[requiredInput:${index}]`));
   const snapshot: PlanningAttemptInputSnapshot = {
+    ...(raw.codeBaseline === undefined ? {} : { codeBaseline: validatePlanningCodeBaseline(raw.codeBaseline, context, 'inputSnapshot.codeBaseline') }),
     schemaVersion: PLANNING_CLAIM_SNAPSHOT_SCHEMA_VERSION,
     purpose: PLANNING_CLAIM_SNAPSHOT_PURPOSE,
     projectId: validateStableId(raw.projectId, context, 'inputSnapshot.projectId'),
@@ -274,6 +277,7 @@ export function buildPlanningAttemptInputSnapshot(
   prepared: PreparedPlanningInputGroup,
 ): PlanningAttemptInputSnapshot {
   return validatePlanningAttemptInputSnapshot({
+    ...(prepared.codeBaseline === undefined ? {} : { codeBaseline: prepared.codeBaseline }),
     schemaVersion: PLANNING_CLAIM_SNAPSHOT_SCHEMA_VERSION,
     purpose: PLANNING_CLAIM_SNAPSHOT_PURPOSE,
     projectId: prepared.projectId,

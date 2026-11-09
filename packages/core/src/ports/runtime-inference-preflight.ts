@@ -24,7 +24,7 @@ export interface RuntimeInferenceUsage {
 }
 export interface RuntimeInferenceProbeRequest extends RuntimeInferenceSelection {
   readonly signal: AbortSignal;
-  readonly prompt: 'Reply with OK.';
+  readonly prompt: string;
   readonly maxOutputTokens: 32;
   readonly maxRetries: 0;
   /** Cumulative request usage, including partial response facts before timeout/cancel. */
@@ -65,6 +65,7 @@ export interface RuntimeInferenceDecision {
   readonly reason: RuntimeInferenceReason | null;
 }
 export interface RuntimeInferencePreflightDependencies {
+  readonly promptTemplates?: import('./prompt-templates.js').PromptTemplateCatalog;
   readonly policy?: unknown;
   readonly adapter?: RuntimeInferenceAdapter;
   /** Checks explicit probe authorization, source/policy binding and revocation on every check/cache hit. */

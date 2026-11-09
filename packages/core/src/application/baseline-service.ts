@@ -1,6 +1,6 @@
 /**
  * F-008（P02-3）BaselineService（application 层）：Core 基线预览与明确授权
- * 用例（docs/p02-3-onboarding-contract.md §5.3/§5.5/§6/§8.3/§9.2）。
+ * 用例（docs/phases/p02/p02-3-onboarding-contract.md §5.3/§5.5/§6/§8.3/§9.2）。
  *
  * 不变量：
  * - 只依赖 ports 窄接口（RepositoryInspector / BaselineWorkspaceReader /

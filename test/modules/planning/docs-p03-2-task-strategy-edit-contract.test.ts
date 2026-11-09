@@ -1,5 +1,5 @@
 /**
- * P03-2 / F-001 文档核验：`docs/p03-2-task-strategy-edit-contract.md` 记录的
+ * P03-2 / F-001 文档核验：`docs/phases/p03/p03-2-task-strategy-edit-contract.md` 记录的
  * Task 策略副本授权 CAS 编辑契约必须与仓库实现事实一致（命令面、副本与来源
  * 语义、能力校验、影响面纯规则、活动保护边界、原子性/幂等与拒绝矩阵），
  * 避免「文档另立一套」与后续 Host/CLI 接线任务（F-007/F-008）各自发明规则。
@@ -27,7 +27,7 @@ import {
 import { PUBLIC_STATE_EVENT_TYPES } from '../../../packages/core/src/ports/events.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-2-task-strategy-edit-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-2-task-strategy-edit-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

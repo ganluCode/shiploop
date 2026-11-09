@@ -1,4 +1,3 @@
-import { deriveManagedFeatureBranch } from '../ports/workspace-preparation.js';
 import type { GitPublicMetadataLock } from '../ports/git-public-metadata-lock.js';
 import type { WorkResourceAccess } from '../ports/work-resources.js';
 import type { WorkspacePreparationInput, WorkspacePreparationStore,
@@ -26,7 +25,7 @@ export function createWorkspacePreparationService(options: {
       const baseline = { repositoryBindingId: authorization.binding.id,
         repositoryBindingRevision: authorization.binding.bindingRevision, repoIdentity: authorization.binding.repoIdentity,
         gitCommonDir: authorization.binding.gitCommonDir!, canonicalPath: token.canonicalPath,
-        branch: deriveManagedFeatureBranch(input.identity.projectId, authorization.featureId),
+        branch: authorization.branchName,
         baseCommit: authorization.baseCommit };
       const intent = options.store.begin(input, baseline);
       if (!['pending', 'succeeded'].includes(intent.operation.status)) throw new Error('terminal_preparation_not_recoverable');

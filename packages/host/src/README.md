@@ -22,7 +22,7 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
     工作区依赖）；监听覆盖（选项/env/argv）零容忍；import 仍无副作用。
     显式启动入口 `start.ts` → dist/start.js（node …/dist/start.js --data-root <abs>）。
     不装配 Pi/模型执行。原生工具与装配前提见
-  [写入锁决定](../../../docs/p02-1-writer-lock.md)。
+  [写入锁决定](../../../docs/phases/p02/p02-1-writer-lock.md)。
   - `client/`（F-009）：CLI 可复用 HostClient（connectToHost/probeDiscoveredHost）。
     受保护发现/凭据读取（经 storage/）→ 握手双向核验（协议/实例/数据根/能力）
     通过后才允许 status/stop；不跟随 3xx、错误按契约 §14 精确分类、close() 只
@@ -37,7 +37,7 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
     shiploop-core 纯契约入口；禁止文件系统、网络直连、argv 与
     shiploop-core/assembly（不打开 SQLite）。
 
-  P02-2（契约 docs/p02-2-commands-events-contract.md）：
+  P02-2（契约 docs/phases/p02/p02-2-commands-events-contract.md）：
   - 线消息 schemaVersion 升 2（§3.1：握手/stop/status/命令/查询响应；发现
     schemaVersion=1 与 protocolVersion=1 不联动）；握手 capabilities 为 §11.3
     结构化视图（application.commands/queries 为真实接线清单，F-012 起

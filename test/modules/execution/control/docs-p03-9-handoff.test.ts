@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const doc = new URL('../../../../docs/p03-9-handoff.md', import.meta.url);
+const doc = new URL('../../../../docs/phases/p03/p03-9-handoff.md', import.meta.url);
 const repoRoot = new URL('../../../../', import.meta.url).pathname;
 
 describe('P03-9 feature handoff', () => {

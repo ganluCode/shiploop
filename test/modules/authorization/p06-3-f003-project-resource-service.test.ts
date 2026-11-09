@@ -36,6 +36,20 @@ async function fixture() {
 }
 
 describe('P06-3 F-003 project resource configuration', () => {
+  it('loads only selected Skill content and rejects changed required source content', async () => {
+    const f = await fixture();
+    try {
+      await f.service.select(owner, f.project.id, 0, await f.request());
+      const loaded = await f.service.loadSelectedSkills(owner, f.project.id);
+      expect(loaded.skills).toHaveLength(1);
+      expect(loaded.skills[0].content).toContain('Use public commands');
+      expect(loaded.selection.allowGlobalScan).toBe(false);
+      const changed = resourceManifest();
+      changed.resources[0].content.instructions = 'changed without approval';
+      writeFileSync(f.path, JSON.stringify(changed));
+      await expect(f.service.loadSelectedSkills(owner, f.project.id)).rejects.toMatchObject({ details: { reason: 'required_resource_load_failed' } });
+    } finally { f.close(); }
+  });
   it('[case:persist] persists selected metadata in project settings, retains other settings and reopens', async () => {
     const f = await fixture();
     try {

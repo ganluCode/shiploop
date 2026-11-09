@@ -43,6 +43,8 @@ export interface WorkStartupRecoveryStore {
     targetId: string): readonly WorkStartupRecoveryEvidence[];
 }
 export interface WorkStartupRecoveryOptions {
+  /** Trusted auxiliary writers must stop before restored Work may be scheduled. */
+  readonly recoverAuxiliaryWriters?: () => Promise<void>;
   /** A restored root must fence old identities without trusting archived stop observations. */
   readonly isolatedRestore?: boolean;
   readonly store: WorkStartupRecoveryStore;

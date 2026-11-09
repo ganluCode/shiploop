@@ -1,5 +1,5 @@
 /**
- * F-001 文档核验：`docs/p01-3-application-contract.md` 声明的 P01-3 Core 应用契约
+ * F-001 文档核验：`docs/phases/p01/p01-3-application-contract.md` 声明的 P01-3 Core 应用契约
  * 必须与仓库中真实存在的前序常量/端口/迁移一致，避免「文档另立一套」与实现漂移。
  *
  * 定位：F-001 只交付契约与范围文档；本套件交叉核对文档引用的真实契约
@@ -16,7 +16,7 @@ import { SETTINGS_SCHEMA_VERSION } from '../../../packages/core/src/ports/settin
 import { StorageError } from '../../../packages/core/src/ports/errors.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p01-3-application-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p01/p01-3-application-contract.md';
 const contractDoc = readFileSync(resolve(REPO_ROOT, CONTRACT_DOC_PATH), 'utf-8');
 
 describe('F-001 P01-3 应用契约文档', () => {

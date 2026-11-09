@@ -1,7 +1,7 @@
 /**
  * F-003 公开事件封套映射、快照水位与 SSE 游标纯契约（ports 契约层）。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md
  * - §8 快照水位：watermark 为同一 SQLite 一致读视图内
  *   MAX(state_events.sequence)，空库为 0；水位游标绑定数据根身份与 scope，
  *   具体的一致读视图组装在 F-010；
@@ -280,7 +280,13 @@ function validateWorkRecoveryPayload(payload: Record<string, unknown>, operation
     } else corrupt(operation, 'event_payload_violation');
     return;
   }
-  if (payload.phase === 'run_interrupted') {
+  if (payload.phase === 'planning_retired') {
+    exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'projectId', 'runId', ...(payload.evidenceRef===undefined?[]:['evidenceRef'])]);
+    try { validateStableId(payload.projectId, { operation }, 'projectId'); validateStableId(payload.runId, { operation }, 'runId'); }
+    catch { corrupt(operation, 'event_payload_violation'); }
+    if(payload.evidenceRef!==undefined) { try{validateStableId(payload.evidenceRef,{operation},'evidenceRef');}catch{corrupt(operation,'event_payload_violation');} }
+    return;
+  } else if (payload.phase === 'run_interrupted') {
     exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'reason']);
     if (payload.reason !== 'restart_recovery') corrupt(operation, 'event_payload_violation');
     return;
@@ -1259,8 +1265,21 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = { schemaVersion: 1, operationId: row.payload.operationId, status: row.payload.status, executionStage: row.payload.executionStage };
   } else if (spec.payloadKind === 'attemptUpdated' || spec.payloadKind === 'taskApprovalBlocked' || spec.payloadKind === 'taskApprovalDecided') {
     const key = spec.payloadKind === 'attemptUpdated' ? 'updated' : spec.payloadKind === 'taskApprovalBlocked' ? 'blocked' : 'decided';
-    if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
-    payload = { [key]: true };
+    if (spec.payloadKind === 'attemptUpdated' && row.payload.fallback !== undefined) {
+      exactPayloadKeys(operation, row.payload, ['updated', 'fallback']);
+      const fallback = row.payload.fallback;
+      if (row.payload.updated !== true || !fallback || typeof fallback !== 'object' || Array.isArray(fallback)) corrupt(operation, 'event_payload_violation');
+      const f = fallback as Record<string, unknown>;
+      exactPayloadKeys(operation, f, ['runId', 'category', 'provider', 'model', 'fromModel']);
+      if (!['quota_blocked', 'transient_connection', 'transient_server', 'authentication'].includes(String(f.category))
+        || ['runId', 'provider', 'model'].some(field => typeof f[field] !== 'string' || !(f[field] as string).length || (f[field] as string).length > 256)) corrupt(operation, 'event_payload_violation');
+      if (f.fromModel !== undefined && (typeof f.fromModel !== 'string' || !f.fromModel.length || f.fromModel.length > 256)) corrupt(operation, 'event_payload_violation');
+      payload = { updated: true, fallback: { runId: f.runId, category: f.category, provider: f.provider, model: f.model,
+        ...(f.fromModel === undefined ? {} : { fromModel: f.fromModel }) } };
+    } else {
+      if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
+      payload = { [key]: true };
+    }
   } else if (spec.payloadKind === 'taskClaimed') {
     if (Object.keys(row.payload).length !== 1 || row.payload.claimed !== true) corrupt(operation, 'event_payload_violation');
     payload = { claimed: true };

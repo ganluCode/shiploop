@@ -17,6 +17,7 @@ const PREFIX = ['/usr/bin/git', '-c', 'core.fsmonitor=false', '-c', 'core.untrac
   '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'protocol.allow=never',
   '-c', 'commit.gpgsign=false'];
 const oid = (value: string) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+const REMOTE_PROTOCOLS = ['-c', 'protocol.https.allow=always', '-c', 'protocol.ssh.allow=always', '-c', 'protocol.file.allow=always'];
 function invalid(): never { throw new GitCommitProcessError('invalid_git_output', true); }
 function decode(bytes: Buffer): string {
   const value = bytes.toString('utf8');
@@ -89,8 +90,36 @@ export function createGitCommitDriver(options: {
       if (!oid(value)) invalid();
       return value;
     }
+    const remoteTargets = new Map<string, string>();
+    async function remoteTarget(remote: string): Promise<string> {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(remote)) invalid();
+      const urls = (await output(['remote', 'get-url', '--push', '--all', remote])).trim().split('\n');
+      if (urls.length !== 1 || !urls[0] || urls[0].startsWith('-') || urls[0].includes('\0')) invalid();
+      const previous = remoteTargets.get(remote);
+      if (previous !== undefined && previous !== urls[0]) throw new GitCommitProcessError('push_remote_changed', true);
+      remoteTargets.set(remote, urls[0]);
+      return urls[0];
+    }
     return {
       tree,
+      async remoteIdentity(remote) { return createHash('sha256').update(await remoteTarget(remote)).digest('hex'); },
+      async remoteHead(remote, branch) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(remote)) invalid();
+        const ref = `refs/heads/${branch.replace(/^refs\/heads\//, '')}`;
+        await run(['check-ref-format', ref]);
+        const lines = (await output([...REMOTE_PROTOCOLS, 'ls-remote', '--heads', '--', await remoteTarget(remote), ref])).trim();
+        if (!lines) return null;
+        const [sha, name, ...extra] = lines.split(/\s+/);
+        if (!oid(sha) || name !== ref || extra.length) invalid();
+        return sha;
+      },
+      async pushCommit(remote, branch, commit) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(remote) || !oid(commit)) invalid();
+        const ref = `refs/heads/${branch.replace(/^refs\/heads\//, '')}`;
+        await run(['check-ref-format', ref]);
+        if ((await output(['rev-parse', 'HEAD'])).trim() !== commit) throw new GitCommitProcessError('push_head_changed', true);
+        await run([...REMOTE_PROTOCOLS, 'push', '--porcelain', '--', await remoteTarget(remote), `${commit}:${ref}`]);
+      },
       async stagedPaths() {
         const value = await output(['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only', '--no-renames', '-z', 'HEAD', '--']);
         if (!value) return [];

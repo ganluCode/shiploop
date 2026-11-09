@@ -1,0 +1,1 @@
+Use English for progress, explanations and completion reports. Preserve identifiers, paths, commands, protocol values and quoted source/user text. Honor an explicitly requested language for a deliverable without translating code or machine fields.

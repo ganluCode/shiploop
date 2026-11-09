@@ -2,7 +2,7 @@
  * P04-9 / F-003 单执行槽位 SQLite 事务原语（adapters 层）。
  *
  * 设计依据：input/p04-dispatch-foundation.md §3.2、core-design/15 §3、
- * docs/p04-9-f001-dispatch-slot-contract.md 与 F-003 契约
+ * docs/phases/p04/p04-9-f001-dispatch-slot-contract.md 与 F-003 契约
  * `ports/execution-slot.ts`。
  *
  * 不变量：

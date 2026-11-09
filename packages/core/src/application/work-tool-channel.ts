@@ -285,7 +285,18 @@ export function createWorkToolChannel(deps: WorkToolChannelDeps) {
         try { parsed = JSON.parse(text) as unknown; } catch { rejection = 'candidate_json_invalid'; }
         if (rejection === null) {
           try {
-            const validated = validatePlanningCandidatePayload(parsed, { operation });
+            let validated = validatePlanningCandidatePayload(parsed, { operation });
+            const managedRefs = deps.atomicStore.transact('work.tools.managedDocuments', tx =>
+              tx.getTask(context.projectId, snapshot.planningTaskId).requirementsRefs.filter(ref => tx.getArtifactInputRef(context.projectId, ref.artifactId)
+                .locator.startsWith('managed-documents/contexts/')));
+            if (managedRefs.length) {
+              const payload = parsed as { plan: { feature: { sourceRefs?: unknown[] }; tasks: unknown[] } };
+              const sources = new Map(validated.plan.feature.sourceRefs.map(ref => [ref.artifactId, ref]));
+              for (const ref of managedRefs) sources.set(ref.artifactId, ref);
+              const normalized = { ...payload, plan: { ...payload.plan, feature: { ...payload.plan.feature, sourceRefs: [...sources.values()] } } };
+              validated = validatePlanningCandidatePayload(normalized, { operation });
+              text = JSON.stringify(normalized);
+            }
             if (validated.projectId !== snapshot.projectId || validated.featureId !== snapshot.featureId
               || validated.runId !== snapshot.runId || validated.candidateId !== snapshot.candidateId) {
               rejection = 'candidate_identity_mismatch';

@@ -3,7 +3,7 @@
  * 授权/幂等通道（真实生产组合根 openCoreApplication + 真实 startHost +
  * 真实临时 Git/SQLite/HTTP loopback）。
  *
- * 依据 docs/p03-5-workspace-host-integration-contract.md：
+ * 依据 docs/phases/p03/p03-5-workspace-host-integration-contract.md：
  * - 组合根装配 workspace 栈（workResources/authority/taskClaims/准备/保留/
  *   清理/丢弃/查询门面），不新增 Host/命令队列/事件工作流；
  * - 已认领 Attempt 的准备入口复用 P03-4 已提交认领回执；Run 保持 queued +

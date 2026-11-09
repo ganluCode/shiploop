@@ -925,6 +925,12 @@ describe('F-006 project init/overview CLI 纵向（真实 Host 子进程 + SQLit
     ]);
     const firstResult = successResult(first, 'project.init');
     const projectId = (firstResult.registration as { projectId: string }).projectId;
+    const skillPath = join(repos.withHead, '.agents/skills/shiploop/SKILL.md');
+    expect(readFileSync(skillPath, 'utf8')).toContain('Project Operations');
+    const globalInput = join(fixture!.root, 'global-locale.json');
+    writeFileSync(globalInput, JSON.stringify({ schemaVersion: 2, locale: 'zh-CN' }));
+    const configured = await runApp(['config', 'create', '--scope', 'global', '--input', globalInput, '--data-root', root, '--json']);
+    expect(configured.result.exitCode).toBe(0);
 
     const second = await runApp([
       'project',
@@ -942,9 +948,20 @@ describe('F-006 project init/overview CLI 纵向（真实 Host 子进程 + SQLit
       '--json',
     ]);
     const secondResult = successResult(second, 'project.init');
+    expect(readFileSync(skillPath, 'utf8')).toContain('项目操作');
+    const exported = await runApp(['config', 'export', '--scope', 'global', '--data-root', root, '--json']);
+    expect(exported.result.exitCode).toBe(0);
+    expect(successResult(exported, 'config.export').current).toMatchObject({ locale: 'zh-CN' });
     const registration = secondResult.registration as { status: string; projectId: string };
     expect(registration.status).toBe('already_registered');
     expect(registration.projectId).toBe(projectId);
+
+    const repeated = await runApp([
+      'project', 'init', repos.withHead, '--confirm', '--data-root', root, '--json',
+    ]);
+    const repeatedResult = successResult(repeated, 'project.init');
+    expect(repeatedResult.registration).toMatchObject({ status: 'already_registered', projectId });
+    expect(repeatedResult.skills).toMatchObject({ status: 'synced' });
 
     const probeHandle = probe(root);
     try {
@@ -1166,7 +1183,7 @@ describe('F-006 project init/overview CLI 纵向（真实 Host 子进程 + SQLit
     }
   });
 
-  it('--confirm 缺 --name：在连接 Host 之前以退出码 2 拒绝（注册请求不完整）', async () => {
+  it('首次 --confirm 缺 --name：检查未注册后以退出码 2 拒绝，不提交注册', async () => {
     const repos = fixture!.repos;
     const root = useRoot('no-name');
     const inv = await runApp([
@@ -1180,7 +1197,13 @@ describe('F-006 project init/overview CLI 纵向（真实 Host 子进程 + SQLit
     ]);
     const error = failureOf(inv, 2, 'invalid_input');
     expect(error?.details?.reason).toBe('name_required_for_registration');
-    expect(existsSync(join(root, DATABASE_FILE_NAME)), '不得在拒绝前打开/创建状态库').toBe(false);
+    const handle = probe(root);
+    try {
+      expect(handle.counts().projects).toBe(0);
+      expect(handle.counts().command_receipts).toBe(0);
+    } finally {
+      handle.close();
+    }
   });
 
   it('CLI 不直接打开 SQLite 或写元数据文件（源码扫描：无 sqlite 驱动/Core 导入）', () => {

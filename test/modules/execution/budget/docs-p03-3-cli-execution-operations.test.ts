@@ -1,5 +1,5 @@
 /**
- * P03-3 / F-012 文档核验：`docs/p03-3-cli-execution-operations.md` 的 CLI 操作
+ * P03-3 / F-012 文档核验：`docs/phases/p03/p03-3-cli-execution-operations.md` 的 CLI 操作
  * 说明必须与实现事实一致（命令面、预算参数映射、四态结构化输出、失败退出、
  * accepted 语义与恢复语义），且示例只使用脱敏逻辑身份，避免文档另立一套。
  */
@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { APP_CLI_COMMAND_IDS, getAppCliHelp } from '../../../../packages/cli/src/index.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const DOC_PATH = 'docs/p03-3-cli-execution-operations.md';
+const DOC_PATH = 'docs/phases/p03/p03-3-cli-execution-operations.md';
 
 function readDoc(): string {
   const path = resolve(REPO_ROOT, DOC_PATH);

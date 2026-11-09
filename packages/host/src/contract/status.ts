@@ -1,7 +1,7 @@
 /**
  * F-002 状态契约（GET /v1/host/status）：响应类型与运行时校验（纯模块）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §9（只读、零副作用状态查询）。
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §9（只读、零副作用状态查询）。
  *
  * status 永远是服务端响应（请求侧无请求体）；客户端对其做与握手相同的版本门禁
  * 与实例/数据根双向核验，结构畸形归 response_malformed。P02-1 生产 activities

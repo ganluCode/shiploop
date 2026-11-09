@@ -373,7 +373,7 @@ describe('F-016 配置与回执 CLI 纵向接线（真实 Host 子进程 + SQLit
       await runApp(env, ['config', 'export', '--scope', 'global', '--data-root', root, '--json']),
       'config.export',
     );
-    expect(exported.exportFormatVersion).toBe(1);
+    expect(exported.exportFormatVersion).toBe(2);
     expect(exported.scope).toBe('global');
     const current = exported.current as { revision: number; strategies?: unknown };
     expect(current.revision).toBe(1);

@@ -18,6 +18,8 @@ import { rejectUnknownKeys, requirePlainObject, validateStableId, validationErro
 import { createProjectResourceCandidateDiscovery } from './project-resource-discovery.js';
 import { LOCAL_OWNER_PRINCIPAL_ID } from '../ports/commands.js';
 import type { ProjectResourceSourceInput, ProjectResourceSourceResult, ProjectResourceSourceDirectory } from '../ports/project-resource-sources.js';
+import { createHash } from 'node:crypto';
+import { stableStringify } from '../ports/feature-plan.js';
 
 /** Trusted assembly directory. No path, principal or resource body is taken from a mutation request. */
 export interface ProjectResourceCandidateSources {
@@ -46,6 +48,10 @@ export interface ProjectResourceService {
   revoke(principal: TrustedPrincipal, projectId: string, expectedRevision: number, resourceId: string): Promise<ProjectResourceConfiguration>;
   /** New execution input boundary only. F-004 binds it to Run/Attempt artifacts. */
   snapshotForAttempt(principal: TrustedPrincipal, projectId: string): ProjectResourceSelection;
+  loadSelectedSkills(principal: TrustedPrincipal, projectId: string): Promise<{
+    selection: ProjectResourceSelection; skills: readonly { id: string; name: string; content: string; digest: string }[];
+    omitted: readonly { id: string; reason: string }[];
+  }>;
 }
 
 const OPERATION = 'ProjectResourceService';
@@ -271,6 +277,40 @@ export function createProjectResourceService(deps: {
         check(principal, id, expectedRevision);
         return deps.store.revokeInTransaction(id, expectedRevision, rid);
       });
+    },
+    async loadSelectedSkills(principal, projectId) {
+      const selection = this.snapshotForAttempt(principal, projectId);
+      const skills: { id: string; name: string; content: string; digest: string }[] = [];
+      const omitted: { id: string; reason: string }[] = [];
+      let total = 0;
+      for (const resource of selection.resources) {
+        try {
+          if (resource.kind !== 'skill') throw new Error('resource_unsupported');
+          const source = deps.sources.getSource(projectId, resource.sourceRef);
+          if (!source) throw new Error('resource_source_missing');
+          const selectedSource = { sourceId: source.sourceId, path: source.path,
+            ...(source.expectedDigest === undefined ? {} : { expectedDigest: source.expectedDigest }) };
+          const content = await deps.sourceReader.read(selectedSource);
+          const parsed = JSON.parse(new TextDecoder('utf8', { fatal: true }).decode(content.bytes));
+          const candidates = await discovery.discover({ projectId, sources: [selectedSource] });
+          const candidate = candidates.candidates.find(c => c.id === resource.id && c.contentDigest === resource.contentDigest
+            && c.sourceRevision === resource.sourceRevision && c.version === resource.version);
+          const entry = parsed.resources?.find((r: { kind?: string; name?: string; version?: string }) =>
+            r.kind === 'skill' && r.name === resource.name && r.version === resource.version);
+          if (!candidate || entry?.content === undefined
+            || createHash('sha256').update(stableStringify(entry.content)).digest('hex') !== resource.contentDigest) throw new Error('resource_digest_mismatch');
+          const instructions = typeof entry.content === 'string' ? entry.content : stableStringify(entry.content);
+          const bytes = Buffer.byteLength(instructions);
+          if (bytes > 32768 || total + bytes > 131072) throw new Error('resource_content_limit');
+          total += bytes;
+          skills.push({ id: resource.id, name: resource.name, content: instructions, digest: resource.contentDigest! });
+        } catch {
+          if (resource.required || resource.onUnavailable === 'reject') fail('conflict', 'required_resource_load_failed');
+          omitted.push({ id: resource.id, reason: 'unavailable_or_unsupported' });
+        }
+      }
+      if (this.snapshotForAttempt(principal, projectId).digest !== selection.digest) fail('conflict', 'resource_selection_changed');
+      return { selection, skills, omitted };
     },
     snapshotForAttempt(principal, projectId) {
       const configuration = getConfiguration(principal, projectId);

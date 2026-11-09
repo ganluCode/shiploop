@@ -23,7 +23,7 @@
 **当前适配器位于 `packages/core/src/adapters/`，不经 `shiploop-core` 的 package `exports['.']` 暴露**
 （契约区分层禁止反向依赖 `adapters`）。跨包组合根已由 P01-3 / F-012 在 Core 内定案为受控装配入口
 `openCoreApplication`，经 `shiploop-core` 的 `./assembly` 子路径导出（见
-[p01-3-operations.md §1](p01-3-operations.md) 与 [p01-4-handoff.md](p01-4-handoff.md)）。
+[p01-3-operations.md §1](phases/p01/p01-3-operations.md) 与 [p01-4-handoff.md](phases/p01/p01-4-handoff.md)）。
 
 ## 2. 核心概念
 
@@ -277,7 +277,7 @@ pending ──(CAS, 实测 hash 匹配 + 实际 size)──▶ ready
 
 ## 8. 由 P01-3 补齐 / 仍未实现（不得冒充）
 
-> P01-3 已在本文所述端口之上补齐下列能力，细节见 [p01-3-operations.md](p01-3-operations.md)：
+> P01-3 已在本文所述端口之上补齐下列能力，细节见 [p01-3-operations.md](phases/p01/p01-3-operations.md)：
 > 仓库注册流程（幂等复用 / 同 remote 多 clone 分别注册）、统一 `PathService` 数据根解析与受权
 > 定位、配置有效合并 / 逐项来源、项目列表分页与标签筛选/计数、`state_events` 脱敏审计（迁移 v2）。
 

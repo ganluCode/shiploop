@@ -16,6 +16,7 @@ import type { StopEscalationBudgets, StopEscalationProbe, SupervisedProcessRow }
 const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 const BUFFER_LIMIT = 65_536;
 const HANDSHAKE_MS = 5_000;
+const MAX_COMMAND_TIMEOUT_MS = 86_400_000;
 /** F-010 取消/超时共用的有界停止路径预算（§13；supervisor 5s SIGTERM 升级之上的 Host 兜底宽限）。 */
 const DEFAULT_STOP_GRACE_MS = 10_000;
 const DEFAULT_STOP_CONFIRM_MS = 5_000;
@@ -47,7 +48,7 @@ function validate(input: unknown): CommandProcessRequest {
       || !text(r.cwd) || !isAbsolute(r.cwd)) return bad();
   if (!r.environment || typeof r.environment !== 'object' || Array.isArray(r.environment)
       || Object.entries(r.environment).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !text(value))) return bad();
-  for (const [value, max] of [[r.timeoutMs, 3_600_000], [r.maxInputBytes, 65_536], [r.maxOutputBytes, 8_388_608]]) {
+  for (const [value, max] of [[r.timeoutMs, MAX_COMMAND_TIMEOUT_MS], [r.maxInputBytes, 65_536], [r.maxOutputBytes, 8_388_608]]) {
     if (!Number.isSafeInteger(value) || value < 1 || value > max) return bad();
   }
   if (r.stdin !== undefined && !(r.stdin instanceof Uint8Array)) return bad();

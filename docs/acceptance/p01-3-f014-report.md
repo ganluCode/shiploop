@@ -28,7 +28,7 @@
 | `core-design/10-repository-and-release.md` | `1149abf7b88370e74867501fd412593a7f5847ac58de7fc8a673e5ed4b0edf06` |
 
 PRD：`p01-project-config.md`（版本 0.2，2026-10-01）。实施前置契约：
-[docs/p01-3-application-contract.md](../p01-3-application-contract.md)。
+[docs/phases/p01/p01-3-application-contract.md](../phases/p01/p01-3-application-contract.md)。
 
 前序基线（均为当前分支祖先，实际端口与测试在库）：P01-1 工程骨架 `44c8c30…`
 （[p01-1-f006-report.md](p01-1-f006-report.md)）；P01-2 SQLite 原子存储与制品落盘 `74934ac…`
@@ -62,8 +62,8 @@ PRD：`p01-project-config.md`（版本 0.2，2026-10-01）。实施前置契约�
 - **F-012**：`openCoreApplication` 受控装配公共入口（经 `shiploop-core/assembly` 子路径），
   独立可编译示例与构建产物非源码 cwd 冒烟。
 - **F-013**：FR-1/FR-2/FR-3 集成验收矩阵、失败分支回归守护与干净快照六步证据。
-- **F-014**（本报告）：[p01-3-operations.md](../p01-3-operations.md) 操作说明、
-  [p01-4-handoff.md](../p01-4-handoff.md) 接口交接（P01-4/P02）与本报告，含文档示例编译/运行核验。
+- **F-014**（本报告）：[p01-3-operations.md](../phases/p01/p01-3-operations.md) 操作说明、
+  [p01-4-handoff.md](../phases/p01/p01-4-handoff.md) 接口交接（P01-4/P02）与本报告，含文档示例编译/运行核验。
 
 ## 3. 环境与版本
 
@@ -104,7 +104,7 @@ PRD：`p01-project-config.md`（版本 0.2，2026-10-01）。实施前置契约�
 
 ### 4.2 F-014 文档核验与工作区回归
 
-- 操作说明 [p01-3-operations.md](../p01-3-operations.md) §6 的最小示例与
+- 操作说明 [p01-3-operations.md](../phases/p01/p01-3-operations.md) §6 的最小示例与
   [`examples/p01-3-standalone.ts`](../../examples/p01-3-standalone.ts)、
   [`test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts`](../../test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts)
   同构；
@@ -150,7 +150,7 @@ PRD：`p01-project-config.md`（版本 0.2，2026-10-01）。实施前置契约�
   payload 只含变更字段名/策略键名/`schemaVersion` 摘要，绝不含值/引用/秘密。
 - 配置 Schema：`SETTINGS_SCHEMA_VERSION = 2`；导出格式 `SETTINGS_EXPORT_FORMAT_VERSION = 1`。
 - 显式偏离（已记录并请求核对）：`state_events.project_id` 可空（设计 11 §9 标为必填），依据见
-  [p01-3-application-contract.md §6.3 / §9-1](../p01-3-application-contract.md)。
+  [p01-3-application-contract.md §6.3 / §9-1](../phases/p01/p01-3-application-contract.md)。
 
 ## 6. 已建能力之外的明确边界
 

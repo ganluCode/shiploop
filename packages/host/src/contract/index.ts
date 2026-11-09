@@ -1,7 +1,7 @@
 /**
  * F-002 P02-1 Host 生命周期契约公共面（纯模块桶文件）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md。
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md。
  * 本桶只聚合类型、冻结常量、身份/摘要纯函数与运行时校验：不导入
  * node:http/net/fs/child_process，import 本模块不监听端口、不读用户目录、
  * 不启动进程；不导出任何 HTTP/ORM/SDK 类型。

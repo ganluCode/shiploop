@@ -19,6 +19,8 @@ import type { ArtifactPublisher } from '../../application/artifact-publish.js';
 import type { ArtifactFileStore } from '../../ports/artifact-files.js';
 import type { CommandTransaction } from '../../ports/atomic-commands.js';
 import type { VerificationStopControl } from '../../ports/verification-stop.js';
+import { autoPushVerifiedCommit } from './auto-push.js';
+import { createTaskCommitMessage } from '../../ports/git-naming.js';
 
 /** Trusted adapter: current authorization is reread before each Git side effect.
  * No Git/FS I/O is performed inside the short SQLite transactions.
@@ -148,6 +150,11 @@ export function createSqliteTaskCommitter(deps: {
         || (item.kind === 'approval' && (item.status !== 'approved' || item.decisionCodeDigest !== codeDigest))
         || (item.kind === 'block' && item.status !== 'unblocked'));
       const feature = db.prepare<[string], { revision: number }>('SELECT revision FROM features WHERE id = ?').get(a.feature_id)!;
+      const taskNaming = db.prepare<[string, string, string], { title: string; code: string }>(
+        `SELECT t.title,c.code FROM tasks t JOIN entity_display_codes c
+          ON c.project_id=t.project_id AND c.entity_kind='task' AND c.entity_id=t.id AND c.parent_id=t.feature_id
+          WHERE t.project_id=? AND t.feature_id=? AND t.id=?`).get(identity.projectId, a.feature_id, input.taskId);
+      if (!previous && !taskNaming) fail('task_display_code_required');
       return {
         intent: { operationId, projectId: identity.projectId, featureId: a.feature_id, runId: input.runId,
           attemptId: identity.attemptId, executionVersion: identity.executionVersion, operationType: 'task_commit',
@@ -155,7 +162,7 @@ export function createSqliteTaskCommitter(deps: {
           expectedHead: original.repository.headCommit, codeDigest,
           verificationRefs: [{ kind: 'verification_batch', id: input.verificationBatchId, digest: codeDigest }, inspectionRef],
           approvalRefs: approval.currentDecision && approval.planDigest ? [{ kind: 'plan_approval', id: approval.currentDecision.id, digest: approval.planDigest }] : [],
-          message: `${input.taskId}: verified task`, gitIdentity: policy.policy.gitIdentity,
+          message: previous?.intent.message ?? createTaskCommitMessage(taskNaming!.code, taskNaming!.title), gitIdentity: policy.policy.gitIdentity,
           deliveryPolicyDigest: computeDeliveryPolicyDigest(section), runtimeSource: null,
           ownerId: identity.owner, hostInstanceId: identity.hostInstanceId, expectedFeatureRevision: feature.revision },
         baseline, resourceIdentity: identity, allowedPaths: paths,
@@ -236,6 +243,17 @@ export function createSqliteTaskCommitter(deps: {
         } });
       }
     });
+    const policy = atomic.transact('TaskCommit.pushPolicy', tx => {
+      const global = tx.getGlobalSettingsOrNull(), project = tx.getProjectSettingsOrNull(identity.projectId);
+      return mergeEffectiveSettings({ global: global && { scopeRevision: global.revision, payload: global.payload },
+        project: project && { scopeRevision: project.revision, payload: project.payload } }).policies.deliveryPolicy?.value ?? {};
+    });
+    await autoPushVerifiedCommit({ session, projectId: identity.projectId, runId: input.runId,
+      operationId, boundary: 'task', branch: baseline.branch, commit: record.actualCommit!, policy,
+      assertCurrent() { const a = readAuthorization(); if (!a.approvalCurrent || !a.verificationPassed || !a.commitAuthorized) fail('task_push_not_authorized'); },
+      driver: deps.driverFor(identity.projectId, registration.signal).open(baseline, () => {
+        const a = readAuthorization(); if (!a.approvalCurrent || !a.verificationPassed || !a.commitAuthorized) fail('task_push_not_authorized');
+      }) });
     } finally { registration.complete(); }
   };
 }

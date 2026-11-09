@@ -106,11 +106,13 @@ function taskProjection(snapshot: Record<string, unknown>): string {
     ? snapshot.task as Record<string, unknown>
     : {};
   return stableStringify({
+    locale: snapshot.locale ?? 'zh-CN',
     projectId: snapshot.projectId,
     featureId: snapshot.featureId,
     taskId: snapshot.taskId,
     title: task.title,
     description: task.description,
+    ...(Array.isArray(task.languages) && task.languages.length > 0 ? { languages: task.languages } : {}),
     acceptance: task.acceptance,
     requirementsRefs: task.requirementsRefs,
     dependencies: task.dependencies,

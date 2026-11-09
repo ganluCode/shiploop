@@ -10,10 +10,10 @@
  * core-design/04 §1（内存唤醒只降低延迟，定期扫描补偿丢失唤醒——唤醒失败
  * 不重复创建 Run，可从持久状态核对）、core-design/08 §9（startBatch 携带预览
  * 摘要；启动事务重核实际范围与前置条件，实质变化返回 preview_stale；没有
- * 待执行项返回 no_work 不创建空批次）、docs/p03-3-execution-preview-contract.md
- * （previewDigest 完整输入身份）、docs/p03-3-work-command-receipts-contract.md
+ * 待执行项返回 no_work 不创建空批次）、docs/phases/p03/p03-3-execution-preview-contract.md
+ * （previewDigest 完整输入身份）、docs/phases/p03/p03-3-work-command-receipts-contract.md
  * （Work accepted v6：operationId=batchId、真实 Batch/Run 关联）。
- * 实施契约：docs/p03-3-execution-start-contract.md。
+ * 实施契约：docs/phases/p03/p03-3-execution-start-contract.md。
  *
  * 契约要点：
  * - 命令面 `execution.start`（capability `execution.start`，与 execution.preview

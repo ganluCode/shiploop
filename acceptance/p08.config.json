@@ -114,7 +114,7 @@
       },
       "P08-2": {
         "reports": [
-          "docs/p08-2-live-acceptance-entry.md"
+          "docs/phases/p08/p08-2-live-acceptance-entry.md"
         ],
         "machineReadable": [],
         "liveEvidenceKind": "shiploop.todo.live-evidence",
@@ -257,6 +257,6 @@
     "title": "P08 一期总验收与交付报告",
     "scope": "FR-1 阶段闭环复跑、FR-2 负例与证据、FR-3 一期证据汇总；覆盖前序交付、安装产物、Todo 新项目、存量项目、确定性回归、两类 live 与负责人门禁",
     "version": "0.2",
-    "contractDoc": "docs/p08-acceptance.md"
+    "contractDoc": "docs/phases/p08/p08-acceptance.md"
   }
 }

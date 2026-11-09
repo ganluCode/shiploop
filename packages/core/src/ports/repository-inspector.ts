@@ -6,7 +6,7 @@
  * 规范路径重复 init 返回已有项目；同 remote 不同 clone 可注册不同项目；已有脏
  * 工作区不自动 stash/reset；无初始 commit 提示而不猜 main 分支）、
  * core-design/03 §1（repository_bindings：canonical_path 全库唯一、
- * repo_identity 必填、remote 非唯一身份）与 docs/p01-3-application-contract.md
+ * repo_identity 必填、remote 非唯一身份）与 docs/phases/p01/p01-3-application-contract.md
  * §4.2。
  *
  * 契约要点：

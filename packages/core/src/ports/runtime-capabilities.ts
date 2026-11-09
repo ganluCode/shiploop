@@ -3,7 +3,7 @@
  *
  * 设计依据：core-design/05（Host 可信装配入口接受外部 RuntimeAdapter 及稳定
  * runtime ID；重复 ID、未注册 ID 明确报错，不静默回退）与
- * docs/p01-3-application-contract.md §5.1（配置合法性 ≠ 执行能力可用性）。
+ * docs/phases/p01/p01-3-application-contract.md §5.1（配置合法性 ≠ 执行能力可用性）。
  *
  * 不变量：
  * - 兼容性判断**只**依赖组合根注入的只读能力目录：不存在封闭厂商枚举、
@@ -183,6 +183,8 @@ export function validateRuntimeStrategyCapabilities(
       `model '${strategy.model}' 不在 provider '${strategy.provider}' 已确认的模型列表中`,
     );
   }
+  const configured = strategy as import('./settings-schema.js').ConfiguredRuntimeStrategy;
+  configured.fallbacks?.forEach((fallback, index) => validateRuntimeStrategyCapabilities(fallback, catalog, context, `${field}.fallbacks[${index}]`));
 }
 
 /**

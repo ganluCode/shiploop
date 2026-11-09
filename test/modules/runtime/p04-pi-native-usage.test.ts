@@ -5,7 +5,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { createPiRuntimeAdapter } from '../../../packages/host/src/runtime/pi-adapter.ts';
 import type { RuntimeExecutionRequest, RuntimeEvent, RuntimeExecutionResult } from '../../../packages/core/src/ports/runtime-execution.ts';
 
-it('pinned native SDK assistant messages have per-request usage, not unknown session totals', async () => {
+it.each(['complete', 'rejected-zero', 'rejected-partial'] as const)('pinned native SDK usage preserves %s without fabricating rejected-request totals', async mode => {
   const runtime = await sdk.ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
     modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
   await runtime.setRuntimeApiKey('anthropic', 'synthetic-key');
@@ -19,8 +19,18 @@ it('pinned native SDK assistant messages have per-request usage, not unknown ses
       usage: { input: ordinal === 1 ? 100 : 80, output: ordinal === 1 ? 10 : 20, cacheRead: ordinal === 1 ? 50 : 30,
         cacheWrite: 0, totalTokens: ordinal === 1 ? 160 : 130,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+    if (mode !== 'complete') {
+      message.stopReason = 'error'; message.errorMessage = 'rate limit exceeded'; message.content = [];
+      Object.assign(message.usage, { input: mode === 'rejected-partial' ? 20 : 0, output: mode === 'rejected-partial' ? 1 : 0,
+        cacheRead: 0, cacheWrite: 0, totalTokens: mode === 'rejected-partial' ? 21 : 0 });
+    }
     const stream = createAssistantMessageEventStream();
-    queueMicrotask(() => { stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message }); stream.end(); });
+    queueMicrotask(() => {
+      stream.push({ type: 'start', partial: message });
+      if (mode === 'complete') stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+      else stream.push({ type: 'error', reason: 'error', error: message });
+      stream.end();
+    });
     return stream;
   };
   const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, cacheWarming: 'off', retry: { enabled: false } });
@@ -46,9 +56,15 @@ it('pinned native SDK assistant messages have per-request usage, not unknown ses
   const handle = await registration.adapter.start(request);
   const events: RuntimeEvent[] = [];
   for await (const event of handle.events) events.push(event as RuntimeEvent);
-  expect((await handle.result as RuntimeExecutionResult).terminal).toBe('completed');
-  expect(calls).toBe(2);
+  const result = await handle.result as RuntimeExecutionResult;
+  expect(result.terminal).toBe(mode === 'complete' ? 'completed' : 'failed');
+  expect(calls).toBe(mode === 'complete' ? 2 : 1);
   const usage = events.filter(event => event.kind === 'usage').map(event => event.payload as { usage: unknown });
+  if (mode === 'rejected-zero') { expect(usage).toHaveLength(0); expect(result.usage).toBeNull(); return; }
+  if (mode === 'rejected-partial') {
+    expect(usage).toHaveLength(1);
+    expect(result.usage).toMatchObject({ inputTokens: 20, outputTokens: 1, accounting: 'unknown', completeness: 'unknown' }); return;
+  }
   expect(usage).toHaveLength(2);
   expect(usage.map(row => row.usage)).toMatchObject([
     { accounting: 'incremental', completeness: 'partial', inputTokens: 100, outputTokens: 10, cacheReadTokens: 50, providerTotalTokens: 160 },

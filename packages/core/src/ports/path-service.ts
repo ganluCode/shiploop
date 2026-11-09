@@ -5,7 +5,7 @@
  * 设计依据：core-design/01 §4（数据根通过 PathService 按操作系统解析稳定
  * namespace，不随展示品牌变化）、core-design/03 §4（数据根布局：core.sqlite、
  * projects/<id>/、staging/；路径通过 ID 和授权根计算，检查 realpath、符号链接、
- * 目录穿越，不拼接不可信标题）与 docs/p01-3-application-contract.md §4.3。
+ * 目录穿越，不拼接不可信标题）与 docs/phases/p01/p01-3-application-contract.md §4.3。
  *
  * 契约要点：
  * - 稳定技术 dataNamespace = "shiploop"：产品展示名/桌面品牌变化不改变数据目录；
@@ -52,7 +52,7 @@ import type { ValidationContext } from './validation.js';
 
 /**
  * 稳定技术数据 namespace（设计 01 §4：发布前定案，此后稳定；展示品牌变更不触发
- * 数据目录迁移）。P01-3 实施契约值，见 docs/p01-3-application-contract.md §9-3。
+ * 数据目录迁移）。P01-3 实施契约值，见 docs/phases/p01/p01-3-application-contract.md §9-3。
  */
 export const DATA_NAMESPACE = 'shiploop';
 
@@ -351,7 +351,7 @@ export type ProjectExistenceLookup = Pick<StateStore, 'getProject'>;
 export type FeatureOwnershipLookup = Pick<PlanDetailReadStore, 'readFeaturePlanView'>;
 
 /**
- * 统一 PathService 窄端口（docs/p01-3-application-contract.md §4.3）。
+ * 统一 PathService 窄端口（docs/phases/p01/p01-3-application-contract.md §4.3）。
  *
  * - dataRoot/databaseFilePath/projectDirectory 是纯派生读取（构造时根已 realpath
  *   固定），只校验输入 ID，不核验项目存在性；受权入口是 locateProjectResource；

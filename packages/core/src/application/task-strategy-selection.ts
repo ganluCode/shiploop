@@ -6,7 +6,7 @@
  * 注入任何默认厂商/模型）、core-design/11 §3.1（execution_config 含 schemaVersion
  * 与完整策略字段；config_source 为 project_default/global_default/user_override，
  * config_source_key 记录 modelMap.low 等来源，仅供说明，不是执行时动态引用）与
- * docs/p03-1-task-strategy-selection.md（本模块契约文档；含回退优先级的张力记录
+ * docs/phases/p03/p03-1-task-strategy-selection.md（本模块契约文档；含回退优先级的张力记录
  * 与请求核对）。
  *
  * 不变量：
@@ -43,8 +43,9 @@ import {
   WORK_TIMEOUT_MS_MAX,
   WORK_TIMEOUT_MS_MIN,
   validateRuntimeStrategy,
+  validateConfiguredRuntimeStrategy,
 } from '../ports/settings-schema.js';
-import type { ModelComplexity, RuntimeStrategyV1 } from '../ports/settings-schema.js';
+import type { ModelComplexity, RuntimeStrategyV1, ConfiguredRuntimeStrategy } from '../ports/settings-schema.js';
 import { TASK_MAX_CODE_ATTEMPTS_MAX, TASK_MAX_CODE_ATTEMPTS_MIN } from '../ports/execution-budget.js';
 import { TASK_COMPLEXITY_VALUES } from '../ports/plan-store.js';
 import type { PlanningStrategyCopy } from '../ports/planning-context.js';
@@ -86,6 +87,8 @@ export interface TaskExecutionConfigV1 {
   readonly model: string;
   readonly credentialRef?: string;
   readonly endpointRef?: string;
+  readonly fallbacks?: ConfiguredRuntimeStrategy['fallbacks'];
+  readonly fallbackPolicy?: ConfiguredRuntimeStrategy['fallbackPolicy'];
   readonly maxCodeAttempts?: number;
   /** P03-9 / F-004：Session/单次 Work 总时长上限（创建时从政策副本冻结）。 */
   readonly workTimeoutMs?: number;
@@ -111,6 +114,8 @@ const TASK_EXECUTION_CONFIG_KEYS = [
   'maxCodeAttempts',
   'workTimeoutMs',
   'toolTimeoutMs',
+  'fallbacks',
+  'fallbackPolicy',
 ] as const;
 
 /** P03-9 / F-004：从有效政策捕获的冻结时间上限（未配置不注入字段）。 */
@@ -121,7 +126,7 @@ interface CapturedTimeLimits {
 
 /** 由完整策略条目构造全新独立副本（不与任何输入共享引用；可选携带政策副本）。 */
 function copyExecutionConfig(
-  strategy: RuntimeStrategyV1,
+  strategy: ConfiguredRuntimeStrategy,
   maxCodeAttempts?: number,
   timeLimits: CapturedTimeLimits = {},
 ): TaskExecutionConfigV1 {
@@ -135,6 +140,8 @@ function copyExecutionConfig(
     maxCodeAttempts?: number;
     workTimeoutMs?: number;
     toolTimeoutMs?: number;
+    fallbacks?: ConfiguredRuntimeStrategy['fallbacks'];
+    fallbackPolicy?: ConfiguredRuntimeStrategy['fallbackPolicy'];
   } = {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     runtime: strategy.runtime,
@@ -147,6 +154,8 @@ function copyExecutionConfig(
   if (strategy.endpointRef !== undefined) {
     copy.endpointRef = strategy.endpointRef;
   }
+  if (strategy.fallbacks !== undefined) copy.fallbacks = structuredClone(strategy.fallbacks);
+  if (strategy.fallbackPolicy !== undefined) copy.fallbackPolicy = { ...strategy.fallbackPolicy };
   if (maxCodeAttempts !== undefined) {
     copy.maxCodeAttempts = maxCodeAttempts;
   }
@@ -231,7 +240,7 @@ export function selectTaskStrategy(input: unknown): TaskStrategySelection {
   // 1) 明确完整用户覆盖：优先于全部默认解析；不完整/未知键/秘密正文/非法引用在
   //    条目校验阶段明确拒绝，不回退、不从默认条目拼补。
   if (object.userOverride !== undefined) {
-    const strategy = validateRuntimeStrategy(object.userOverride, context, 'userOverride');
+    const strategy = validateConfiguredRuntimeStrategy(object.userOverride, context, 'userOverride');
     return {
       executionConfig: copyExecutionConfig(strategy, maxCodeAttempts, timeLimits),
       configSource: 'user_override',
@@ -296,6 +305,8 @@ export function validateTaskExecutionConfig(value: unknown, operation: string): 
   if (object.endpointRef !== undefined) {
     entry.endpointRef = object.endpointRef;
   }
+  if (object.fallbacks !== undefined) entry.fallbacks = object.fallbacks;
+  if (object.fallbackPolicy !== undefined) entry.fallbackPolicy = object.fallbackPolicy;
   let maxCodeAttempts: number | undefined;
   if (object.maxCodeAttempts !== undefined) {
     if (
@@ -349,7 +360,7 @@ export function validateTaskExecutionConfig(value: unknown, operation: string): 
     }
     timeLimits.toolTimeoutMs = object.toolTimeoutMs;
   }
-  return copyExecutionConfig(validateRuntimeStrategy(entry, context, 'executionConfig'), maxCodeAttempts, timeLimits);
+  return copyExecutionConfig(validateConfiguredRuntimeStrategy(entry, context, 'executionConfig'), maxCodeAttempts, timeLimits);
 }
 
 /* ------------------------------------------------------------------ *
@@ -377,7 +388,7 @@ const SELECT_PLANNING_PURPOSE_STRATEGY_KEYS = ['global', 'project'] as const;
 /**
  * 为一次性规划选择 planner 用途完整策略副本（纯函数；输入边界为 unknown）。
  *
- * 规则（docs/p05-1-planning-candidate-contract.md §6 与 core-design/02 §9：
+ * 规则（docs/phases/p05/p05-1-planning-candidate-contract.md §6 与 core-design/02 §9：
  * 「规划 Task 按 purposeStrategies 创建配置副本，Planner 本身不能指定厂商」）：
  * - 只接受 `global` / `project` 两个键（与 mergeEffectiveSettings 相同的来源
  *   scope 输入）：复杂度（complexity）与用户整体覆盖（userOverride）是**未知键**，
@@ -403,7 +414,7 @@ export function selectPlanningPurposeStrategy(input: unknown): PlanningPurposeSt
   const purposeEntry = effective.strategies.purposeStrategies[PLANNING_PURPOSE_STRATEGY_KEY];
   if (purposeEntry !== undefined) {
     return {
-      strategy: planningCopyFromEntry(purposeEntry.strategy),
+      strategy: planningCopyFromEntry(purposeEntry.strategy, effective.policies.executionLimits?.value),
       configSource: purposeEntry.source.kind,
       configSourceKey: PLANNING_PURPOSE_STRATEGY_SOURCE_KEY,
     };
@@ -411,7 +422,7 @@ export function selectPlanningPurposeStrategy(input: unknown): PlanningPurposeSt
   const fallback = effective.strategies.defaultStrategy;
   if (fallback !== undefined) {
     return {
-      strategy: planningCopyFromEntry(fallback.strategy),
+      strategy: planningCopyFromEntry(fallback.strategy, effective.policies.executionLimits?.value),
       configSource: fallback.source.kind,
       configSourceKey: PLANNING_DEFAULT_STRATEGY_FALLBACK_SOURCE_KEY,
     };
@@ -429,25 +440,6 @@ export function selectPlanningPurposeStrategy(input: unknown): PlanningPurposeSt
 }
 
 /** 由有效配置整体条目构造规划用途策略全新独立副本（不与输入共享引用）。 */
-function planningCopyFromEntry(strategy: RuntimeStrategyV1): PlanningStrategyCopy {
-  const copy: {
-    schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
-    runtime: string;
-    provider: string;
-    model: string;
-    credentialRef?: string;
-    endpointRef?: string;
-  } = {
-    schemaVersion: SETTINGS_SCHEMA_VERSION,
-    runtime: strategy.runtime,
-    provider: strategy.provider,
-    model: strategy.model,
-  };
-  if (strategy.credentialRef !== undefined) {
-    copy.credentialRef = strategy.credentialRef;
-  }
-  if (strategy.endpointRef !== undefined) {
-    copy.endpointRef = strategy.endpointRef;
-  }
-  return copy;
+function planningCopyFromEntry(strategy: ConfiguredRuntimeStrategy, limits: CapturedTimeLimits = {}): PlanningStrategyCopy {
+  return copyExecutionConfig(strategy, undefined, limits);
 }

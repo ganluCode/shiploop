@@ -1,5 +1,6 @@
+import { CONTEXT_FIXED_GUIDANCE, testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
- * P03-2 / F-005 文档核验：`docs/p03-2-context-build-contract.md` 记录的
+ * P03-2 / F-005 文档核验：`docs/phases/p03/p03-2-context-build-contract.md` 记录的
  * 版本化 ContextBuilder 契约必须与仓库实现事实一致（固定指导常量、manifest
  * 来源记录、预算与结构化失败、秘密纪律与不自动继承、labels 不混入有效验收
  * 身份），避免「文档另立一套」与后续输入准备/接线任务各自发明规则。
@@ -9,7 +10,6 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  CONTEXT_FIXED_GUIDANCE,
   CONTEXT_INPUT_SCHEMA_VERSION,
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
   CONTEXT_MANIFEST_SOURCE_KINDS,
@@ -23,7 +23,7 @@ import { createContextBuilder } from '../../../packages/core/src/application/con
 import type { ContextBudget } from '../../../packages/core/src/application/context-build.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-2-context-build-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-2-context-build-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);
@@ -85,7 +85,7 @@ describe('P03-2 / F-005 ContextBuilder 契约文档', () => {
       expect(doc).toContain(keyword);
     }
     // 必需内容超预算整体失败（实现事实：紧 maxPromptBytes 抛 limit_exceeded）。
-    const builder = createContextBuilder({ budget: BUDGET });
+    const builder = createContextBuilder({ promptTemplates: testPromptTemplates, budget: BUDGET });
     const base = builder.build({
       projectId: 'proj-1',
       featureId: 'feat-1',
@@ -104,7 +104,7 @@ describe('P03-2 / F-005 ContextBuilder 契约文档', () => {
       permissions: { grants: ['repo.read'] },
       requiredInputs: [],
     });
-    const tight = createContextBuilder({
+    const tight = createContextBuilder({ promptTemplates: testPromptTemplates,
       budget: { ...BUDGET, maxPromptBytes: base.promptBytes - 1 },
     });
     expect(() =>

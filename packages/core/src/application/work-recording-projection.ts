@@ -30,6 +30,8 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
   let truncation = false;
   let redaction = false;
   const publicationGaps = new Set<string>();
+  let retryObserved = false;
+  let connectionFailures = 0;
 
   async function check(ref: WorkRecordingArtifactRef): Promise<void> {
     const report = await verifier.verifyArtifact(identity.projectId, ref.artifactId);
@@ -44,10 +46,21 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
       // A batch is admitted only after every body has been published and verified.
       // On failure, ready bodies remain evidence; no partial batch advances its watermark.
       const batch: WorkRecordingMessageRecord[] = [];
+      let nextRetryObserved = retryObserved;
+      let nextConnectionFailures = connectionFailures;
       for (const entry of events) {
         signal?.throwIfAborted();
         const { event } = entry;
         const payload = event.payload;
+        if (payload.kind === 'diagnostic' && payload.code.startsWith('pi.retry.')) {
+          nextRetryObserved = true;
+          if (payload.code === 'pi.retry.failure') {
+            try {
+              const detail = JSON.parse(payload.message);
+              if (detail.category === 'transient_connection') nextConnectionFailures++;
+            } catch { /* unrecognized diagnostics never prove an observed connection failure */ }
+          }
+        }
         const tool = payload.kind === 'tool_started' || payload.kind === 'tool_finished';
         const kind = tool ? payload.kind : payload.kind === 'diagnostic' || payload.kind === 'warning' ? 'error' : 'message';
         const role = tool ? 'tool' : payload.kind === 'message' ? payload.role : kind === 'error' ? 'error' : 'system';
@@ -74,6 +87,8 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
       }
       signal?.throwIfAborted();
       pending = batch;
+      retryObserved = nextRetryObserved;
+      connectionFailures = nextConnectionFailures;
     },
     commit(input: { sessionRevision: number; watermark: number | null; gaps: readonly string[];
       manifest?: WorkEvidenceManifest; manifestRef?: WorkRecordingArtifactRef | null }): number {
@@ -103,6 +118,7 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
       // Keep observed facts in the existing bounded diagnostics schema. A cancel
       // request or a finalized manifest is never evidence that a process stopped.
       const observations = source === undefined ? [] : [
+        ...(retryObserved ? [`request_connection_failures:${connectionFailures}`] : []),
         ...(source.recordingMode === undefined ? [] : [`recording_mode_${source.recordingMode}`]),
         source.stop?.status === 'observed' && source.stop.evidence !== null
           ? source.stop.evidence.confirmed ? 'stop_observed_confirmed' : 'stop_observed_unconfirmed'

@@ -21,6 +21,8 @@ export * from './ports/errors.js';
 export * from './ports/validation.js';
 export * from './ports/settings-schema.js';
 export * from './ports/task-verification-policy.js';
+export * from './ports/prompt-templates.js';
+export * from './ports/locale.js';
 export * from './ports/delivery-policy.js';
 export * from './ports/git-operations.js';
 export * from './ports/integration-execution-plan.js';

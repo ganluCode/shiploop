@@ -700,7 +700,7 @@ async function smokeCliBin(
   }
   const exportResult = jsonResult('config-export', exportRes).result as Record<string, any>;
   if (
-    exportResult.exportFormatVersion !== 1 ||
+    exportResult.exportFormatVersion !== 2 ||
     exportResult.current?.revision !== 2 ||
     exportResult.scope !== 'global'
   ) {

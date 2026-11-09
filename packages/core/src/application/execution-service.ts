@@ -315,6 +315,16 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       }
     } catch (error) {
       if (isRuntimeError(error) && error.kind === 'timeout' && error.reason === 'deadline_exhausted') throw error;
+      const preSpawnRejected = isRuntimeError(error)
+        && error.kind === 'configuration' && error.reason === 'runner_invalid_input';
+      if (preSpawnRejected) {
+        uncertainStarts.delete(workIdentity.attemptId);
+        unstarted.set(key(workIdentity.projectId, workIdentity.attemptId), {
+          identity: workIdentity, invocationId, safe: false,
+        });
+        await finalizeUnstarted(input, error);
+        throw error;
+      }
       if (deps.settlement) {
         try {
           await deps.settlement.settle({ request: bound.request, result: { status: 'rejected', reason: error }, recording: null, stopped: null,

@@ -152,7 +152,11 @@ export function createSqliteRuntimeFallbackSwitchService(session: SqliteStorageS
         const counters = execution.getTaskExecutionCountersInTransaction(valid.projectId, task.id);
         const eventId = execution.appendExecutionEventInTransaction({ projectId: valid.projectId,
           eventType: ATTEMPT_UPDATED_EVENT_TYPE, aggregateType: 'task', aggregateId: task.id,
-          aggregateRevision: counters.revision, payload: { updated: true } });
+          aggregateRevision: counters.revision, payload: { updated: true, fallback: {
+            runId: valid.runId, category: metadata.triggerCategory,
+            fromModel: `${(old.inputSnapshot.runtimeFallback?.strategy ?? task.executionConfig).provider}/${(old.inputSnapshot.runtimeFallback?.strategy ?? task.executionConfig).model}`,
+            provider: metadata.strategy.provider, model: metadata.strategy.model,
+          } } });
         const attempt = attempts.getAttempt(valid.projectId, nextAttemptId);
         const receipt: TaskClaimReceipt = { schemaVersion: 1, dispatch, claimKey: valid.switchKey, batchId: view.batch.id,
           attempt, taskRevision: counters.revision, reservationId: reservation.id, leases: occupied.leases,

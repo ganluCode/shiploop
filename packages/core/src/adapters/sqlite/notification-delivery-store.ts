@@ -16,6 +16,8 @@
  *   行列原文），空批次零写入；事件事实源是持久审计表，不是 SSE/内存回调。
  */
 import type Database from 'better-sqlite3';
+import { enrichTaskNotification } from './notification-task-summary.js';
+import { resolveWorkflowLocale } from '../../ports/locale.js';
 import { randomUUID } from 'node:crypto';
 import { PublicError } from '../../ports/commands.js';
 import { mapStateEvent } from '../../ports/events.js';
@@ -564,14 +566,24 @@ export function createSqliteNotificationDeliveryStore(options: SqliteNotificatio
       //    事件仍逐行严格映射；真正未知类型仍 fail-closed 带 sequence 定位
       //    （保留 F-006 损坏事件可诊断要求，不静默越过）。）
       const context = readContext(NOTIFICATION_PROJECTION_OPERATION);
+      const global = db.prepare<[], { payload: string }>('SELECT payload FROM global_settings LIMIT 1').get();
+      const locale = resolveWorkflowLocale(global ? JSON.parse(global.payload).locale : undefined);
       const created: NotificationDeliveryRecord[] = [];
       for (const row of rows) {
         if (isNotificationSubscriptionEventType(row.event_type)) {
           const event = mapScannedEvent(row);
-          const summary = deriveNotificationSummary(event);
-          if (summary === null) {
+          const derived = deriveNotificationSummary(event);
+          if (derived === null) {
             continue;
           }
+          const existing = db.prepare<[string, string], { summary_json: string }>(
+            'SELECT summary_json FROM notification_deliveries WHERE event_id=? AND channel_id=?',
+          ).get(event.eventId, request.channelId);
+          // Freeze the complete source projection, including names, codes and
+          // legacy summaries. A rename or schema upgrade must not break replay.
+          const summary = existing
+            ? parseJsonObject(existing.summary_json, NOTIFICATION_PROJECTION_OPERATION, 'invalid_summary_json')
+            : { ...enrichTaskNotification(db, row.project_id, derived, row.occurred_at), locale };
           // 防御性摘要上界核验（派生路径只产冻结词汇；越界属编程错误，fail-closed）。
           validateNotificationSummary(summary, context, 'summary');
           const result = insertDeliveryInTransaction(db, NOTIFICATION_PROJECTION_OPERATION, event.eventId, request.channelId, summary, timestamp);

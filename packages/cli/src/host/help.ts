@@ -25,6 +25,10 @@ const EXIT_CODE_BLOCK = [
 const TOP_HELP = [
   'usage: shiploop --help',
   '       shiploop host <start|status|stop> [options]',
+  '       shiploop provider <login|auth-status|logout|models> openai-codex [options]',
+  '       shiploop project documents --project <id> [--json]',
+  '       shiploop feature create --project <id> --phase <id> --title <title> --prd <relative.md>',
+  '       shiploop planning start <featureId> --project <id> [--budget <file>]',
   '',
   'Host 生命周期命令：',
   '  host start    连接已运行的 Host；无实例时启动本机 Host 并完成握手',
@@ -34,7 +38,7 @@ const TOP_HELP = [
   '查看各命令参数：shiploop host start --help（或 status/stop --help）',
   '',
   BOUNDARY_BLOCK,
-  '- 本版本仅提供 Host 生命周期命令，没有 project/run 等命令。',
+  '- 更多项目命令可用 shiploop project --help；订阅登录用 shiploop provider --help。',
   '',
 ].join('\n');
 

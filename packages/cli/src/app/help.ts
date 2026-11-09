@@ -40,9 +40,10 @@ const TASK_APPROVAL_VERIFICATION_BLOCK = [
 ].join('\n');
 
 const PROJECT_HELP = [
-  'usage: shiploop project <init|overview|move-preview|move|profile|register|list|get|edit|labels> [options]',
+  'usage: shiploop project <init|documents|overview|move-preview|move|profile|register|list|get|edit|labels> [options]',
   '',
   '项目命令：',
+  '  project documents --project <id> [--json]          查询统一文档目录',
   '  project init <repository-path> [--name <displayName>] [--confirm] [options]',
   '                                                    静态预览并（经确认）注册仓库',
   '  project overview <projectId>                      查看注册状态与健康状态',
@@ -265,7 +266,7 @@ const PROJECT_PROFILE_REJECT_HELP = [
 ].join('\n');
 
 const CONFIG_HELP = [
-  'usage: shiploop config <create|update|get|effective|export> [options]',
+  'usage: shiploop config <create|update|get|effective|export|watch> [options]',
   '',
   '配置命令：',
   '  config create --scope global|project [--project <id>] --input <file> [--command-id <uuid>]',
@@ -273,6 +274,7 @@ const CONFIG_HELP = [
   '  config get --scope global|project [--project <id>]',
   '  config effective --project <id>',
   '  config export --scope global|project [--project <id>]',
+  '  config watch --project <id> --confirm [--input shiploop.yaml]  保存后自动同步项目配置',
   '',
   '查看各子命令参数：shiploop config create --help',
   '',
@@ -286,7 +288,7 @@ const CONFIG_CREATE_HELP = [
   '       shiploop config create --scope project --project <id> --input <file> [--command-id <uuid>]',
   '                                      [--data-root <abs>] [--json]',
   '',
-  '首次创建当前配置（insert-only）。`--input <file>` 只是本次请求的输入（配置 v2 JSON）：',
+  '首次创建当前配置（insert-only）。`--input <file>` 只是本次请求的输入（配置 v2 JSON/YAML）：',
   'CLI 不监听文件变化、不做覆盖式配置，文件内容也不能指定 Core 数据库路径、结果读取',
   '路径或提权主体。未知 runtime/provider/model、明文秘密字段与非法政策由 Core 拒绝。',
   '',
@@ -309,7 +311,7 @@ const CONFIG_UPDATE_HELP = [
   '',
   '以 CAS 显式 revision 更新当前配置：revision 必须显式给出（≥ 1）且与当前持久 revision',
   '一致，陈旧 revision 或陈旧全局依赖返回 conflict，不提交基于旧值的配置。',
-  '`--input <file>` 只是本次请求输入，CLI 不监听文件变化、不做覆盖式配置。',
+  '`--input <file>` 支持 JSON/YAML，只是本次请求输入；持续同步请显式使用 config watch。',
   '',
   '选项：',
   '  --scope <global|project> 配置范围（必填）',
@@ -725,6 +727,7 @@ const FEATURE_HELP = [
   '',
   'Feature 命令（单 Feature 计划）：',
   '  feature import --project <id> --phase <id> --revision <int> --input <file> [--command-id <uuid>]',
+  '  feature create --project <id> --phase <id> --title <title> --prd <relative.md> [--design <relative.md>]',
   '                                                    导入单 Feature 草稿计划',
   '  feature list --project <id> --phase <id> [--limit <int>] [--cursor <c>]   层级分页',
   '  feature get <featureId>                            详情与完整同 Feature Task DAG',
@@ -2363,6 +2366,7 @@ const PLANNING_HELP = [
   '',
   '一次性规划：启动只创建已授权 planning Run，候选须人工审阅；不自动批准或不自动开始编码。',
   '  planning start <featureId> --project <id> --phase <id> --revision <int> --input <file>',
+  '  planning start <featureId> --project <id> [--budget <file>]  从已关联的受管 PRD 自动准备输入',
   '  planning list --project <id> [--feature <id>] [--limit <int>] [--cursor <id>]',
   '  planning get <candidateId> --project <id>                  查看 Run/Task/预算/状态',
   '  planning candidate <candidateId> --project <id>            查看候选摘要、Task 与 verification',
@@ -2468,6 +2472,9 @@ const RETENTION_HELP = [
 ].join('\n');
 
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
+  'config.watch': 'usage: shiploop config watch --project <id> --confirm [--input <file>] [--data-root <abs>] [--json]\n'
+    + '默认监视当前目录 shiploop.yaml；也支持 YAML/JSON。保存后经标准设置命令与 CAS 同步数据库；坏文件保留旧配置，版本冲突或连接错误停止并保留 commandId。\n'
+    + '不会启动 Task、改变已有 Task 策略或审批。Ctrl+C/SIGTERM 只结束文件监视，不停止 Host/Run。--json 输出逐行事件。\n' + EXIT_CODE_BLOCK,
   project: PROJECT_HELP,
   'project.resource-list': 'usage: shiploop project resource-list --project <id> [--json]\n' + EXIT_CODE_BLOCK,
   'project.resource-source-register': 'usage: shiploop project resource-source-register --project <id> --source <uuid> --manifest-file <absolute-path> --revision <int> --confirm [--json]\n仅用户管理入口；来源登记不导入、启用资源，也不授予 Agent 权限。\n' + EXIT_CODE_BLOCK,

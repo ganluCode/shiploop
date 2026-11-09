@@ -1,6 +1,6 @@
 import { currentSchemaVersion } from '../../../helpers/current-schema.ts';
 /**
- * P03-3 / F-007 文档核验：`docs/p03-3-runtime-start-contract.md` 记录的 Runtime
+ * P03-3 / F-007 文档核验：`docs/phases/p03/p03-3-runtime-start-contract.md` 记录的 Runtime
  * 启动额度预占契约必须与仓库实现事实一致（迁移 v12 内容、原语面、受信边界与
  * 错误词汇、命令面不含自报入口、启动失败保守计数无退额），避免「文档另立一套」。
  */
@@ -12,7 +12,7 @@ import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite
 import { APP_CAPABILITIES, COMMAND_OPERATIONS } from '../../../../packages/core/src/ports/commands.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-3-runtime-start-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-3-runtime-start-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

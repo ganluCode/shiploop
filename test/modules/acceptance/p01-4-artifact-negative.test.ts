@@ -1,7 +1,7 @@
 /**
  * P01-4 / F-005 制品缺失、篡改与发布中断核对的阶段负例（检查
  * `P01-FR2-ARTIFACT-MISSING` / `P01-FR2-ARTIFACT-RECOVERY`，契约见
- * docs/p01-4-acceptance-contract.md §2.1 / §3.3）：在 F-002 夹具的隔离数据根
+ * docs/phases/p01/p01-4-acceptance-contract.md §2.1 / §3.3）：在 F-002 夹具的隔离数据根
  * 与真实 Git 仓库上，经**真实发布入口**与真实核对端口证明：
  *
  * - P01-FR2-ARTIFACT-MISSING：ready 制品正文被删除（只删本次临时夹具的文件）

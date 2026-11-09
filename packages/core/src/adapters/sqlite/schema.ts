@@ -252,7 +252,7 @@ export const artifacts = sqliteTable('artifacts', {
  * 最小审计切片：只保存 P01-3 已确认的业务状态变化（项目元数据更新等），供后续
  * 界面重连/审计/通知消费；**不实现** SSE 推送与通知投递（Host/通知属后续）。
  *
- * 边界决策（依据 docs/p01-3-application-contract.md §6.3，属显式偏离并请求核对）：
+ * 边界决策（依据 docs/phases/p01/p01-3-application-contract.md §6.3，属显式偏离并请求核对）：
  * - `project_id` 可空：全局配置变更没有适用项目；CHECK 限定「只有 aggregate_type=
  *   'global_settings' 才允许空」。有值时仍受项目外键（ON DELETE RESTRICT）保护。
  * - `payload` 只保存脱敏摘要（如变更字段名），绝不保存字段值、凭据引用或绝对路径；
@@ -310,7 +310,7 @@ export const stateEvents = sqliteTable('state_events', {
 ]);
 
 /**
- * P02-2 / F-006 幂等命令回执表（docs/p02-2-commands-events-contract.md §10）。
+ * P02-2 / F-006 幂等命令回执表（docs/phases/p02/p02-2-commands-events-contract.md §10）。
  *
  * 边界决策：
  * - `project_id` 可空 + scope CHECK（仅 registration/global 允许 NULL，project
@@ -438,7 +438,7 @@ export const commandReceipts = sqliteTable('command_receipts', {
 ]);
 
 /**
- * P02-3 / F-007 基线作用域四表（迁移 v4，docs/p02-3-onboarding-contract.md §10）。
+ * P02-3 / F-007 基线作用域四表（迁移 v4，docs/phases/p02/p02-3-onboarding-contract.md §10）。
  *
  * 边界决策（相对契约 §10 冻结 DDL 的 F-007 补充，已在契约 §10 写回登记）：
  * - baseline_occupancy.process_identity：可恢复进程身份（设计 11
@@ -615,7 +615,7 @@ export const baselineOccupancy = sqliteTable('baseline_occupancy', {
 ]);
 
 /**
- * P03-1 / F-002 计划结构四表（迁移 v6，docs/p03-1-plan-import-contract.md 与设计 11 §4）。
+ * P03-1 / F-002 计划结构四表（迁移 v6，docs/phases/p03/p03-1-plan-import-contract.md 与设计 11 §4）。
  *
  * 边界与先例（与迁移 v6 同源，一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 交叉核对）：
  * - phases/features/tasks 均有同项目复合唯一键 (project_id,id)：既是复合外键目标，
@@ -633,6 +633,23 @@ export const baselineOccupancy = sqliteTable('baseline_occupancy', {
  *   tasks 的执行域计数列（attempt_counter/code_attempts_used）由 P03-3 / F-006
  *   迁移 v11 追加，kind 等其余执行域列仍随后续功能迁移增加。
  */
+/** Persisted display-only aliases; tombstones survive Task replacement. */
+export const entityDisplayCodes = sqliteTable('entity_display_codes', {
+  id: text('id').primaryKey().notNull().default(sql`(lower(hex(randomblob(16))))`),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  entityKind: text('entity_kind').notNull(),
+  entityId: text('entity_id').notNull(),
+  parentId: text('parent_id').notNull(),
+  ordinal: integer('ordinal').notNull(),
+  code: text('code').notNull(),
+}, (table) => [
+  check('entity_display_codes_kind_check', sql`${table.entityKind} IN ('phase','feature','task')`),
+  check('entity_display_codes_ordinal_check', sql`${table.ordinal} > 0`),
+  uniqueIndex('entity_display_codes_identity_unique').on(table.projectId, table.entityKind, table.entityId),
+  uniqueIndex('entity_display_codes_ordinal_unique').on(table.projectId, table.entityKind, table.parentId, table.ordinal),
+  uniqueIndex('entity_display_codes_code_unique').on(table.projectId, table.code),
+]);
+
 export const phases = sqliteTable('phases', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),
@@ -685,6 +702,8 @@ export const features = sqliteTable('features', {
     .notNull()
     .references((): SQLiteColumn => phases.id, { onDelete: 'restrict' }),
   title: text('title').notNull(),
+  /** Frozen Git ref; null only for incomplete legacy/imported metadata. */
+  branchName: text('branch_name'),
   /** Feature 业务状态：创建恒为 draft，其余取值随执行/审批功能使用。 */
   status: text('status').notNull().default('draft'),
   /** 当前计划审批状态（最小集：draft/pending_approval/approved，设计 11 §4）。 */
@@ -700,6 +719,8 @@ export const features = sqliteTable('features', {
 }, (table) => [
   check('features_revision_positive_check', sql`${table.revision} >= 1`),
   check('features_title_not_empty_check', sql`length(${table.title}) > 0`),
+  check('features_branch_name_check', sql`${table.branchName} IS NULL OR length(${table.branchName}) BETWEEN 1 AND 255`),
+  uniqueIndex('features_project_branch_name_unique').on(table.projectId, table.branchName).where(sql`${table.branchName} IS NOT NULL`),
   check(
     'features_status_enum_check',
     sql`${table.status} IN ('draft', 'ready', 'running', 'awaiting_approval', 'completed', 'partial', 'failed')`,
@@ -757,6 +778,7 @@ export const tasks = sqliteTable('tasks', {
   status: text('status').notNull().default('pending'),
   /** 任务复杂度（low/medium/high，可空；复用配置复杂度取值）。 */
   complexity: text('complexity'),
+  languages: text('languages').notNull().default('[]'),
   description: text('description'),
   labels: text('labels').notNull().default('[]'),
   /** 结构化验收 {"criteria":[...]}（有序清单；引用/描述不能替代）。 */
@@ -783,6 +805,7 @@ export const tasks = sqliteTable('tasks', {
   firstPassedAt: integer('first_passed_at'),
 }, (table) => [
   check('tasks_kind_check', sql`${table.kind} IN ('coding', 'planning')`),
+  check('tasks_languages_json_array_check', sql`json_valid(${table.languages}) AND json_type(${table.languages}) = 'array' AND json_array_length(${table.languages}) <= 16`),
   check('tasks_manual_block_check', sql`typeof(${table.manualBlock}) = 'integer' AND ${table.manualBlock} IN (0, 1)`),
   check('tasks_execution_version_non_negative_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 0`),
   check('tasks_first_passed_at_positive_check', sql`${table.firstPassedAt} IS NULL OR ${table.firstPassedAt} >= 1`),
@@ -1056,7 +1079,7 @@ export const approvals = sqliteTable('approvals', {
 
 /**
  * P03-3 / F-002 单 Feature ExecutionBatch（迁移 v9；core-design/11 §5 与
- * docs/p03-3-execution-schema-contract.md）。
+ * docs/phases/p03/p03-3-execution-schema-contract.md）。
  *
  * 边界与登记决策（相对设计 11 的偏离均已在契约文档登记）：
  * - P03-3 首版为单 Feature 批次：feature_id NOT NULL + scope_snapshot 强制
@@ -3125,3 +3148,37 @@ export const featureCloseouts = sqliteTable('feature_closeouts', {
   check('feature_closeouts_limit_check', sql`${table.maxRepairs} BETWEEN 0 AND 3 AND ${table.repairCount} <= ${table.maxRepairs}`),
   check('feature_closeouts_owner_check', sql`length(${table.owner}) > 0`),
 ]);
+
+export const featureRepairAttempts = sqliteTable('feature_repair_attempts', {
+  id: text('id').notNull().unique(),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+  runId: text('run_id').notNull(), ordinal: integer('ordinal').notNull(),
+  strategy: text('strategy').notNull(), inputDigest: text('input_digest').notNull(), status: text('status').notNull(),
+  tokenLimit: integer('token_limit').notNull(), tokensUsed: integer('tokens_used'), deadline: integer('deadline').notNull(),
+  processIdentity: text('process_identity'), resultRef: text('result_ref'), stopConfirmed: integer('stop_confirmed').notNull().default(0),
+  locale: text('locale').notNull().default('zh-CN'),
+}, table => [primaryKey({ columns: [table.projectId, table.runId, table.ordinal] }),
+  foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict')]);
+
+export const gitPushes = sqliteTable('git_pushes', {
+  operationId: text('operation_id').primaryKey().notNull(),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }), runId: text('run_id').notNull(),
+  boundary: text('boundary').notNull(), remote: text('remote').notNull(), remoteDigest: text('remote_digest').notNull(), branch: text('branch').notNull(),
+  commitSha: text('commit_sha').notNull(), status: text('status').notNull(), createdAt: integer('created_at').notNull(), updatedAt: integer('updated_at').notNull(),
+}, table => [foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict')]);
+
+export const managedDocumentSources = sqliteTable('managed_document_sources', {
+  id: text('id').notNull().unique().default(sql`(lower(hex(randomblob(16))))`),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+  path: text('path').notNull(), documentId: text('document_id'),
+}, table => [primaryKey({ columns: [table.projectId, table.path] }),
+  foreignKey({ columns: [table.projectId, table.documentId], foreignColumns: [documents.projectId, documents.id] }).onDelete('restrict')]);
+
+export const featureDocumentSources = sqliteTable('feature_document_sources', {
+  id: text('id').notNull().unique().default(sql`(lower(hex(randomblob(16))))`),
+  projectId: text('project_id').notNull(), featureId: text('feature_id').notNull(),
+  path: text('path').notNull(), role: text('role').notNull(),
+}, table => [primaryKey({ columns: [table.projectId, table.featureId, table.path] }),
+  foreignKey({ columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.path], foreignColumns: [managedDocumentSources.projectId, managedDocumentSources.path] }).onDelete('restrict'),
+  check('feature_document_sources_role_check', sql`${table.role} IN ('prd','design','architecture','product','index')`)]);

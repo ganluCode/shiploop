@@ -1,5 +1,5 @@
 /**
- * P03-8 / F-011 文档核验：`docs/p03-8-f011-cli-delivery-operations.md` 的
+ * P03-8 / F-011 文档核验：`docs/phases/p03/p03-8-f011-cli-delivery-operations.md` 的
  * CLI 操作说明必须与实现事实一致（命令面、Core 操作同源、状态折算、失败
  * 词汇、边界声明与帮助文本），且示例只使用脱敏逻辑身份，避免文档另立一套。
  */
@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { APP_CLI_COMMAND_IDS, getAppCliHelp } from '../../../packages/cli/src/index.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const DOC_PATH = 'docs/p03-8-f011-cli-delivery-operations.md';
+const DOC_PATH = 'docs/phases/p03/p03-8-f011-cli-delivery-operations.md';
 
 function readDoc(): string {
   const path = resolve(REPO_ROOT, DOC_PATH);

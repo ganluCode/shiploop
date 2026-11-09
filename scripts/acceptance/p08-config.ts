@@ -187,7 +187,7 @@ export const P08_PREREQUISITE_INPUTS = {
     producer: 'P08-1 本地交付：pack-local、制品检查、发布 CI 配置、用户指南与操作 Skills',
   },
   'P08-2': {
-    reports: ['docs/p08-2-live-acceptance-entry.md'],
+    reports: ['docs/phases/p08/p08-2-live-acceptance-entry.md'],
     machineReadable: [],
     liveEvidenceKind: 'shiploop.todo.live-evidence',
     producer: 'npm run accept:p08:live（scripts/acceptance/p08-todo-live-entry.ts）',

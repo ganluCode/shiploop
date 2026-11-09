@@ -793,7 +793,7 @@ export function createSqliteStateAccess(
       timestamp,
       timestamp,
       valid.payload.schemaVersion,
-      JSON.stringify(valid.payload),
+      JSON.stringify({ ...valid.payload, locale: valid.payload.locale ?? 'en-US' }),
     );
     const created = globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
     if (options.recordCreatedEvent === true) {
@@ -830,7 +830,7 @@ export function createSqliteStateAccess(
         'UPDATE global_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
           'WHERE id = ? AND revision = ?',
       )
-      .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), GLOBAL_SETTINGS_ID, valid.expectedRevision);
+      .run(timestamp, valid.payload.schemaVersion, JSON.stringify({ ...valid.payload, locale: valid.payload.locale ?? 'en-US' }), GLOBAL_SETTINGS_ID, valid.expectedRevision);
     if (result.changes === 0) {
       requireCasTarget(
         (db

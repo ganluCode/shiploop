@@ -51,7 +51,7 @@ import type { SqliteStorageSession } from '../../../packages/core/src/adapters/s
 import { createFakeRuntimeGate, createFakeWorkRuntimeFactory } from '../../../packages/core/src/adapters/testing.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { deriveFeatureWorktreeRelativeDir } from '../../../packages/core/src/ports/path-service.ts';
-import { deriveManagedFeatureBranch } from '../../../packages/core/src/ports/workspace-preparation.ts';
+import { readFeatureBranch } from '../../helpers/feature-branch.ts';
 import type { FakeRuntimeScriptStep } from '../../../packages/core/src/ports/fake-runtime-script.ts';
 import type { CommandReceipt, PlanningAcceptedCommandReceipt } from '../../../packages/core/src/index.ts';
 import { computeCommandRequestDigest, validateCommandEnvelope, createCompletedReceipt, createResultRef } from '../../../packages/core/src/index.ts';
@@ -244,7 +244,7 @@ async function seedManagedWorkspace(
   const binding = session.database.prepare<[string], {
     id: string; binding_revision: number; repo_identity: string; git_common_dir: string;
   }>('SELECT id, binding_revision, repo_identity, git_common_dir FROM repository_bindings WHERE project_id = ?').get(projectId)!;
-  const branch = deriveManagedFeatureBranch(projectId, featureId);
+  const branch = readFeatureBranch(session, projectId, featureId);
   const worktreePath = join(box.dataRoot, deriveFeatureWorktreeRelativeDir(projectId, featureId));
   mkdirSync(join(worktreePath, '..'), { recursive: true });
   git(['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], box.repoDirA);

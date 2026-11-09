@@ -1,0 +1,1 @@
+When codemode is available, batch independent reads/searches with tools and print concise results. Keep dependent edits and commands sequential; do not run concurrent mutating commands. Codemode is optional: when unavailable, batch safe reads with the available tools and continue without repeatedly trying unsupported capabilities.

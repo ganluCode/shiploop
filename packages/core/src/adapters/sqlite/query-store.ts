@@ -1,7 +1,7 @@
 /**
  * F-010 授权查询/一致读视图/事件分页窄读取端口的 SQLite 装配（adapters 层）。
  *
- * 依据 docs/p02-2-commands-events-contract.md §7/§8/§9.3：
+ * 依据 docs/phases/p02/p02-2-commands-events-contract.md §7/§8/§9.3：
  * - listVisibleProjects / countVisibleProjectLabels：可见范围谓词下推 SQL
  *   （先收窄再分页/计数），复用 P01 标签筛选/键集分页的同一 SQL 构建器；
  * - readProjectSnapshotView / readGlobalSnapshotView：§8 一致读视图——同一

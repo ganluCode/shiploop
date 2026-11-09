@@ -102,5 +102,5 @@ shiploop live ok
 
 ## 原始契约
 
-冻结的阶段要求仍见 [P04 阶段验收契约](../p04-acceptance.md) 和
-[完整人工清单](../p04-8-f010-manual-checklist.md)。本说明不删减必需检查，也不改写历史失败。
+冻结的阶段要求仍见 [P04 阶段验收契约](../phases/p04/p04-acceptance.md) 和
+[完整人工清单](../phases/p04/p04-8-f010-manual-checklist.md)。本说明不删减必需检查，也不改写历史失败。

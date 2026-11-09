@@ -1,7 +1,7 @@
 /**
  * F-004 可信测试装配 principal 工厂（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md §4.1/§4.2：
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md §4.1/§4.2：
  * - 生产只有固定本机主体 `local-owner`（全部九项能力、projectScope=all），
  *   绑定发生在 Host 可信装配/传输层；
  * - 受限主体 `test-restricted:<uuid-v4>` **只能由可信测试装配显式构造**，

@@ -1,7 +1,7 @@
 /**
  * F-004 可续读下界水位控制器（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 契约依据：docs/p02-2-commands-events-contract.md §9.4——P02-2 不做事件清理，
+ * 契约依据：docs/phases/p02/p02-2-commands-events-contract.md §9.4——P02-2 不做事件清理，
  * 持久序列自 1 起全保留，正常库下界为 0。snapshot_required 的过期分支本期
  * 只允许由「受控测试夹具注入的保留下界水位」触发，**绝不为测试删除或篡改
  * state_events 持久审计行**。

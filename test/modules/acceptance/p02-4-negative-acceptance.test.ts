@@ -1,7 +1,7 @@
 /**
  * F-006 P02-4 组合认证、协议、项目范围和固定回环监听的阶段负例真实验收场景。
  *
- * 对应 docs/p02-4-acceptance-contract.md §2.1 冻结的必需检查 `P02-FR2-AUTH-REJECT`
+ * 对应 docs/phases/p02/p02-4-acceptance-contract.md §2.1 冻结的必需检查 `P02-FR2-AUTH-REJECT`
  * （FR-2 认证/协议/范围/监听拒绝；零副作用且不泄密）。五组负例（验收 1~5）：
  *
  * 1. 真实 Host（dist CLI 启动）上的缺失/错误 token、旧实例身份（真实重启后的

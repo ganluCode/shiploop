@@ -1,5 +1,5 @@
 /**
- * F-001 文档核验：`docs/p02-2-commands-events-contract.md` 记录的前序基线与
+ * F-001 文档核验：`docs/phases/p02/p02-2-commands-events-contract.md` 记录的前序基线与
  * P02-2 命令/查询/事件/CLI 实施契约必须与仓库事实一致，避免「文档另立一套」
  * 与后续 F-002 ~ F-020 各自发明协议。
  *
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const CONTRACT_DOC_PATH = 'docs/p02-2-commands-events-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p02/p02-2-commands-events-contract.md';
 const contractDoc = readFileSync(resolve(REPO_ROOT, CONTRACT_DOC_PATH), 'utf-8');
 
 function readJson(relativePath: string): Record<string, unknown> {
@@ -204,7 +204,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     const constants = readText('packages/host/src/contract/constants.ts');
     // P03-2 / F-007 将线消息升至 v5（决策/策略/输入准备三命令与审批查询进入
     // 握手能力集合，显式升版纪律）；本守护跟随当前实现状态，演进依据见
-    // docs/p03-2-plan-approval-contract.md。
+    // docs/phases/p03/p03-2-plan-approval-contract.md。
     expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 6 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
@@ -234,7 +234,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     const schema = readText('packages/core/src/ports/settings-schema.ts');
     expect(schema).toContain('export const SETTINGS_SCHEMA_VERSION = 2');
     const configService = readText('packages/core/src/application/configuration-service.ts');
-    expect(schema).toContain('export const SETTINGS_EXPORT_FORMAT_VERSION = 1');
+    expect(schema).toContain('export const SETTINGS_EXPORT_FORMAT_VERSION = 2');
     expect(configService).toContain("export { SETTINGS_EXPORT_FORMAT_VERSION } from '../ports/settings-schema.js'");
     const stateStorePort = readText('packages/core/src/ports/state-store.ts');
     expect(stateStorePort).toContain("PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated'");
@@ -321,10 +321,10 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
 
   it('P02-1 契约、交接与 F-014 报告仍在库且被本文显式接续', () => {
     for (const path of [
-      'docs/p02-1-host-lifecycle-contract.md',
-      'docs/p02-1-handoff.md',
+      'docs/phases/p02/p02-1-host-lifecycle-contract.md',
+      'docs/phases/p02/p02-1-handoff.md',
       'docs/acceptance/p02-1-f014-report.md',
-      'docs/p01-3-application-contract.md',
+      'docs/phases/p01/p01-3-application-contract.md',
     ]) {
       expect(existsSync(resolve(REPO_ROOT, path))).toBe(true);
     }

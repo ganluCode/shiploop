@@ -4,7 +4,7 @@
  *
  * 设计依据：core-design/01 §4（稳定 namespace 数据根，PathService 集中解析）、
  * core-design/03 §4（路径通过 ID 和授权根计算，检查 realpath、符号链接、目录
- * 穿越）与 docs/p01-3-application-contract.md §4.3。
+ * 穿越）与 docs/phases/p01/p01-3-application-contract.md §4.3。
  *
  * 不变量：
  * - 授权数据根在构造时 realpath 固定，此后全部位置推导以该真实根为基准；显式根

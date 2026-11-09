@@ -1,9 +1,9 @@
 /**
  * F-002 Host 生命周期状态与能力声明（契约纯模块）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §11（状态机）、
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §11（状态机）、
  * §8（握手 capabilities 只描述真实支持）；P02-2
- * docs/p02-2-commands-events-contract.md §11.3（结构化应用能力视图）。
+ * docs/phases/p02/p02-2-commands-events-contract.md §11.3（结构化应用能力视图）。
  *
  * `stopped` 不是网络状态（进程已不存在），不在线协议枚举内；
  * P02-1/P02-2 生产装配的活动数恒为 0（idle-only）。
@@ -128,6 +128,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   //（同一命令面；accepted v7 回执携带 Batch/Run/planning Task/候选四重身份；
   // HostClient 入口属 F-012）。
   'planning.start',
+  'planning.retire',
   // P05-1 / F-008/F-012：候选人工批准/拒绝经同一通用命令路由接线（短写事务
   // 内重核候选身份/摘要与目标 revision；HostClient 入口属 F-012）。
   'planning.candidate.decide',
@@ -319,14 +320,14 @@ export const BATCH_DELIVERY_COMMAND_CAPABILITIES = ['execution.batch.finalize', 
 export const KNOWLEDGE_QUERY_CAPABILITIES = ['knowledge.search', 'knowledge.read', 'memory.search'] as const;
 type KnowledgeQueryCapability = typeof KNOWLEDGE_QUERY_CAPABILITIES[number];
 
-export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false, knowledgeQueries: readonly KnowledgeQueryCapability[] = []): HostCapabilities {
-  if (!available && !batchDeliveryAvailable && !batchQueryAvailable && knowledgeQueries.length === 0) return CURRENT_HOST_CAPABILITIES;
+export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false, knowledgeQueries: readonly KnowledgeQueryCapability[] = [], managedDocumentsAvailable = false): HostCapabilities {
+  if (!available && !batchDeliveryAvailable && !batchQueryAvailable && knowledgeQueries.length === 0 && !managedDocumentsAvailable) return CURRENT_HOST_CAPABILITIES;
   return deepFreeze({ ...CURRENT_HOST_CAPABILITIES, application: {
     ...CURRENT_HOST_CAPABILITIES.application,
-    queries: [...APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'), ...KNOWLEDGE_QUERY_CAPABILITIES.filter(query => knowledgeQueries.includes(query))],
-    commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
+    queries: [...APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'), ...KNOWLEDGE_QUERY_CAPABILITIES.filter(query => knowledgeQueries.includes(query)), ...(managedDocumentsAvailable ? ['documents.locations'] : [])],
+    commands: [...APPLICATION_COMMAND_CAPABILITIES.filter(command =>
       (available || !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)) &&
-      (batchDeliveryAvailable || !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command))),
+      (batchDeliveryAvailable || !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command))), ...(managedDocumentsAvailable ? ['documents.write'] : [])],
   } });
 }
 

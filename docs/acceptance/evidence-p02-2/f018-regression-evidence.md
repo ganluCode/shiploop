@@ -1,7 +1,7 @@
 # P02-2 F-018 集成回归证据（脱敏）
 
 - 任务：F-018 补齐 P02-2 的真实 SQLite/HTTP/SSE/CLI 集成回归（契约
-  `docs/p02-2-commands-events-contract.md` §14 映射；证据只含非秘密的计数、
+  `docs/phases/p02/p02-2-commands-events-contract.md` §14 映射；证据只含非秘密的计数、
   状态、事件 sequence、进程退出与命令退出码）。
 - 受测入口：生产 Host 装配 `startHost`（`packages/host/src/runtime/`）、
   生产 CLI 执行层 `runAppCli`/`runHostCli`（dist/bin.js 同一路径，经测试加载器

@@ -1,6 +1,6 @@
 /**
  * F-004 P02-3 OnboardingService（application 层）：Core 静态 inspect 与
- * 注册/健康分离的 overview 用例（docs/p02-3-onboarding-contract.md
+ * 注册/健康分离的 overview 用例（docs/phases/p02/p02-3-onboarding-contract.md
  * §4.3/§7.2/§7.3/§8.2/§15.1）。
  *
  * 不变量：

@@ -1,3 +1,4 @@
+import { CONTEXT_FIXED_GUIDANCE, CONTEXT_REWORK_GUIDANCE, testPromptTemplates } from '../../helpers/prompt-templates.ts';
 /**
  * P03-7 / F-011 同 Task 返工输入快照（既有 ContextBuilder 扩展）回归。
  *
@@ -19,11 +20,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
-  CONTEXT_FIXED_GUIDANCE,
   CONTEXT_INPUT_SCHEMA_VERSION,
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
   CONTEXT_PROMPT_DIGEST_DOMAIN,
-  CONTEXT_REWORK_GUIDANCE,
   CONTEXT_SNAPSHOT_DIGEST_DOMAIN,
   ContextBuildError,
   isContextBuildError,
@@ -49,7 +48,7 @@ const DEFAULT_BUDGET: ContextBudget = {
 };
 
 function makeBuilder(overrides: Partial<ContextBudget> = {}): ContextBuilder {
-  return createContextBuilder({ budget: { ...DEFAULT_BUDGET, ...overrides } });
+  return createContextBuilder({ promptTemplates: testPromptTemplates, budget: { ...DEFAULT_BUDGET, ...overrides } });
 }
 
 function makeRef(
@@ -326,7 +325,7 @@ describe('P03-7 / F-011 恢复交接纪律（固定指导）', () => {
 
   it('历史不断增长时固定指导不膨胀，完整 acceptance 与失败证据引用仍可获得', () => {
     const budget: ContextBudget = { ...DEFAULT_BUDGET, maxPromptBytes: 20_000 };
-    const builder = createContextBuilder({ budget });
+    const builder = createContextBuilder({ promptTemplates: testPromptTemplates, budget });
     const entries = (count: number) =>
       Array.from({ length: count }, (_, index) => ({
         id: `h-${index}`,

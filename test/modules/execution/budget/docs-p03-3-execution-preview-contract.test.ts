@@ -1,5 +1,5 @@
 /**
- * P03-3 / F-004 文档核验：`docs/p03-3-execution-preview-contract.md` 记录的执行
+ * P03-3 / F-004 文档核验：`docs/phases/p03/p03-3-execution-preview-contract.md` 记录的执行
  * 预览契约必须与仓库实现事实一致（命令面/能力位、范围语义、状态与原因词汇、
  * 编排顺序、previewDigest 成分、结果边界），避免「文档另立一套」。
  */
@@ -25,7 +25,7 @@ import {
 import { EXECUTION_PREVIEW_IMPACT } from '../../../../packages/core/src/application/execution-preview.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const CONTRACT_DOC_PATH = 'docs/p03-3-execution-preview-contract.md';
+const CONTRACT_DOC_PATH = 'docs/phases/p03/p03-3-execution-preview-contract.md';
 
 function readContractDoc(): string {
   const path = resolve(REPO_ROOT, CONTRACT_DOC_PATH);

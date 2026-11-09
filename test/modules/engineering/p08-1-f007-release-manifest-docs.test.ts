@@ -22,10 +22,10 @@ import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-const GUIDE = 'docs/p08-1-user-guide.md';
-const SUPPORT_MATRIX = 'docs/p08-1-support-matrix.md';
+const GUIDE = 'docs/phases/p08/p08-1-user-guide.md';
+const SUPPORT_MATRIX = 'docs/phases/p08/p08-1-support-matrix.md';
 const CHANGELOG = 'CHANGELOG.md';
-const ARTIFACT_DOC = 'docs/p08-1-artifact-verification.md';
+const ARTIFACT_DOC = 'docs/phases/p08/p08-1-artifact-verification.md';
 const MANIFEST = 'acceptance/p08-1.release-manifest.json';
 const MANIFEST_DOC = 'docs/acceptance/p08-1-release-manifest.md';
 const DELIVERY_REPORT = 'docs/acceptance/p08-1-delivery-report.md';

@@ -10,7 +10,7 @@
  * maxRuns=1；所有 Run 必须归属用户明确授权的 ExecutionBatch，包括单次规划；
  * 成功、失败、取消的已创建 Run 都消耗 maxRuns，不退款）、core-design/15 §2
  * （Controller 核对授权、固定 Batch 范围、预算；SQLite 是事实来源，唤醒只降低
- * 延迟）。实施契约：docs/p05-1-planning-candidate-contract.md §6/§7。
+ * 延迟）。实施契约：docs/phases/p05/p05-1-planning-candidate-contract.md §6/§7。
  *
  * 契约要点：
  * - 命令面 `planning.start`（复用 execution.start 能力位与授权面；创建类语义但
@@ -152,7 +152,7 @@ export interface PlanningStartEnvelopeFace {
 export interface PlanningStartPort {
   preparePlanningStart(
     projectId: string,
-    payload: { readonly request: ValidatedPlanningRequest; readonly budget: Record<string, unknown> },
+    payload: { readonly request: ValidatedPlanningRequest; readonly budget: Record<string, unknown>; readonly managedDocuments?: true },
   ): Promise<PreparedPlanningStart>;
   submitPlanningStart(
     identity: PlanningStartCommandIdentity,

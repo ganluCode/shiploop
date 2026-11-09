@@ -1,7 +1,7 @@
 /**
  * F-005 P02-4 干净/脏仓库接入只读保持与未知脚本零执行的真实验收场景。
  *
- * 对应 docs/p02-4-acceptance-contract.md §2.1 冻结的必需检查 `P02-FR2-SOURCE-PRESERVED`
+ * 对应 docs/phases/p02/p02-4-acceptance-contract.md §2.1 冻结的必需检查 `P02-FR2-SOURCE-PRESERVED`
  * （约定测试入口 `test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts`），用 F-002 现有夹具
  * （真实 dist CLI + 真实 Git 仓库变体 + 证据快照 + 只读探针）补齐四条验收标准：
  * 1. 干净仓库与含 staged/unstaged/untracked 文件的仓库分别运行静态预览（无 --confirm）、

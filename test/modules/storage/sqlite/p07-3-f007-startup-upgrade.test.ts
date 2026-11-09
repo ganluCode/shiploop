@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
@@ -11,6 +11,42 @@ import { createBackupPackageVerificationService } from '../../../../packages/cor
 import type { StopEscalationProbe } from '../../../../packages/core/src/adapters/process/stop-escalation.ts';
 import { createTempSandbox } from '../../../helpers/temp-sandbox.ts';
 import { openBindingFixture } from '../../../helpers/p03-6/input-binding-fixture.ts';
+import { deriveArtifactFinalRelativePath } from '../../../../packages/core/src/ports/artifact-files.ts';
+import { createBackupPackageService } from '../../../../packages/core/src/adapters/sqlite/backup-package.ts';
+import { createArtifactFileStore } from '../../../../packages/core/src/adapters/fs/artifact-files.ts';
+import { createMaintenanceWriteGate } from '../../../../packages/core/src/ports/data-maintenance.ts';
+
+it('upgrades with a faithful rollback snapshot of historical recording gaps while ordinary backup remains strict', async () => {
+  await fixture(async root => {
+    const body = Buffer.from('input');
+    const hash = createHash('sha256').update(body).digest('hex');
+    const db = new Database(join(root, 'core.sqlite'));
+    try {
+      db.prepare(`INSERT INTO artifacts (id,created_at,updated_at,project_id,kind,status,media_type,expected_hash,content_hash,size_bytes,storage_locator)
+        VALUES ('input',1,1,'project-a','input','ready','text/plain',?,?,?,'input/a')`).run(hash, hash, body.length);
+      db.prepare(`INSERT INTO sessions (id,created_at,updated_at,project_id,kind,purpose,runtime,adapter_version,status,input_ref,last_activity_at,started_at,ended_at,stopped_at,recording_gaps)
+        VALUES ('old',1,1,'project-a','chat','chat','pi','1','stopped','input',1,1,1,1,?)`).run('["recording_failed:aborted"]');
+    } finally { db.close(); }
+    const path = join(root, deriveArtifactFinalRelativePath({ projectId: 'project-a', artifactId: 'input' }));
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, body);
+    const upgraded = await openUpgradedSqliteStorage({ path: join(root, 'core.sqlite'), dataRoot: root, stopProbe: absent });
+    try {
+      expect(upgraded.database.prepare('SELECT recording_gaps FROM sessions WHERE id=?').get('old'))
+        .toEqual({ recording_gaps: '["recording_failed:aborted"]' });
+      const packageName = readdirSync(join(root, 'backups')).find(name => existsSync(join(root, 'backups', name, 'manifest.json')))!;
+      const report = await createBackupPackageVerificationService({ dataRoot: root }).verify({ packagePath: join(root, 'backups', packageName) });
+      expect(report.status).toBe('incomplete');
+      expect(report.checks.filter(check => check.status !== 'available'))
+        .toEqual([{ name: 'recorder', status: 'incomplete', details: { reason: 'recorder_coverage_partial' } }]);
+      expect(report.manifest?.recorder).toContainEqual({ sessionId: 'old', coverage: 'missing', watermark: null, gaps: ['recording_failed:aborted'] });
+      const normal = createBackupPackageService({ session: upgraded, dataRoot: root, backupRoot: join(root, 'backups'),
+        files: createArtifactFileStore({ dataRoot: root }), maintenanceGate: createMaintenanceWriteGate() });
+      await expect(normal.create({ backupId: 'ordinary', owner: 'test', hostInstanceId: 'test' }))
+        .rejects.toMatchObject({ reason: 'incomplete', report: { reasons: ['recording_incomplete:old'] } });
+    } finally { upgraded.close(); }
+  });
+});
 
 async function fixture(action: (root: string) => Promise<void>) {
   const box = createTempSandbox('p07-3-upgrade-fault-');

@@ -5,7 +5,7 @@
  *
  * 设计依据：p03-plan-approval PRD（版本 0.3）FR-1「批准绑定 planDigest；拒绝
  * 不启动执行；批准不是启动授权；复用 P03-1 创建时已复制的完整默认策略，
- * 不再次创建 Task 或在批准时追溯替换策略」、docs/p03-2-plan-approval-contract.md
+ * 不再次创建 Task 或在批准时追溯替换策略」、docs/phases/p03/p03-2-plan-approval-contract.md
  * （本模块契约文档）与 core-design/02 §10（批准绑定摘要，不管理历史计划版本）、
  * core-design/11 §7（approvals 决策记录表）。
  *

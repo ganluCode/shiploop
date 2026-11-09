@@ -32,6 +32,7 @@ import {
   selectPlanningPurposeStrategy,
 } from '../../../packages/core/src/application/task-strategy-selection.ts';
 import { SETTINGS_SCHEMA_VERSION } from '../../../packages/core/src/ports/settings-schema.ts';
+import { validatePlanningStrategyCopy } from '../../../packages/core/src/ports/planning-context.ts';
 import { StorageError, isStorageError } from '../../../packages/core/src/ports/errors.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -79,6 +80,21 @@ const PLANNER_PROJECT = {
 };
 
 describe('P05-1 F-002 planning purpose strategy selection', () => {
+  it('freezes Planner time limits without copying coding attempt budgets', () => {
+    for (const strategies of [{ purposeStrategies: { planner: PLANNER_PROJECT } }, { defaultStrategy: PLANNER_PROJECT }]) {
+      const project = { scopeRevision: 1, payload: { schemaVersion: 2, strategies,
+        policies: { executionLimits: { workTimeoutMs: 7200000, toolTimeoutMs: 600000, maxCodeAttempts: 8 } } } };
+      const selected = selectPlanningPurposeStrategy({ project });
+      expect(selected.strategy).toMatchObject({ workTimeoutMs: 7200000, toolTimeoutMs: 600000 });
+      expect(selected.strategy).not.toHaveProperty('maxCodeAttempts');
+      expect(validatePlanningStrategyCopy(selected.strategy, 'test')).toEqual(selected.strategy);
+      project.payload.policies.executionLimits.workTimeoutMs = 900000;
+      expect(selected.strategy.workTimeoutMs).toBe(7200000);
+      for (const value of [999, 86400001, '7200000', NaN]) {
+        expect(() => validatePlanningStrategyCopy({ ...selected.strategy, workTimeoutMs: value }, 'test')).toThrow();
+      }
+    }
+  });
   it('[case:purpose-entry-project] 项目 purposeStrategies.planner 整体条目命中并记录来源', () => {
     const selection = selectPlanningPurposeStrategy({
       global: globalScope({ defaultStrategy: GLOBAL_DEFAULT, purposeStrategies: { planner: PLANNER_GLOBAL } }),

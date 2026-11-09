@@ -13,7 +13,7 @@ import {
 } from '../../../../packages/core/src/ports/queries.ts';
 
 const read = (path: string) => readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
-const doc = read('docs/p03-3-execution-budget-query-contract.md');
+const doc = read('docs/phases/p03/p03-3-execution-budget-query-contract.md');
 
 describe('F-010 execution budget query contract', () => {
   it('registers the contract doc and freezes the query operation/reason surfaces', () => {

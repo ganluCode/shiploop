@@ -2,7 +2,7 @@
  * F-008 P02-3 Core 基线预览与明确授权验收（真实临时 SQLite + 真实 Git 仓库 +
  * 真实组合根装配；环境目录/身份窄端口用显式桩件，桩件不冒充持久实现）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md §5.3（accepted 回执首次启用）、
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md §5.3（accepted 回执首次启用）、
  * §5.5（baseline.run 提交事务：授权行+操作行+回执；preview_stale；单并发占用）、
  * §6.1（检查计划）、§6.2（不可变授权摘要）、§6.3（代码身份/工作区摘要范围）、
  * §6.4（环境引用：最小默认环境 + 显式允许列表，不携带值）、§4.3

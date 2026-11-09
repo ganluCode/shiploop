@@ -46,7 +46,7 @@ import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CHECKLIST_PATH = join(REPO_ROOT, P03_CHECKLIST_PATH);
 const CONFIG_PATH = join(REPO_ROOT, P03_ACCEPT_CONFIG_PATH);
-const CONTRACT_DOC = readFileSync(join(REPO_ROOT, 'docs', 'p03-10-f002-checklist.md'), 'utf-8');
+const CONTRACT_DOC = readFileSync(join(REPO_ROOT, 'docs', 'phases/p03/p03-10-f002-checklist.md'), 'utf-8');
 
 const trackedSandboxes: string[] = [];
 afterAll(() => {

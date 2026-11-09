@@ -1,7 +1,7 @@
 /**
  * F-002 应用命令契约（ports 契约层：类型、常量、纯校验与纯映射函数）。
  *
- * 协议依据：docs/p02-2-commands-events-contract.md
+ * 协议依据：docs/phases/p02/p02-2-commands-events-contract.md
  * - §3.1 四个版本独立：线消息 schemaVersion=2（本模块）与发现版本 1、线协议
  *   版本 1、配置 payload schemaVersion=2 互不联动；
  * - §4.2 九项能力冻结清单与 local-owner；
@@ -40,6 +40,7 @@ import type { PlanEntityType, FeaturePlanDecision } from './plan-store.js';
 import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
+import { validateManagedDocumentSources, type ManagedDocumentSource } from './managed-documents.js';
 import type { SettingsPayload } from './settings-schema.js';
 import type { BatchDeliveryCommandPayload, PhaseDeliveryApprovePayload } from './batch-delivery-commands.js';
 import { validatePlanningRequest } from './planning-candidates.js';
@@ -47,6 +48,8 @@ import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
+import { validatePlanningRetirePayload } from './planning-retire.js';
+import type { ValidatedPlanningRetirePayload } from './planning-retire.js';
 import { validateStableId, validateSha256Digest, normalizeLabels } from './validation.js';
 import {
   PROJECT_RESOURCE_COMMAND_OPERATIONS,
@@ -89,11 +92,11 @@ export const APP_CAPABILITIES = [
   'settings.project.write',
   'receipts.read',
   'events.read',
-  // P02-3（docs/p02-3-onboarding-contract.md §4.2）新增两项基线能力位。
+  // P02-3（docs/phases/p02/p02-3-onboarding-contract.md §4.2）新增两项基线能力位。
   'baseline.read',
   'baseline.run',
   // P03-1 / F-004：计划域写入能力位（Phase 创建；后续 Phase/计划写命令
-  // 能力命名随对应功能冻结，见 docs/p03-1-plan-import-contract.md §6）。
+  // 能力命名随对应功能冻结，见 docs/phases/p03/p03-1-plan-import-contract.md §6）。
   'phase.write',
   // P03-1 / F-005：单 Feature 计划导入能力位（命名按契约 §6.1 示例定案）。
   'feature.plan.import',
@@ -175,7 +178,7 @@ export const COMMAND_OPERATIONS = [
   'settings.global.update',
   'settings.project.create',
   'settings.project.update',
-  // P02-3 / F-008（docs/p02-3-onboarding-contract.md §6）：基线命令。preview/run
+  // P02-3 / F-008（docs/phases/p02/p02-3-onboarding-contract.md §6）：基线命令。preview/run
   // 随 F-008 落地；baseline.cancel 随 F-014（编排/停止核验 F-010/F-012 已具备）
   // 进入白名单，取消执行经应用层注入的取消端口完成，回执仍走同一幂等机制
   //（payload 深校验在应用服务层经 ports/baseline.ts 完成，避免本模块反向依赖）。
@@ -258,6 +261,7 @@ export const COMMAND_OPERATIONS = [
   // planning Task/上下文、初始预算行、派发意图、事件与 accepted v7 回执；
   // 不借用编码计划审批，不在命令提交中启动模型）。
   'planning.start',
+  'planning.retire',
   // P05-1 / F-008：候选摘要绑定的人工批准/拒绝。
   'planning.candidate.decide',
   // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
@@ -338,7 +342,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // F-014：取消同样要求 baseline.run 能力 + 目标项目可见（§4.3），且归属
     // 核验（操作属于该可见项目）由应用层取消端口完成。
     'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
-    // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/p03-1-plan-import-contract.md §6.1）。
+    // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/phases/p03/p03-1-plan-import-contract.md §6.1）。
     'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
     'phase.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     'execution.batch.finalize': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
@@ -350,13 +354,13 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'feature.dag.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     // P03-1 / F-005：计划导入在目标 Phase 聚合上追加成员（Feature 聚合本身为
     // 新建，服务端生成 revision=1，不建立第二 CAS 权威），信封 expectedRevision
-    // 必填且指向 Phase 聚合当前 revision（docs/p03-1-plan-import-contract.md §6.2）。
+    // 必填且指向 Phase 聚合当前 revision（docs/phases/p03/p03-1-plan-import-contract.md §6.2）。
     'feature.plan.import': {
       scopeKind: 'project',
       mutation: 'update',
       capability: 'feature.plan.import',
     },
-    // P03-1 / F-007：纯标签 CAS 编辑（docs/p03-1-plan-import-contract.md §6.7）。
+    // P03-1 / F-007：纯标签 CAS 编辑（docs/phases/p03/p03-1-plan-import-contract.md §6.7）。
     // 信封 expectedRevision 指向目标实体（Phase/Feature/Task）自身 revision；
     // 与实质计划编辑（F-008）是可区分的契约，不是同一命令的两个模式。
     'plan.labels.update': {
@@ -364,7 +368,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'update',
       capability: 'plan.labels.write',
     },
-    // P03-1 / F-008：实质计划修订（docs/p03-1-plan-import-contract.md §6.2 更新
+    // P03-1 / F-008：实质计划修订（docs/phases/p03/p03-1-plan-import-contract.md §6.2 更新
     // 条款与 §6.8）。信封 expectedRevision 指向目标 Feature 聚合 revision；
     // 修订在聚合事务内整体替换成员与边（一次 CAS 一次递增）。
     'feature.plan.revise': {
@@ -451,6 +455,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'update',
       capability: 'execution.start',
     },
+    'planning.retire': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'planning.candidate.decide': {
       scopeKind: 'project',
       mutation: 'update',
@@ -782,6 +787,7 @@ export interface ValidatedFeatureDagUpdatePayload extends FeatureDagUpdatePayloa
 export interface ValidatedFeaturePlanImportPayload {
   readonly phaseId: string;
   readonly plan: unknown;
+  readonly documents?: readonly ManagedDocumentSource[];
 }
 
 /**
@@ -958,6 +964,7 @@ export type ValidatedExecutionStartPayload =
  */
 export interface ValidatedPlanningStartPayload {
   readonly request: ValidatedPlanningRequest;
+  readonly managedDocuments?: true;
   /** 完整预算提案（深校验在应用层；此处只保证 JSON 对象形态）。 */
   readonly budget: Record<string, unknown>;
 }
@@ -1291,6 +1298,12 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: number;
       readonly payload: ValidatedPlanningStartPayload;
     })
+  | (EnvelopeCommon & {
+      readonly operation: 'planning.retire';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedPlanningRetirePayload;
+    })
   // P03-3 / F-009：批次预算显式修订命令信封（更新类必须携带 expectedRevision
   // =目标 Batch 当前 budget_revision；payload 只含 batchId/budget/reason）。
   | (EnvelopeCommon & {
@@ -1353,7 +1366,7 @@ const ENVELOPE_KEYS = [
 const REGISTER_PAYLOAD_KEYS = ['repositoryPath', 'displayName', 'description', 'labels'] as const;
 const METADATA_PAYLOAD_KEYS = ['displayName', 'description', 'labels'] as const;
 const PHASE_CREATE_PAYLOAD_KEYS = ['id', 'title', 'description', 'labels'] as const;
-const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
+const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan', 'documents'] as const;
 const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
@@ -1572,6 +1585,7 @@ function validateFeaturePlanImportPayload(
     return {
       phaseId: validateStableId(object.phaseId, { operation }, 'payload.phaseId'),
       plan: object.plan,
+      ...(object.documents === undefined ? {} : { documents: validateManagedDocumentSources(object.documents) }),
     };
   } catch (error) {
     if (isStorageError(error, 'validation')) {
@@ -2071,6 +2085,7 @@ function validateExecutionStartPayload(
 }
 
 const PLANNING_START_PAYLOAD_KEYS = [
+  'managedDocuments',
   'schemaVersion',
   'projectId',
   'phaseId',
@@ -2097,10 +2112,11 @@ function validatePlanningStartPayload(
   if (!isPlainObjectPayload(object.budget)) {
     fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（完整预算提案）', object.budget);
   }
-  const { budget: _budget, ...requestValue } = object;
+  if (object.managedDocuments !== undefined && object.managedDocuments !== true) fail(operation, 'invalid_input', 'managedDocuments', 'must_be_true_or_absent');
+  const { budget: _budget, managedDocuments: _managedDocuments, ...requestValue } = object;
   try {
     const request = validatePlanningRequest(requestValue, { operation: `${operation}.request` });
-    return { request, budget: object.budget as Record<string, unknown> };
+    return { request, budget: object.budget as Record<string, unknown>, ...(object.managedDocuments === true ? { managedDocuments: true as const } : {}) };
   } catch (error) {
     if (isStorageError(error, 'validation')) {
       throw new PublicError('invalid_input', operation, undefined, {
@@ -2545,6 +2561,11 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: expectedRevision as number,
       payload: validatePlanningStartPayload(operation, object.payload),
     };
+  }
+  if (operation === 'planning.retire') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+      payload: validatePlanningRetirePayload(object.payload) };
   }
   if (operation === 'execution.retryFinal') {
     if (scope.kind !== 'project') {

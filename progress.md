@@ -3,7 +3,7 @@
 ## F-001 — Run 级持久派发与单执行槽位契约（2026-10-22）
 
 - 新增 `packages/core/src/ports/execution-dispatch.ts`：派发身份固定为「同项目、同 Feature 的 Run」（workKey 只表示跨重试逻辑工作），Run 级 `claim_version` 与 Task/Attempt `execution_version` 严格区分；定义首代 dispatch/v1、resume 只追加 version+1 且必须接在已释放上一代之后、认领/槽位合法状态转换、Attempt 关联与 `deriveRunDispatchDisplay` 展示派生；容量缺省/开放为 1，>1 与非法值 fail-closed。
-- 迁移 v33 只新增 `run_dispatch_claims`、`execution_slot_claims` 两表、索引、CHECK/FK 与 trigger（身份不可变、活动认领/槽位唯一、终态 Run 不认领、槽位绑定认领身份、认领释放需先释放槽位）；v1–v32 SQL/checksum 冻结不变，Drizzle Schema 同步。复用/新增理由与不能复用原因见 [F-001 契约](docs/p04-9-f001-dispatch-slot-contract.md)。
+- 迁移 v33 只新增 `run_dispatch_claims`、`execution_slot_claims` 两表、索引、CHECK/FK 与 trigger（身份不可变、活动认领/槽位唯一、终态 Run 不认领、槽位绑定认领身份、认领释放需先释放槽位）；v1–v32 SQL/checksum 冻结不变，Drizzle Schema 同步。复用/新增理由与不能复用原因见 [F-001 契约](docs/phases/p04/p04-9-f001-dispatch-slot-contract.md)。
 - 真实临时 SQLite 验证：v32（P04-8）旧库升级前后逐表逐行一致，旧 queued Run 仍可被有界补扫且不自动认领，既有 held/quarantined 工作区租约原样保留；迁移失败整组回滚、高版本拒写；新库约束失败样例（跨项目/换 Feature、重复活动认领、一槽多 owner、一 Run 多槽、旧 owner/版本改写、非法状态转换）全部被拒绝。
 - 因新增迁移维护“当前最新版本”断言：p03-6/p04-5 的 32→派生最新版本、p03-4 迁移序列按清单长度、migration-runner 空库表清单补 v32/v33 新表；历史 checksum 与既有失败断言未改写。
 - 索引 `test/index/phases/P04/features/P04-9/tasks/F-001.json`（7 文件 `all:true`）本地整套 `test-7gmlkeqd.log` exit 0：7 files / 144 passed；`npm run typecheck` 与 `npm run check:boundaries` exit 0。未运行全量、阶段验收或 live。
@@ -16,7 +16,7 @@
 - 最终本地 `test-j4ja3q2_.log` exit 0：四文件 22 passed/0 failed/0 skipped；原 Host-loss 兼容用例 `test-kz4xvrj9.log` exit 0：1 passed/14 skipped。两次完整日志及真实退出码 sidecar 位于当前 Feature workspace `verifications/F-008/runtime-logs/`；RED/中间失败不删除。
 - `test-h5qu8x94.log` 类型检查 exit 1，仅两个未修改文件的三条既有诊断：authorization-contract:131 TS2366，p04-7-f001-stop-diagnostics:57 两条 TS2322。新增代码无类型错误，未绕过检查或改动其他任务。
 - sandbox 外输出主 manifest、acceptance 兼容 cleanup.json、writer 内容/摘要、持久资源库存/表快照、停止/退出/未知证据。最终审计 22 份 manifest、87 个已观察身份和所有受控组均缺席；20 个成功 sandbox 删除，两个预期失败证据 sandbox 保留，符号链接不跟随。审计摘要 `verifications/F-008/manifest-audit.json`，业务 quarantine 不因测试所有权清理而解除。
-- [F-008 交接](docs/p04-7-f008-process-resource-matrix.md) 和 v2 索引登记 14 个真实文件，Harness selection 引用同一索引。除本地四文件及一个兼容用例，其余回归仅选择交 Nezha。未运行全量/组合门禁/Feature 或 Phase/live 验收，无真实模型或外部通知；正式 feature.yaml/task_list 只读。提交与单次 completed 报告以 Git/Nezha 回执为准。
+- [F-008 交接](docs/phases/p04/p04-7-f008-process-resource-matrix.md) 和 v2 索引登记 14 个真实文件，Harness selection 引用同一索引。除本地四文件及一个兼容用例，其余回归仅选择交 Nezha。未运行全量/组合门禁/Feature 或 Phase/live 验收，无真实模型或外部通知；正式 feature.yaml/task_list 只读。提交与单次 completed 报告以 Git/Nezha 回执为准。
 
 # P04-6 工作进度
 
@@ -42,7 +42,7 @@
 - 从 F-005 `8a4326e` 及已保存 RED/契约增量继续，仅处理 F-006。沿用 QueryService、WorkSessionQueryReadStore、SQLite 一致读与 ArtifactVerifier，增加按 Run/Attempt/Session 的消息与 manifest 分页及按 Session/Attempt 的正文读取；默认 50、上限 200，游标绑定根/项目/父级/记录种类，公开引用不含 locator。
 - 按真实 Work 根与后代核对项目、Run、Attempt、invocation、executionVersion；Chat 不进入公开索引。正文限定持久消息/附件/manifest 的精确 ready Artifact 引用，核验索引与文件 hash/size，沿用 8 MiB 上限并区分缺失、损坏、超限；工具父子身份保持可关联，原生/provider 身份和自由诊断不公开。
 - 最终新增文件 `p04-5-work-recording-query.test.ts` 12 passed/0 failed/0 skipped，`test-7308al4c.log` exit 0；typecheck `test-yvwp6fjs.log` exit 0；boundaries `test-kete9ed3.log` exit 0（323 源码/0 diagnostics）。查询前后全库业务快照不变、重开数据库结果相同均有真实 SQLite/Artifact 测试。RED `test-49m8s6ft.log` 和中间夹具触发器失败均保留，完整输出及退出码 sidecar 在当前 Feature workspace `verifications/F-006/runtime-logs/`。
-- [查询交接](docs/p04-5-f006-recording-query.md) 记录接口、授权、错误和证据；F-006 v2 任务索引与 Harness selection 已核对 8 个文件。其余 7 个回归仅选择，交 Nezha 独立执行。本轮未运行全仓/组合门禁/阶段验收/live 模型，未修改正式 feature.yaml/task_list；当前分支保持不变，提交及本 invocation 的单次任务声明以 Git/Nezha 回执为准。
+- [查询交接](docs/phases/p04/p04-5-f006-recording-query.md) 记录接口、授权、错误和证据；F-006 v2 任务索引与 Harness selection 已核对 8 个文件。其余 7 个回归仅选择，交 Nezha 独立执行。本轮未运行全仓/组合门禁/阶段验收/live 模型，未修改正式 feature.yaml/task_list；当前分支保持不变，提交及本 invocation 的单次任务声明以 Git/Nezha 回执为准。
 
 ## F-005 — 恢复回放与完整度诊断收尾（2026-10-21）
 
@@ -61,7 +61,7 @@
 - 从 F-003 的 35ca4ab 及已有未提交实现续做，仅处理 F-004，保留已有成功结果和日志。增加独立公开正文/索引 projection，正文先发布、脱敏和核验，再短事务提交索引/manifest/Session 水位；队列、批次、总量与尾部等待均有上限。
 - 消息全文（公开可选字段）、工具输入/输出与父子工具关系、错误、事件来源和序列持久化；result/stopped 并行且独立观察。required 失败请求停止并阻断记录门禁；best_effort 显式 partial，有限 drain，监督不因该记录失败单独取消。Task/Feature 验收及停止确认继续独立。
 - 本地三文件共 73 个不同用例有通过证据：新 Recorder 最终 13/13（test-5_j_qkdx.log）；旧 Recorder 33/33（test-800ko4nj.log，组合共 46）；settlement 27/27（test-v22449ak.log，同次新文件有 1 项父工具边界失败，整体 exit 1；修正后只重跑新文件 13/13）。最终 typecheck test-5854wpj0.log exit 0；boundaries test-s1k43fh1.log exit 0，321 文件/0 diagnostics。完整输出、真实退出码、RED 和中间失败均保留在 Feature workspace verifications/F-004/runtime-logs/。
-- [交接文档](docs/p04-5-f004-session-recorder.md) 说明端口注入、策略、停止事实和证据限制。仓库任务 v2 索引与 Harness selection 登记 19 文件，另外 16 份回归仅选择、交 Nezha 独立执行。生产装配归 F-008；恢复/查询后续任务范围保持清晰。本轮未跑全仓/组合门禁/阶段验收/live 模型，正式 feature.yaml/task_list*.json 只读。提交及单次 completed 报告以 Git/Nezha 回执为准。
+- [交接文档](docs/phases/p04/p04-5-f004-session-recorder.md) 说明端口注入、策略、停止事实和证据限制。仓库任务 v2 索引与 Harness selection 登记 19 文件，另外 16 份回归仅选择、交 Nezha 独立执行。生产装配归 F-008；恢复/查询后续任务范围保持清晰。本轮未跑全仓/组合门禁/阶段验收/live 模型，正式 feature.yaml/task_list*.json 只读。提交及单次 completed 报告以 Git/Nezha 回执为准。
 
 # P04-4 工作进度
 
@@ -78,20 +78,20 @@
 - TDD 修复冻结 launch 的回执消费/重放：输入、SQLite 持久读取和绑定共用严格校验；未知字段、无效 ID、与请求不同的 Session/invocation、损坏持久身份均拒绝。数据库重开重放幂等，同 key 换身份冲突，拒绝不产生额外业务写入。两份迁移测试补列 v31，保留历史、回滚、幂等与外键断言。已有原生锁构建成功，Host 实际执行验证加载通过。
 - Pi 装配保持 unknown usage 不累加的保守语义，明确断言成功 SDK 结果仍可能因 required 记录 partial 而失败；增加无 usage 的完整消息流成功对照。取消保留 `recording_failed:aborted`，未删除诊断或放宽产品规则。生产恢复记录实现无额外改动。
 - 本次定向五文件 13 个不同用例通过：test-6c36o__w.log（回执/绑定/迁移 4）、test-gc8drgel.log（Host 4）、test-5ad35qkk.log（Host race 1）、test-j0og2vp5.log（Pi 装配 4），均 exit 0；类型检查 test-gr8het49.log exit 0，架构边界 test-fb9l8nw0.log exit 0（315 文件/0 diagnostics）。RED test-oqoj2g23.log、test-zhd1u3hn.log 和中间诊断保留；中断且无完整退出码的运行不计成功。完整日志与真实退出码 sidecar 均在当前 Feature workspace verifications/F-005/runtime-logs/。
-- [交接文档](docs/p04-4-f005-recovery-recording.md) 已区分首次 18 项与本次 13 项证据。F-005 索引增加 claim/输入绑定两份受影响文件，共 20 文件，Harness selection 继续引用索引；较广 affected 回归由 Nezha 独立运行。本轮没有执行全仓测试、组合门禁、阶段验收或 live 模型，未修改正式 feature.yaml/task_list 或人工 hold。本次提交与单次 task report 结果以 Git/Nezha 为准。
+- [交接文档](docs/phases/p04/p04-4-f005-recovery-recording.md) 已区分首次 18 项与本次 13 项证据。F-005 索引增加 claim/输入绑定两份受影响文件，共 20 文件，Harness selection 继续引用索引；较广 affected 回归由 Nezha 独立运行。本轮没有执行全仓测试、组合门禁、阶段验收或 live 模型，未修改正式 feature.yaml/task_list 或人工 hold。本次提交与单次 task report 结果以 Git/Nezha 为准。
 
 ## F-005 — 恢复交接与新增记录边界（2026-10-21）
 
 - 续做 F-003/F-004 后的当前分支，保留前序提交。增加有界 RuntimeRecoveryRecording，并贯通 Pi Adapter、Runner 协议、Core 句柄、Recorder 与失败结算：来源 Attempt/Session、档案摘要、SDK/格式版本、实际模型/决策、Core 旧水位和独立原生条目水位可追溯，不复制历史正文。
 - 新调用序列从 1 开始；排除不匹配的历史最终快照，重复消息/事件只记一次。累计或范围不明 usage 不累加、不猜差值；无新 usage 或证据缺失保留 null/partial/unknown。Session 支持 started 后首次补齐异步原生绑定，拒绝身份替换/旧 fence/终态后补写；结算合并旧 gaps，保留取消、失败、模型拒绝和停止不确认事实，并脱敏已知凭据。
 - 本地六份定向范围共 18 个不同用例通过，未声称运行这六份文件的全部既有测试。最终日志依次为 test-v1fobwj0.log（Recorder 6）、test-vz9r_ev7.log（原生边界 6）、test-w6qpaoox.log（Runner 2）、test-cqzy2_6g.log（Core 句柄 1）、test-smkicx7o.log（Session 1）、test-g93r_kq2.log（结算 2），均 exit 0。末次类型检查 test-7jg4ts73.log exit 0；边界检查 test-4x5j53yw.log exit 0，315 文件/0 diagnostics。完整输出、真实退出码、RED 与中间诊断均保留在 Feature workspace verifications/F-005/runtime-logs/。
-- [恢复记录交接](docs/p04-4-f005-recovery-recording.md) 说明消费契约与验证限制。F-005 v2 索引及 Harness 引用 selection 登记 18 个受影响文件：六份本地文件的完整回归和另十二份仅选择文件交 Nezha 独立验证。未跑全量/组合门禁/阶段验收/live 模型，未修改正式 feature.yaml/task_list；本地提交与 task report 结果以 Git/Nezha 为准。
+- [恢复记录交接](docs/phases/p04/p04-4-f005-recovery-recording.md) 说明消费契约与验证限制。F-005 v2 索引及 Harness 引用 selection 登记 18 个受影响文件：六份本地文件的完整回归和另十二份仅选择文件交 Nezha 独立验证。未跑全量/组合门禁/阶段验收/live 模型，未修改正式 feature.yaml/task_list；本地提交与 task report 结果以 Git/Nezha 为准。
 
 ## F-002 — 标准 Pi 原生 Session 新建与安全加载（2026-10-21）
 
 - 从恢复基线 `3eb47c8` 及当前 `feat/p04/p04-session-recovery` 分支增量续做。核实锁定标准 SDK 1.0.4 的 `SessionManager.forkFrom` 和 JSONL v3，修正旧格式常量。新 Session 通过原子目录认领隔离；恢复只从不可变 Artifact 字节生成只读快照，再 fork 独立原生身份/文件，不重置已有代码。
 - 加载前拒绝跨项目/用途/Task、非直接上一 Attempt/Session、已完成 Task、SDK/格式不兼容、损坏 Artifact/JSONL、停止未确认、过期 owner/fence 或非独占 writer。异步读取与 SDK 启动前后重核资格；当前获准 provider/model 和推理配置显式覆盖来源。返回实际身份/格式/版本和恢复事实；只提供 adapter 权限释放，不直接写 Core SQLite、预算、资源锁或 Task 验收。
-- 生产默认恢复能力保持 unsupported，checkpoint 和复杂/未核实原生条目明确拒绝。可信装配可注入环境证据；离线 SDK fork 和受控装配不冒称真实模型续聊或跨供应商恢复已验证。后续 Core 来源选择、持久化与纵向接线见 [F-002 交接](docs/p04-4-f002-managed-pi-session.md)。
+- 生产默认恢复能力保持 unsupported，checkpoint 和复杂/未核实原生条目明确拒绝。可信装配可注入环境证据；离线 SDK fork 和受控装配不冒称真实模型续聊或跨供应商恢复已验证。后续 Core 来源选择、持久化与纵向接线见 [F-002 交接](docs/phases/p04/p04-4-f002-managed-pi-session.md)。
 - 本地 TDD：初始 RED `test-dqjk1j6y.log`；三文件 `test-l69q_y31.log` 53 passed。增加停止不确定用例后发现测试结果字段误写为 status，改为契约 terminal，仅重跑受影响 managed-session 文件：`test-ye8o65y0.log` 37 passed/0 failed/0 skipped；加上已通过的相邻两文件 17 项，共覆盖 54 项。类型检查 `test-uylhgsiq.log` exit 0；边界检查 `test-jpbdacb8.log` exit 0（313 源码/0 diagnostics）。全部完整日志、真实退出码及中间诊断保存在本 Feature workspace `verifications/F-002/runtime-logs/`。
 - 仓库 F-002 v2 索引与 Harness 引用 selection 登记 10 个文件；七个较广关联回归仅选择，交 Nezha 独立执行。本轮未跑全量/组合门禁/阶段验收/live 模型；正式 feature.yaml/task_list 只读。提交与任务报告结果以 Git/Nezha 为准。
 
@@ -101,7 +101,7 @@
 
 - 从 b15b50a、当前 feat/p04/p04-failure-routing 分支续做。可信 Core/Host assembly 贯通冻结备用计划和逐次授权；只在当前 fence 的失败结算持久化、记录完整且停止确认后创建备用 Attempt，沿用预算/deadline/占用转移事务。仅自动恢复 runtime_failed 暂停，拒绝用户暂停/关闭/取消等控制状态；统一启动预占 key，修复备用一次启动被重复计数。
 - 失败结果采用有限 drain，避免终端事件未落盘；全链失败停止并保留原因。查询增加按 Attempt 的有界 routing 分类、前序失败和策略摘要，保持旧 wire 兼容并排除 credential/endpoint。新增 19 项组合矩阵、6 项查询边界和 3 项 SDK 边界测试；已有 fallback 事务测试补充控制拒绝与恢复回滚。
-- 实测安装 Pi 1.0.4 的 Anthropic stream：内部 maxRetries=2 时 fetch=3；外层控制器包装后仍 fetch=3/requestCount=3/retryCount=2/runtimeStarts=1，Session 自动重试关闭。发现 Bedrock 不读取 maxRetries；未核实的 API 限为一次外层调用，避免内部与外层相乘。OpenAI 依据锁定源码确认配置边界，未声称真实网络测量。详见 [SDK 边界与交接](docs/p04-3-f007-failure-routing-integration.md)。
+- 实测安装 Pi 1.0.4 的 Anthropic stream：内部 maxRetries=2 时 fetch=3；外层控制器包装后仍 fetch=3/requestCount=3/retryCount=2/runtimeStarts=1，Session 自动重试关闭。发现 Bedrock 不读取 maxRetries；未核实的 API 限为一次外层调用，避免内部与外层相乘。OpenAI 依据锁定源码确认配置边界，未声称真实网络测量。详见 [SDK 边界与交接](docs/phases/p04/p04-3-f007-failure-routing-integration.md)。
 - 最终本地证据：组合矩阵 19 passed（test-mz2rliax.log）；查询 6 passed（test-wmlcekx3.log）；SDK/request/settlement 26 passed（test-2dz3l_4r.log）；停止、结算、fallback 及架构相关 117 passed（test-yxz7fle5.log）。最后加严控制守卫后只复测相关 5 项，26 skipped（test-6x__d3qa.log），未冒称重跑整矩阵。typecheck exit 0（test-fe0cekqw.log）。所有完整日志及真实退出码 sidecar 在本 Feature workspace verifications/F-007/runtime-logs/，中间失败保留。
 - F-007 v2 仓库索引与 Harness selection 已写入，19 个现有文件的路径、模式和唯一性已检查。表外关联回归交 Nezha 独立执行；未运行全仓/组合门禁/Feature 或 Phase 验收/live 模型。没有直接修改正式 task_list.json/feature.yaml；提交与单次 task report 的结果以 Git/Nezha 记录为准。
 
@@ -112,7 +112,7 @@
 - 恢复基线 19e01fa，沿用当前分支。仅新增测试/证据索引和夹具窄钩子；真实 startHost 启动恢复后认领当前实例 Attempt，同临时数据根验证查询、候选/证据提交、并发幂等、摘要冲突、越权/伪造/过期/撤销及恢复不匹配，拒绝请求保持完整业务快照不变；同根重启拒绝旧 token、旧授权签发和 owner 路由回退。
 - 真实 SDK 显式加载获准 skill、计算实际文件摘要生成 manifest，未选全局/项目 skill 零加载；必需能力未核实拒绝、可选能力记录降级、未知枚举拒绝。真实认证文件预检 ready/inference unknown，受控 provider 仍失败；检查 prompt、磁盘输入/Runtime 快照、Runner argv/stdin/environment、普通日志、事件、回执错误及报告不含合成秘密。
 - 本地四文件 29 passed/0 failed/0 skipped，exit 0，8269 ms，日志 `verifications/F-007/runtime-logs/test-ygriuwf6.log`；补强 Runtime 磁盘输入/实际 manifest 后仅复测该文件 2 passed，exit 0，1084 ms，`test-h0134pc2.log`。RED/中间诊断及真实退出码 sidecar 全保留。
-- typecheck `test-kvx1gnvl.log` exit 1，仅前序已记录 `p04-1-pi-f007-contract.test.ts:77` TS18046，本次文件无新类型错误，不修改其他任务。Task v2 索引共 9 文件，另五个仅选未跑回归交 Nezha。交接 [访问边界验证](docs/p04-2-f007-access-integration.md)，实际证据在 Feature workspace `verifications/F-007/evidence/`。live/全仓测试/Feature 与 Phase 验收为 not_run；正式任务元数据只读，提交和单次报告以 Git/Nezha 记录为准。
+- typecheck `test-kvx1gnvl.log` exit 1，仅前序已记录 `p04-1-pi-f007-contract.test.ts:77` TS18046，本次文件无新类型错误，不修改其他任务。Task v2 索引共 9 文件，另五个仅选未跑回归交 Nezha。交接 [访问边界验证](docs/phases/p04/p04-2-f007-access-integration.md)，实际证据在 Feature workspace `verifications/F-007/evidence/`。live/全仓测试/Feature 与 Phase 验收为 not_run；正式任务元数据只读，提交和单次报告以 Git/Nezha 记录为准。
 
 ## F-005 — attempt 2 验收返工（2026-10-20）
 
@@ -127,7 +127,7 @@
 - 候选沿用 verification-candidates 和真实受管 Artifact verifier；证据/候选提交事实存于现有原子 completed/rejected 回执，复用 commandId/requestDigest/resultRef/重放冲突；ReceiptOperation 扩展不增加 Host 操作。提交只记事实，verificationPassed=false，Task/审批/预算/批次/锁/工作区均不变。
 - 新增真实 SQLite/Artifact/文件系统聚焦 13 项测试。本地最终 test-7s_ai55o.log：exit 0，13 passed/0 failed/0 skipped（约 7 秒）。首轮缺模块 RED test-gp5qed6z.log 及中间夹具修正失败全部保留；修正依据真实 claim.receipt 和 SQLite 不可变身份约束，未放宽产品规则。
 - 全仓类型检查 test-abfv3532.log：exit 1，仅既有 test/modules/runtime/p04-1-pi-f007-contract.test.ts:77 TS18046；此前 F-001/F-004 已记录同一问题，本任务生产代码和测试无新类型错误。日志及真实退出码 sidecar 均在本 Feature workspace verifications/F-005/runtime-logs/。
-- 交接文档 docs/p04-2-work-tool-channel.md；索引 test/index/phases/P04/features/P04-2/tasks/F-005.json 和 Harness selection 引用已核对 8 个实际路径。本地只执行新增文件；其余 7 个相关回归未运行，交 Nezha 独立验证。未运行全仓/组合门禁/Phase 验收或真实模型；正式 feature.yaml/task_list 只读。Runtime 接线和纵向验证仍由后续任务处理。
+- 交接文档 docs/phases/p04/p04-2-work-tool-channel.md；索引 test/index/phases/P04/features/P04-2/tasks/F-005.json 和 Harness selection 引用已核对 8 个实际路径。本地只执行新增文件；其余 7 个相关回归未运行，交 Nezha 独立验证。未运行全仓/组合门禁/Phase 验收或真实模型；正式 feature.yaml/task_list 只读。Runtime 接线和纵向验证仍由后续任务处理。
 
 # P04-1 工作进度
 
@@ -137,7 +137,7 @@
 - Host inspect 分别记录进程请求接受、SDK 回执、事件流结束、原生终态、进程退出及资源核验；SDK idle/Runner exit 不足以 confirmed=true。注入既有 WorkResourceStopVerifier 时按完整执行和 OS 进程身份核对 token；证据缺失、拒绝或超时返回 false，Core 保留/quarantine 占用并阻止重跑。
 - 新增 31 项停止测试，包含真实受监督 Node Runner 的 SIGTERM/SDK abort/进程组核验，以及真实 Core SQLite/Git 的并发取消、一次结算、三个 lease 隔离与重跑拒绝。修复真实 Runner 暴露的 Core usage 外层白名单遗漏 completeness/accounting。
 - 最终本地聚焦：3 文件、49 passed/0 failed/0 skipped；test-7axqxts6.log。typecheck：test-escx3giw.log，exit 0；boundaries：test-kfqwk97q.log，291 文件/0 diagnostics。完整日志和退出码 sidecar 位于本 Feature workspace verifications/F-005/runtime-logs/；中间 RED 与夹具诊断保留。
-- 交接见 [F-005 停止证据](docs/p04-1-f005-pi-stopping.md)。仓库 F-005 测试索引及 Harness 引用选择已落盘；另五个 Core 受影响回归仅登记交 Nezha。未运行全量、组合门禁、阶段验收或真实模型；未改正式 feature.yaml/task_list，提交与报告以 Git/Nezha 为准。
+- 交接见 [F-005 停止证据](docs/phases/p04/p04-1-f005-pi-stopping.md)。仓库 F-005 测试索引及 Harness 引用选择已落盘；另五个 Core 受影响回归仅登记交 Nezha。未运行全量、组合门禁、阶段验收或真实模型；未改正式 feature.yaml/task_list，提交与报告以 Git/Nezha 为准。
 
 # P03-10 工作进度
 
@@ -149,14 +149,14 @@
 - 启动拒绝（`f010-required-input-missing-or-corrupt-rejected`、`f010-path-escape-and-permission-expansion-rejected`、`f010-required-input-budget-rejected`、`f010-required-budget-structured-failure`）：缺失/损坏/越界/权限扩大/超预算均以受控原因（input_missing/input_corrupt/cwd_root_unknown/workspace_untrusted/permission_expansion/limit_exceeded/missing_required_input）拒绝并保留证据，不静默截断 acceptance、不扩大读取权限。
 - 本地验证（Nezha wrapper 日志在 `verifications/F-010/runtime-logs/`）：`test-kvbewphj.log` exit 0（p03-2-context-build 全量 58 passed）；`test-kcdmlu8r.log` exit 0（p03-6-execution-input-binding 全量 38 passed）；`test-n4rcd7_t.log` typecheck exit 0。中间两轮失败日志（`test-719tr8ww.log` 依赖认领 DAG 门控、`test-dojx9jf3.log` promptDigest 域分离假设）保留未重跑读取。
 - 索引 `test/index/phases/P03/features/P03-10/tasks/F-010.json` 登记 4 文件（all:true）；Harness selection 只引用仓库索引。p03-2-execution-input/p03-2-execution-input-prepare 两份回归文件仅登记交 Nezha；未运行全仓、组合门禁或 Phase 验收。
-- 交接见 [F-010 输入装配回归](docs/p03-10-f010-input-assembly-regression.md)。未改生产代码或官方元数据；无未解决阻塞，收尾按合同仅提交一次 `nezha task report F-010`。
+- 交接见 [F-010 输入装配回归](docs/phases/p03/p03-10-f010-input-assembly-regression.md)。未改生产代码或官方元数据；无未解决阻塞，收尾按合同仅提交一次 `nezha task report F-010`。
 
 ## F-009 — FakeRuntime 异常、输出与恢复负例（2026-10-19）
 
 - 新增三个 Runtime 测试文件、23 项局部用例：结构化异常及信息型 rate limit、基础设施代码预算退款与累计父级限制、三路证据独立观察、required 证据缺失、大消息/UTF-8/背压/输出溢出、脱敏与恢复能力边界。监督超时用例经真实取消、停止确认和 retention 留存；失败后暂停，不进入自动重试。
 - 修复 Runtime 异常结算误扣代码预算，保留 Attempt/RuntimeStarts；Recorder 在持久化前脱敏结果/错误原因，并保持清单原因 token 合法。保留认证预算 RED、脱敏 schema RED、中间失败及阻塞运行清理日志。
 - 最终本地验证：`test-cenp9epa.log` exit 0（3 文件、23 passed、0 failed、0 skipped）；`test-ruzh4vt6.log` typecheck exit 0；`test-fb0xnsey.log` boundaries exit 0（286 生产文件、0 diagnostics）。日志及 sidecar 位于 Feature workspace `verifications/F-009/runtime-logs/`。
-- 交接见 [F-009 Runtime 负例组](docs/p03-10-f009-runtime-negatives.md)。仓库任务索引登记三个新增文件及八个本轮未运行的受影响回归，Harness selection 引用该索引，独立回归交 Nezha。未运行全量、组合门禁或 Phase 验收；没有声称当前不存在的自动指数退避定时器已验证。
+- 交接见 [F-009 Runtime 负例组](docs/phases/p03/p03-10-f009-runtime-negatives.md)。仓库任务索引登记三个新增文件及八个本轮未运行的受影响回归，Harness selection 引用该索引，独立回归交 Nezha。未运行全量、组合门禁或 Phase 验收；没有声称当前不存在的自动指数退避定时器已验证。
 - 保留 F-007/F-008 原有未提交内容，共享文件仅提交 F-009 增量。官方元数据保持只读，收尾按协议仅报告一次 F-009 completed。
 
 ## F-007 — 预算、竞争认领与执行范围负例（2026-10-19）
@@ -167,11 +167,11 @@
 - 最终本地验证：`test-8trgi67z.log` exit 0（纵向 1 passed）；`test-yzuigm86.log` exit 0（认领竞争 3 passed / 32 skipped，未声称整文件通过）；`test-jfq6snmu.log` typecheck exit 0。均在 Feature workspace `verifications/F-007/runtime-logs/`，完整 stdout/stderr、真实退出码及 sidecar 保留。早期 RED、中间调度契约断言失败和首次 GREEN 日志均保留；最终重跑基于新增持久副作用与认领身份断言。
 - 最终场景证据 `verifications/F-007/scenarios/persistent-check-failure-29071521-f093-497e-aac6-8686d1b77b08/` 含三个失败现场、summary、完整 evidence 和 cleanup；cleanup passed，树/组停止、资源删除，耗时 291ms。
 - 索引 `test/index/phases/P03/features/P03-10/tasks/F-007.json` 已登记 Feature 目录；Harness selection 只引用仓库索引。经 Nezha 路径/schema 规则和 Vitest 仅收集核对，11 文件、35 个展开后唯一 case。`selection-validation.json` 保存结果；其中本地已执行 4 项，其余 31 项交 Nezha 独立运行，未运行全仓、组合门禁或 Phase 验收。
-- 交接见 [F-007 执行负例组](docs/p03-10-f007-execution-negatives.md)。未修改生产代码、feature.yaml 或 task_list；无未解决阻塞，收尾按合同仅通过 Nezha CLI 提交一次 completed 报告。局部通过不代表完整 Feature 交付或阶段验收。
+- 交接见 [F-007 执行负例组](docs/phases/p03/p03-10-f007-execution-negatives.md)。未修改生产代码、feature.yaml 或 task_list；无未解决阻塞，收尾按合同仅通过 Nezha CLI 提交一次 completed 报告。局部通过不代表完整 Feature 交付或阶段验收。
 
 ## F-008 — 过期审批、人工阻塞竞争与 Task 策略快照负例（2026-10-19）
 
-F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快照负例组](docs/p03-10-f008-approval-blocking-snapshot-negatives.md) 与 `test/index/phases/P03/features/P03-10/tasks/F-008.json`。最终 Runtime 聚焦命令的完整 Nezha 日志为 `test-wfndf7k6.log`，exit 0：7 个文件、20 passed、0 failed、83 skipped；类型检查的完整日志为 `test-e4gua1fj.log`，exit 0。两次日志均在 Feature workspace `verifications/F-008/runtime-logs/`，保留完整输出、原始退出码和 sidecar。为使正式继续路径复用规范验证身份，测试种子改用 `verificationCodeIdentity`；F-016 正式装配夹具显式配置完整交付政策，默认夹具保持原形态。F-008 只完成 task-local 聚焦验证，广泛 affected 回归与 Feature/阶段结论交由 Nezha；收尾仍需按 DAG 只提交一次 `nezha task report F-008`。
+F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快照负例组](docs/phases/p03/p03-10-f008-approval-blocking-snapshot-negatives.md) 与 `test/index/phases/P03/features/P03-10/tasks/F-008.json`。最终 Runtime 聚焦命令的完整 Nezha 日志为 `test-wfndf7k6.log`，exit 0：7 个文件、20 passed、0 failed、83 skipped；类型检查的完整日志为 `test-e4gua1fj.log`，exit 0。两次日志均在 Feature workspace `verifications/F-008/runtime-logs/`，保留完整输出、原始退出码和 sidecar。为使正式继续路径复用规范验证身份，测试种子改用 `verificationCodeIdentity`；F-016 正式装配夹具显式配置完整交付政策，默认夹具保持原形态。F-008 只完成 task-local 聚焦验证，广泛 affected 回归与 Feature/阶段结论交由 Nezha；收尾仍需按 DAG 只提交一次 `nezha task report F-008`。
 
 ## F-005 — 授权 Host 与正式构建 CLI 完整执行报告（2026-10-19）
 
@@ -181,7 +181,7 @@ F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快
 - 最终新增 Host/CLI 八项真实临时资源测试通过：130 Attempt、130 审批、失败/取消/interrupted、人工等待、历史正文、逐字段 Core 比对、无越权/路径/凭据泄露、读取中状态变化不混合、缺历史、版本/归属/格式/大小拒绝与全库快照无写入。verifications/F-005/runtime-logs/test-lt64xmaw.log：exit 0，8 passed / 0 failed / 0 skipped；内含正式 npm run build 与构建入口烟测通过。
 - 原 Host 握手能力清单同步增加 features.report.get；只运行该受影响用例：test-31bza_dm.log exit 0，1 passed / 0 failed / 18 skipped，未宣称整个 Host routes 文件通过。
 - 最终静态检查：test-0zj45do9.log typecheck exit 0；test-hmcxnn6x.log boundaries exit 0（285 production files，0 diagnostics）；git diff --check 无错误。
-- 交接文档 docs/p03-10-f005-host-cli-report.md；任务索引 test/index/phases/P03/features/P03-10/tasks/F-005.json，Harness verifications/F-005/test-selection.json 引用该索引；已核对 15 个现有测试路径及 14 个唯一显式 case ID，并登记 Feature 索引。P01/P02 授权、分页、握手/协议拒绝、CLI 及既有报告查询回归按清单交 Nezha 独立运行；除上述聚焦范围外未在本轮执行，未跑全量、组合 verify 或 Phase 验收。
+- 交接文档 docs/phases/p03/p03-10-f005-host-cli-report.md；任务索引 test/index/phases/P03/features/P03-10/tasks/F-005.json，Harness verifications/F-005/test-selection.json 引用该索引；已核对 15 个现有测试路径及 14 个唯一显式 case ID，并登记 Feature 索引。P01/P02 授权、分页、握手/协议拒绝、CLI 及既有报告查询回归按清单交 Nezha 独立运行；除上述聚焦范围外未在本轮执行，未跑全量、组合 verify 或 Phase 验收。
 - 无未解决阻塞。仅处理 F-005；正式 feature.yaml/task_list 保持只读，任务收尾仅经 Nezha CLI 提交一次 completed 报告；独立验收结论由 Nezha 负责。
 
 ## F-004 — Core 完整 Feature 执行报告（2026-10-19）
@@ -190,7 +190,7 @@ F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快
 - ID keyset 分页在单一一致读事务内排空，附项目事件水位；正文按快照 hash/size 与执行归属校验。缺字段、缺/坏证据保留并标 partial；未知 token/cache/cost 为 null，Fake 标 synthetic；Session 累计时间与墙钟跨度分列。
 - 聚焦真实 SQLite 六项测试全部通过：三 Task、两 Run、130 Attempt/130 审批、重叠 Session、WAL 第二连接中途写入隔离、重复关联、缺历史字段/证据、正文损坏/缺文件/归属错误、授权与查询前后全库快照不变。`verifications/F-004/runtime-logs/test-xvpyhlc9.log` exit 0，6 passed / 0 failed / 0 skipped。
 - `test-157mv3ds.log` typecheck exit 0；`test-gw93ei8l.log` 边界检查 exit 0（284 文件，0 diagnostics）。早期 RED/失败日志均保留，后续重跑均基于相关实现或用例修正。
-- 交接：`docs/p03-10-f004-feature-report.md`；索引 `test/index/phases/P03/features/P03-10/tasks/F-004.json`；Harness selection 已引用索引。既有 Feature delivery / Work Session 查询回归只登记，交 Nezha 独立运行；未跑全量/组合门禁/Phase 验收。
+- 交接：`docs/phases/p03/p03-10-f004-feature-report.md`；索引 `test/index/phases/P03/features/P03-10/tasks/F-004.json`；Harness selection 已引用索引。既有 Feature delivery / Work Session 查询回归只登记，交 Nezha 独立运行；未跑全量/组合门禁/Phase 验收。
 - 无未解决阻塞。Host/CLI 报告暴露由 F-005 继续；未修改正式 feature.yaml/task_list 状态，收尾只经 Nezha CLI 报告。
 
 ## F-001 — 独立真实资源验收夹具
@@ -205,7 +205,7 @@ F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快
 - 最终聚焦日志 `test-1ezmbjj1.log`：exit 0，6 passed / 0 failed / 0 skipped，含真实 build 与 Core/Host/CLI 入口烟测。`test-vgwkdhqe.log`：typecheck exit 0。日志位于 Feature workspace `verifications/F-001/runtime-logs/`；所有旧失败证据保留。
 - 最终工具树在异常前仍活跃、异常后进程组消失；cleanup 341ms。两处本次早期失败遗留根经身份/无进程使用与安全边界核对后已清理，保留额外清理报告。
 - 测试索引：`test/index/phases/P03/features/P03-10/tasks/F-001.json`；Harness selection 只引用该索引。P03 Phase 仍为人工验收、not_accepted；广泛回归交由 Nezha。
-- 使用、P03-1～9 接口映射、实际版本、六项证据目录、清理语义与限制见 [F-001 交接](docs/p03-10-f001-fixture.md)。
+- 使用、P03-1～9 接口映射、实际版本、六项证据目录、清理语义与限制见 [F-001 交接](docs/phases/p03/p03-10-f001-fixture.md)。
 
 本地通过只表示资源夹具满足本任务验证范围。真实 Pi/LLM、完整 P03 故障矩阵、Verifier/最终交付场景、跨平台及全阶段验收均未在本轮运行；Fake completed 不折算 Task passed 或 Feature completed。
 
@@ -217,7 +217,7 @@ F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快
 - 新增 `scripts/acceptance/p03-config.ts`：冻结基线 + fail-closed 校验，拒绝无效配置、重复/未知/deferred 检查 ID、删减断言、改写 FR/T 映射、降级层次、业务版本表/凭据字段；配置沿用 npm 与 P01/P02 版本约束，含有限步骤/总时间与输出上限、显式 Fake 身份、临时资源与报告范围；live/Pi、强沙箱、后序能力 deferred（not_run/postponed），不计入已通过数。
 - 测试：`test/modules/acceptance/p03-10-checklist-config.test.ts` 9 个 `[case:...]`；索引 `test/index/phases/P03/features/P03-10/tasks/F-002.json`，Harness selection 仅引用该索引。
 - 验证：`test-yex50_3h.log` exit 0（9 passed / 0 failed / 0 skipped）；`test-64bt5d0y.log` typecheck exit 0。日志在 Feature workspace `verifications/F-002/runtime-logs/`。
-- 交接与映射表见 `docs/p03-10-f002-checklist.md`。
+- 交接与映射表见 `docs/phases/p03/p03-10-f002-checklist.md`。
 
 本地通过只覆盖本任务清单/配置校验范围。`accept:p03` 控制器与阶段报告聚合由后续任务交付；真实 Pi/live、强沙箱、真实用量/缓存收益未运行且不折算通过。
 
@@ -233,7 +233,7 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - TDD 与诊断日志均在 Feature workspace `verifications/F-003/runtime-logs/`：初始缺三 Task RED `test-xc4kk71y.log`；事务装配 RED `test-232ar8hv.log`；验证暂停 RED `test-dimzs0a5.log`；最终 `test-paeuc6he.log` exit 0，2 passed / 0 failed / 0 skipped；`test-wqdu81jm.log` typecheck exit 0。两项测试 GREEN 仅证明诊断与修复有效，不表示 F-003 验收成功。
 - 最终证据目录：`evidence/three-task-chain-38487165-20bb-4707-944c-43db748a63b1/`，含 three-task-chain.json、stage-*.json、evidence.json、cleanup.json。受测 HEAD 为 `9c81be306ba4a8de462f777fdc4972dad93a524d`，dirty=true 记录本次待提交代码；最终实现以 Git 提交为准。
 - 索引 `test/index/phases/P03/features/P03-10/tasks/F-003.json`，Harness selection 已落盘并引用它。新增两文件已本地执行；F-001 六项及旧 scheduler 五项为已选未运行回归，交 Nezha。未运行全仓/组合 verify/阶段验收。
-- 具体装配、阻塞接口、证据与后续门禁见 [F-003 交接](docs/p03-10-f003-three-task-chain.md)。
+- 具体装配、阻塞接口、证据与后续门禁见 [F-003 交接](docs/phases/p03/p03-10-f003-three-task-chain.md)。
 
 ## F-006 — 执行报告可审阅文本视图与人工操作提示
 
@@ -246,7 +246,7 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - `shiploop feature report`（非 --json）文本输出改用该视图；`--json` 信封与 Core 投影逐字段一致（不变）。
 - 测试：`test/modules/cli/p03-10-feature-report-text.test.ts` 4 个 `[case:...]`；索引 `test/index/phases/P03/features/P03-10/tasks/F-006.json`，Harness selection 仅引用该索引。
 - 验证：`test-2tpux2gn.log` RED（模块未实现）→ `test-fkk1ci_8.log` exit 0（4 passed）；受影响回归 `test-wfsmcilu.log` exit 0（14 passed：构建 CLI 文本契约 2、报告投影 6、Host 契约 6）；typecheck `test-4hbicdoh.log` exit 0；索引约束 `test-5ogqoqe3.log` exit 0；`check-boundaries-f006.log` PASS。日志在 Feature workspace `verifications/F-006/runtime-logs/`。
-- 交接见 [F-006 交接](docs/p03-10-f006-report-text.md)。
+- 交接见 [F-006 交接](docs/phases/p03/p03-10-f006-report-text.md)。
 
 本地通过只覆盖文本视图与直接影响的报告契约回归；较广回归与最终门禁由 Nezha 独立执行。真实 Pi/live、强沙箱与完整用量/缓存平台未运行且不折算通过。
 
@@ -271,5 +271,5 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - SQLite v32 新增 `session_messages` / `recording_manifests`：同项目外键与 Session/Attempt/run/invocation/version 核对、有界 JSON、序列/事件/消息去重、不可变更新、Artifact 摘要身份保护、追加版本与单调持久水位。v1–v31 checksum 保持不变。
 - 本地定向验证：`test-hjx4mj1v.log` exit 0（3 文件，123 passed）；旧 Session 受影响迁移断言 `test-5ubwhrmj.log` exit 0（5 passed，16 未选执行）；Artifact trigger 优化后 `test-v6756xnm.log` exit 0（SQLite 11 passed），最终 typecheck `test-n735a0kd.log` exit 0，依赖边界 `test-63az2rjt.log` exit 0。完整日志及真实退出码在本 Feature workspace `verifications/F-001/runtime-logs/`。
 - 索引为 `test/index/phases/P04/features/P04-5/tasks/F-001.json`，Harness selection 引用它，已用 Nezha resolver 核实七个选中文件均存在且符合项目配置。其余受影响回归交 Nezha；未运行全仓、阶段验收或真实模型。
-- 本任务仅交付持久模型；队列、Runtime 事件归一化及对外查询由后继任务接入。字段映射、完整度约束与证据见 [F-001 交接](docs/p04-5-f001-work-recording-model.md)。
+- 本任务仅交付持久模型；队列、Runtime 事件归一化及对外查询由后继任务接入。字段映射、完整度约束与证据见 [F-001 交接](docs/phases/p04/p04-5-f001-work-recording-model.md)。
 - attempt-2：已核实独立验收为 214 passed / 1 failed（审计 `6755fc9ab6764ba28e8f422beed8db48`，无人工阻塞）；唯一失败是 v20 DDL 回滚后升级断言残留版本 31。本轮改用 `LATEST_VERSION`，保留全部回滚检查；定向复核 `test-z7pygwaa.log` exit 0（1 passed，20 未选执行），invocation 为 `ed19afd825ff40b095f43e107506815c`。原七文件索引保留，交 Nezha 独立重验。

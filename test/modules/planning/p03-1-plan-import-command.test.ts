@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSqliteAtomicCommandStore } from '../../../packages/core/src/adapters/sqlite/atomic-commands.ts';
 import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
+import { createSqlitePlanAccess } from '../../../packages/core/src/adapters/sqlite/plan-store.ts';
 import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
 import type { CommandService } from '../../../packages/core/src/application/command-service.ts';
@@ -38,6 +39,42 @@ const NOW_ISO = new Date(NOW).toISOString();
 const sha256 = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex');
 const HASH_A = sha256('artifact-source-content');
 const HASH_B = sha256('artifact-requirements-content');
+
+describe('Task languages', () => {
+  it('normalizes languages, preserves legacy digests and binds nonempty languages to the plan', async () => {
+    await setup();
+    const raw = samplePlan({ src: 'art-src', req: 'art-req' });
+    const tasks = raw.tasks as Record<string, unknown>[];
+    const legacy = validateFeaturePlanInput(raw);
+    expect(legacy.tasks[0]?.languages).toEqual([]);
+    tasks[0]!.languages = [];
+    expect(validateFeaturePlanInput(raw).planDigest).toBe(legacy.planDigest);
+    tasks[0]!.languages = [' TypeScript ', 'python', 'typescript'];
+    const multilingual = validateFeaturePlanInput(raw);
+    expect(multilingual.tasks[0]?.languages).toEqual(['python', 'typescript']);
+    expect(multilingual.planDigest).not.toBe(legacy.planDigest);
+    tasks[0]!.languages = ['python', 'typescript'];
+    expect(validateFeaturePlanInput(raw).planDigest).toBe(multilingual.planDigest);
+    for (const invalid of [null, 'typescript', [''], [1], ['a\nb'], ['x'.repeat(65)], Array(17).fill('sql')]) {
+      tasks[0]!.languages = invalid;
+      expect(() => validateFeaturePlanInput(raw)).toThrow();
+    }
+    tasks[0]!.languages = ['C++', 'C#'];
+    expect(validateFeaturePlanInput(raw).tasks[0]?.languages).toEqual(['c#', 'c++']);
+  });
+
+  it('persists and reads languages through the official import transaction', async () => {
+    const env = await setup();
+    const envelope = env.importEnvelope();
+    const tasks = (envelope.payload.plan as Record<string, unknown>).tasks as Record<string, unknown>[];
+    tasks[0]!.languages = ['typescript', 'sql'];
+    const result = completedResult(await env.service.submit(env.owner, envelope));
+    expect(env.probe.selectOne<{ languages: string }>('SELECT languages FROM tasks WHERE id = ?', [tasks[0]!.id])?.languages)
+      .toBe('["sql","typescript"]');
+    expect(createSqlitePlanAccess(env.harness.session).readTaskRecord(result.tasks[0]!.id))
+      .toMatchObject({ languages: ['sql', 'typescript'] });
+  });
+});
 
 let fixture: CommandsTestFixture | undefined;
 afterEach(async () => {

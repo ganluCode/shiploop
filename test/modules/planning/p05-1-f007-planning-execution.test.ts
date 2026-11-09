@@ -50,6 +50,34 @@ afterEach(async () => {
 });
 
 describe('P05-1 / F-007 生产组合根 planning 执行', () => {
+  it('starts first planning without a seeded worktree and preserves the source checkout', async () => {
+    const f = await openF007Fixture({ prefix: 'planning-first-checkout-', steps: standardSteps,
+      managedPrd: '# First planning requirements', skipSeedWorkspace: true,
+      executionLimits: { workTimeoutMs: 7200000, toolTimeoutMs: 600000 } });
+    fixtures.push(f);
+    const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.box.repoDirA, encoding: 'utf8' });
+    const sourceStatus = execFileSync('git', ['status', '--porcelain'], { cwd: f.box.repoDirA, encoding: 'utf8' });
+    expect(f.query('SELECT COUNT(*) AS n FROM managed_workspaces').n).toBe(0);
+    await f.core.workExecution.scan();
+    await f.waitForExecutingState();
+    expect(f.runtimeStarts()).toBe(1);
+    const snapshot = JSON.parse(String(f.query('SELECT input_snapshot FROM attempts WHERE task_id=?', f.planningTaskId).input_snapshot));
+    expect(snapshot.strategyCopy ?? snapshot.executionConfig ?? snapshot).toBeTruthy();
+    const input = f.query('SELECT execution_config FROM tasks WHERE id=?', f.planningTaskId);
+    expect(JSON.parse(String(input.execution_config))).toMatchObject({ workTimeoutMs: 7200000, toolTimeoutMs: 600000 });
+    const receipt = await f.submitCandidate(f.candidateBody()) as CommandReceipt;
+    expect(receipt.status).toBe('completed');
+    f.gate.release();
+    await expect.poll(() => f.query('SELECT status FROM runs WHERE id=?', f.planningRunId).status,
+      { timeout: 15_000 }).toBe('succeeded');
+    expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.box.repoDirA, encoding: 'utf8' })).toBe(sourceHead);
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: f.box.repoDirA, encoding: 'utf8' })).toBe(sourceStatus);
+    await expect.poll(() => f.query('SELECT status FROM managed_workspaces WHERE feature_id=?', f.featureId).status,
+      { timeout: 15_000 }).toBe('retained');
+    await f.core.workExecution.scan();
+    expect(f.runtimeStarts()).toBe(1);
+  }, 120_000);
+
   it('[case:planning-execution-success] 复用标准 Work 链路执行规划：候选发布后成功收尾并释放占用', async () => {
     const f = await openF007Fixture({ prefix: 'shiploop-p051-f007-ok-', steps: standardSteps });
     fixtures.push(f);

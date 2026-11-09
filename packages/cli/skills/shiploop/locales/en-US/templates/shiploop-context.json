@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "shared": [
+    { "path": "docs/README.md", "role": "index", "required": true },
+    { "path": "docs/product/overview.md", "role": "product", "required": true },
+    { "path": "docs/architecture/overview.md", "role": "architecture", "required": true }
+  ],
+  "features": {}
+}

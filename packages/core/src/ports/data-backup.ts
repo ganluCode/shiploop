@@ -2,7 +2,7 @@
  * P07-3 / F-014：备份创建、核验与隔离恢复的默认接线契约（application 端口）。
  *
  * 设计依据：input/p07-reliability FR-1、core-design/08 §1/§2/§4/§5.1/§6 与
- * docs/p07-3-f008-project-lifecycle.md 的命令边界（数据备份恢复 =
+ * docs/phases/p07/p07-3-f008-project-lifecycle.md 的命令边界（数据备份恢复 =
  * `data.backup.restore`，与项目恢复互不通用）。
  *
  * 不变量：

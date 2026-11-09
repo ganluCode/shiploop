@@ -23,6 +23,7 @@ import { validatePhaseMutationInput } from '../../ports/phase-lifecycle.js';
 import { validateFeaturePhaseMoveInput } from '../../ports/feature-phase.js';
 import { entityLabelCondition } from './entity-label-condition.js';
 import { randomUUID } from 'node:crypto';
+import { createFeatureBranchName } from '../../ports/git-naming.js';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
@@ -55,6 +56,7 @@ import type {
 } from '../../ports/plan-store.js';
 import { validateFeatureDagUpdateInput, edgeKey, featureDagUpdateGraphError } from '../../ports/feature-dag-update.js';
 import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.js';
+import { normalizeTaskLanguages } from '../../ports/task-languages.js';
 import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
 import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
 import { validateFeatureDag, evaluateFeatureDag } from '../../ports/feature-dag.js';
@@ -109,6 +111,7 @@ interface PhaseSqlRow {
 }
 
 interface FeatureSqlRow {
+  readonly branch_name: string | null;
   readonly id: string;
   readonly created_at: number;
   readonly project_id: string;
@@ -126,6 +129,7 @@ interface FeatureSqlRow {
 }
 
 interface TaskSqlRow {
+  readonly languages: string;
   readonly id: string;
   readonly created_at: number;
   readonly project_id: string;
@@ -196,10 +200,10 @@ const SELECT_PHASE =
   'SELECT id, created_at, project_id, revision, updated_at, title, status, description, labels FROM phases';
 const SELECT_FEATURE =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, title, status, plan_status, ' +
-  'description, labels, source_refs, plan_digest, delivery_status FROM features';
+  'description, labels, source_refs, plan_digest, delivery_status, branch_name FROM features';
 const SELECT_TASK =
   'SELECT id, created_at, project_id, revision, updated_at, feature_id, title, status, complexity, ' +
-  'description, labels, acceptance, requirements_refs, execution_config, config_source, config_source_key FROM tasks';
+  'description, labels, languages, acceptance, requirements_refs, execution_config, config_source, config_source_key FROM tasks';
 const SELECT_TASK_DEPENDENCY =
   'SELECT id, created_at, project_id, feature_id, task_id, depends_on_id FROM task_dependencies';
 const SELECT_APPROVAL =
@@ -501,6 +505,19 @@ export function createSqlitePlanAccess(
     return parsed as string[];
   }
 
+  function parseTaskLanguages(text: string, operation: string): string[] {
+    const parsed = parseJsonColumn(text, operation, 'invalid_languages_json');
+    try {
+      const normalized = normalizeTaskLanguages(parsed, { operation });
+      if (JSON.stringify(normalized) === JSON.stringify(parsed)) return normalized;
+    } catch (error) {
+      if (!(error instanceof StorageError) || error.kind !== 'validation') throw error;
+    }
+    throw new StorageError('corrupt', operation, 'tasks.languages 列不是规范化的语言数组', {
+      details: { reason: 'invalid_languages_json' },
+    });
+  }
+
   function parseArtifactRefs(text: string, operation: string, reason: string): PlanArtifactRef[] {
     const parsed = parseJsonColumn(text, operation, reason);
     if (!Array.isArray(parsed)) {
@@ -614,6 +631,7 @@ export function createSqlitePlanAccess(
       labels: parseLabels(row.labels, operation),
       status: row.status as (typeof featureStatuses)[number],
       deliveryStatus: row.delivery_status as FeatureRecord['deliveryStatus'],
+      branchName: row.branch_name,
       planStatus: row.plan_status as (typeof planStatuses)[number],
       planDigest: row.plan_digest,
       sourceRefs: parseArtifactRefs(row.source_refs, operation, 'invalid_source_refs_json'),
@@ -677,6 +695,7 @@ export function createSqlitePlanAccess(
       labels: parseLabels(row.labels, operation),
       status: row.status as (typeof taskStatuses)[number],
       complexity: row.complexity as PlanComplexity | null,
+      languages: parseTaskLanguages(row.languages, operation),
       acceptance: acceptance as { criteria: string[] },
       requirementsRefs: parseArtifactRefs(row.requirements_refs, operation, 'invalid_requirements_refs_json'),
       executionConfig: executionConfig as Record<string, unknown>,
@@ -1045,6 +1064,12 @@ export function createSqlitePlanAccess(
         JSON.stringify(valid.sourceRefs),
         valid.planDigest,
       );
+      const alias = db.prepare<[string, string], { code: string }>(
+        "SELECT code FROM entity_display_codes WHERE project_id = ? AND entity_kind = 'feature' AND entity_id = ?",
+      ).get(valid.projectId, id);
+      if (!alias) throw new StorageError('corrupt', operation, 'feature_display_code_required');
+      db.prepare('UPDATE features SET branch_name = ? WHERE project_id = ? AND id = ?')
+        .run(createFeatureBranchName(alias.code, valid.title), valid.projectId, id);
       row = db.prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`).get(id);
     } catch (error) {
       throw mapConstraintError(error, operation, entity, 'feature');
@@ -1082,8 +1107,8 @@ export function createSqlitePlanAccess(
     try {
       db.prepare(
         'INSERT INTO tasks (id, created_at, project_id, revision, updated_at, feature_id, title, status, ' +
-          'complexity, description, labels, acceptance, requirements_refs, execution_config, config_source, config_source_key) ' +
-          "VALUES (?, ?, ?, 1, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+          'complexity, description, labels, languages, acceptance, requirements_refs, execution_config, config_source, config_source_key) ' +
+          "VALUES (?, ?, ?, 1, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ).run(
         valid.id,
         timestamp,
@@ -1094,6 +1119,7 @@ export function createSqlitePlanAccess(
         valid.complexity,
         valid.description,
         JSON.stringify(valid.labels),
+        JSON.stringify(valid.languages),
         JSON.stringify(valid.acceptance),
         JSON.stringify(valid.requirementsRefs),
         JSON.stringify(valid.executionConfig),
@@ -1886,13 +1912,14 @@ export function createSqlitePlanAccess(
       guarded('task', () => {
         const updatedTask = db
           .prepare(
-            'UPDATE tasks SET title = ?, description = ?, labels = ?, complexity = ?, acceptance = ?, ' +
+            'UPDATE tasks SET title = ?, description = ?, labels = ?, languages = ?, complexity = ?, acceptance = ?, ' +
               'requirements_refs = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND feature_id = ?',
           )
           .run(
             task.title,
             task.description,
             JSON.stringify(task.labels),
+            JSON.stringify(task.languages),
             task.complexity,
             JSON.stringify(task.acceptance),
             JSON.stringify(task.requirementsRefs),
@@ -1918,8 +1945,8 @@ export function createSqlitePlanAccess(
       guarded('task', () => {
         db.prepare(
           'INSERT INTO tasks (id, created_at, project_id, revision, updated_at, feature_id, title, status, ' +
-            'complexity, description, labels, acceptance, requirements_refs, execution_config, config_source, config_source_key) ' +
-            "VALUES (?, ?, ?, 1, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+            'complexity, description, labels, languages, acceptance, requirements_refs, execution_config, config_source, config_source_key) ' +
+            "VALUES (?, ?, ?, 1, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ).run(
           task.id,
           timestamp,
@@ -1930,6 +1957,7 @@ export function createSqlitePlanAccess(
           task.complexity,
           task.description,
           JSON.stringify(task.labels),
+          JSON.stringify(task.languages),
           JSON.stringify(task.acceptance),
           JSON.stringify(task.requirementsRefs),
           JSON.stringify(task.executionConfig),

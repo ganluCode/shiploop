@@ -1,3 +1,5 @@
+import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
+const CONTEXT_FIXED_GUIDANCE = testPromptTemplates.forLocale('en-US').render('task/guidance.md');
 /**
  * P03-2 / F-006 执行输入准备（execution.input.prepare）纵向切片
  * （真实临时 SQLite + 真实临时文件数据根 + 真实命令通道/独立只读探针，
@@ -72,7 +74,7 @@ import {
   TRUSTED_PROJECT_PERMISSIONS_READER,
 } from '../../../packages/core/src/ports/execution-input-prepare.ts';
 import type { PreparedExecutionInputGroup } from '../../../packages/core/src/ports/execution-input-prepare.ts';
-import { CONTEXT_FIXED_GUIDANCE } from '../../../packages/core/src/ports/context-build.ts';
+
 import {
   createCommandsTestFixture,
   type CommandsTestFixture,
@@ -120,6 +122,7 @@ function samplePlan(
       {
         id: 't-2',
         title: '任务二',
+        languages: ['typescript', 'sql'],
         complexity: 'medium',
         acceptance: {
           criteria: ['任务二验收甲', '任务二验收乙', ...(variant === '' ? [] : [variant])],
@@ -226,7 +229,7 @@ async function setup(options: HarnessOptions = {}): Promise<PreparedHarness> {
           },
           nowMs: nowUtcMs,
         }),
-        builder: createContextBuilder({
+        builder: createContextBuilder({ promptTemplates: testPromptTemplates,
           budget: options.contextBudget ?? DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
         }),
         publisher,
@@ -516,6 +519,7 @@ describe('F-006 正常制品组（视图捕获 → 组装发布 → 最终重核
     });
     const task = snapshot.task as Record<string, unknown>;
     expect(task.title).toBe('任务二');
+    expect(task.languages).toEqual(['sql', 'typescript']);
     expect((task.acceptance as { criteria: string[] }).criteria).toEqual(['任务二验收甲', '任务二验收乙']);
     // 策略副本按任务行的实际副本原样进入快照（不读默认路由，不重算）。
     const taskRow = s.probe.selectOne<{ execution_config: string; config_source: string }>(

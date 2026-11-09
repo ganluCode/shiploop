@@ -1,0 +1,1 @@
+Submit a one-shot candidate as JSON text complying with planning-candidate v1. Each planning operation accepts one valid candidate; identical command/content replay reuses the result. No file paths or artifact IDs. Each Task requires complexity, English labels and actual languages; verification is limited to related unit tests.

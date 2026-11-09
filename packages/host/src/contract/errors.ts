@@ -1,7 +1,7 @@
 /**
  * F-002 Host 生命周期协议结构化错误（契约纯模块，无 I/O、无网络、无进程）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §7.3（结构化脱敏错误）、
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §7.3（结构化脱敏错误）、
  * §14（错误码与 HTTP 映射总表）。
  *
  * 约定：
@@ -29,7 +29,7 @@ export const HOST_LIFECYCLE_OPERATIONS = [
  * 的客户端侧错误也使用这些身份；P02-3 / F-006 新增静态接入两项）。
  */
 export const APP_OPERATIONS = [
-  'knowledge.search', 'knowledge.read', 'memory.search',
+  'knowledge.search', 'knowledge.read', 'memory.search', 'documents.locations', 'documents.write',
   'work.tools.invoke',
   'commands.submit',
   'receipts.get',

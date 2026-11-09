@@ -95,6 +95,6 @@
     "title": "P05 阶段验收契约与执行报告",
     "scope": "FR-1/FR-2/FR-3/FR-4 及 P05-1～P05-9 的离线、live、人工和显式全仓回归开关",
     "version": "1.0",
-    "contractDoc": "docs/p05-acceptance.md"
+    "contractDoc": "docs/phases/p05/p05-acceptance.md"
   }
 }

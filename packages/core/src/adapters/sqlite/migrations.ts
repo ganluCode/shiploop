@@ -15,7 +15,11 @@
  *   本模块只声明内容与身份，不在 import 时打开数据库或产生任何副作用。
  */
 import { createHash } from 'node:crypto';
+import { ENTITY_DISPLAY_CODES_MIGRATION_SQL } from './entity-display-codes-migration.js';
+import { GIT_NAMING_MIGRATION_SQL } from './git-naming-migration.js';
+import { MANAGED_DOCUMENTS_MIGRATION_SQL } from './managed-documents-migration.js';
 import { FEATURE_CLOSEOUT_MIGRATION_SQL } from './feature-closeout-migration.js';
+import { PRODUCTION_OPERATIONS_MIGRATION_SQL } from './production-operations-migration.js';
 import { PROJECT_DELETE_MIGRATION_SQL } from './project-delete-migration.js';
 import { PROJECT_DELETE_CHECKPOINT_MIGRATION_SQL } from './project-delete-checkpoint-migration.js';
 import { WORK_RECORDING_V32_JSON_GUARDS_SQL } from './work-recording-constraints.js';
@@ -188,7 +192,7 @@ CREATE UNIQUE INDEX state_events_sequence_unique ON state_events (sequence);
 /**
  * 第三个迁移（P02-2 / F-006）：新增 command_receipts 幂等命令回执表。
  *
- * 契约依据：docs/p02-2-commands-events-contract.md §10（表设计冻结）与 §15.1
+ * 契约依据：docs/phases/p02/p02-2-commands-events-contract.md §10（表设计冻结）与 §15.1
  * （project_id 可空 + scope CHECK 的显式偏离登记，与 v2 state_events 同一先例）。
  * 列与约束同 ./schema.ts 的 commandReceipts，一致性由
  * test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
@@ -234,7 +238,7 @@ CREATE INDEX command_receipts_principal_project_index ON command_receipts (princ
 /**
  * 第四个迁移（P02-3 / F-007）：基线作用域四表。
  *
- * 契约依据：docs/p02-3-onboarding-contract.md §10（表设计冻结）与 §15.8
+ * 契约依据：docs/phases/p02/p02-3-onboarding-contract.md §10（表设计冻结）与 §15.8
  * （基线作用域表名与设计 11 通用验证表的关系，不提前建通用验证表）。
  *
  * 相对契约 §10 冻结 DDL 的 F-007 补充（已写回契约 §10 注记，均为加强约束、
@@ -352,7 +356,7 @@ CREATE TABLE baseline_occupancy (
 /**
  * 第五个迁移（P02-3 / F-008）：command_receipts 表重建，持久化 accepted 回执。
  *
- * 契约依据：docs/p02-3-onboarding-contract.md §5.3（accepted 回执与操作行同一
+ * 契约依据：docs/phases/p02/p02-3-onboarding-contract.md §5.3（accepted 回执与操作行同一
  * 提交事务持久化，§15.6 首次启用）与 §10 的 F-008 写回注记（v4 冻结时不含
  * 本列；F-007 登记的张力由本迁移落定）。
  *
@@ -414,7 +418,7 @@ CREATE INDEX command_receipts_principal_project_index ON command_receipts (princ
 /**
  * 第六个迁移（P03-1 / F-002）：计划结构四表 phases/features/tasks/task_dependencies。
  *
- * 契约依据：docs/p03-1-plan-import-contract.md（§2 计划 payload 契约、§9.1 多引用形态
+ * 契约依据：docs/phases/p03/p03-1-plan-import-contract.md（§2 计划 payload 契约、§9.1 多引用形态
  * 由本迁移定案：requirements 以多值 JSON 数组 requirements_refs 存储，与 F-001 纯校验
  * 的多引用形态一致）与 core-design/11 §4（字段与约束）、02 §10（标题/描述/标签规则）。
  *
@@ -550,7 +554,7 @@ CREATE INDEX task_dependencies_feature_depends_on_index ON task_dependencies (fe
 /**
  * 第七个迁移（P03-2 / F-002）：计划批准/拒绝决策记录表 approvals。
  *
- * 契约依据：docs/p03-2-plan-approval-contract.md（本 Feature 契约文档）与
+ * 契约依据：docs/phases/p03/p03-2-plan-approval-contract.md（本 Feature 契约文档）与
  * core-design/11 §7（approvals：subject_type/subject_id/subject_digest/status/
  * decision_actor/reason/decided_at；主体摘要变更使旧批准失效——按摘要绑定区分
  * 当前/历史决定，不改写旧行）；v6 冻结时登记的「approvals（审批域）」张力
@@ -612,7 +616,7 @@ CREATE INDEX approvals_project_subject_index ON approvals (project_id, subject_i
 /**
  * 第八个迁移（P03-2 / F-003）：approvals 决策记录绑定适用检查政策身份。
  *
- * 契约依据：docs/p03-2-plan-approval-verification-contract.md（本 Feature 契约
+ * 契约依据：docs/phases/p03/p03-2-plan-approval-verification-contract.md（本 Feature 契约
  * 文档）与 p03-plan-approval PRD 验收标准 2（需求或检查政策改动后不能用旧
  * 批准执行）；core-design/11 §7（approvals 只批准具体版本，主体摘要变更使旧
  * 批准失效）。v7 冻结时「检查政策身份未入摘要」由本迁移以**显式绑定核验值**
@@ -645,7 +649,7 @@ CREATE UNIQUE INDEX approvals_subject_decision_unique ON approvals (project_id, 
  * 契约依据：core-design/11 §5（表字段与约束）、§10（条件唯一/不可变内容校验须有
  * 失败用例/常用索引/ON DELETE RESTRICT）与 02 §3/§8（Run/Batch 状态机：活动集 =
  * queued/running/pausing/paused/cancelling/interrupted，终态 = succeeded/failed/
- * cancelled）；docs/p03-3-execution-schema-contract.md（本 Feature 契约文档，含
+ * cancelled）；docs/phases/p03/p03-3-execution-schema-contract.md（本 Feature 契约文档，含
  * 相对设计 11 的登记偏离）。
  *
  * 边界（仅建立本项必需持久数据）：不建完整 attempts/workspace_leases/sessions/
@@ -2077,7 +2081,7 @@ PRAGMA legacy_alter_table = OFF;
 /**
  * 第二十六个迁移（P03-8 / F-002）：受控 Git 提交意图与操作回执。
  *
- * 契约依据：docs/p03-8-f002-git-operation-contract.md 与设计 07 §4（提交作为
+ * 契约依据：docs/phases/p03/p03-8-f002-git-operation-contract.md 与设计 07 §4（提交作为
  * operation：保存预期 HEAD、代码摘要、消息和策略→执行 git→核对新 HEAD/tree→
  * 回执落库）、设计 11 §9（operations 的恢复意图/回执语义）。本迁移只建立
  * 提交意图与回执的持久化边界，不执行 Git；F-003 在事务外执行受控提交，
@@ -4414,6 +4418,20 @@ CREATE INDEX notification_deliveries_project_status_index ON notification_delive
 PRAGMA legacy_alter_table = OFF;
 `;
 
+const TASK_LANGUAGES_MIGRATION_SQL = `
+ALTER TABLE tasks ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'
+  CONSTRAINT tasks_languages_json_array_check CHECK (json_valid(languages) AND json_type(languages) = 'array' AND json_array_length(languages) <= 16);
+`;
+
+const WORKFLOW_LOCALE_MIGRATION_SQL = `
+ALTER TABLE feature_repair_attempts ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN' CHECK(locale IN ('en-US', 'zh-CN'));
+CREATE TRIGGER feature_repair_locale_immutable BEFORE UPDATE ON feature_repair_attempts
+WHEN NEW.locale IS NOT OLD.locale
+BEGIN SELECT RAISE(ABORT, 'feature repair locale immutable'); END;
+UPDATE global_settings SET payload = json_set(payload, '$.locale', 'en-US'), revision = revision + 1
+WHERE json_type(payload, '$.locale') IS NULL;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4543,4 +4561,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 62, sql: MIGRATION_062_SQL, checksum: sha256Hex(MIGRATION_062_SQL) },
   { version: 63, sql: MIGRATION_063_SQL, checksum: sha256Hex(MIGRATION_063_SQL), foreignKeysOff: true },
   { version: 64, sql: FEATURE_CLOSEOUT_MIGRATION_SQL, checksum: sha256Hex(FEATURE_CLOSEOUT_MIGRATION_SQL) },
+  { version: 65, sql: PRODUCTION_OPERATIONS_MIGRATION_SQL, checksum: sha256Hex(PRODUCTION_OPERATIONS_MIGRATION_SQL) },
+  { version: 66, sql: TASK_LANGUAGES_MIGRATION_SQL, checksum: sha256Hex(TASK_LANGUAGES_MIGRATION_SQL) },
+  { version: 67, sql: WORKFLOW_LOCALE_MIGRATION_SQL, checksum: sha256Hex(WORKFLOW_LOCALE_MIGRATION_SQL) },
+  { version: 68, sql: MANAGED_DOCUMENTS_MIGRATION_SQL, checksum: sha256Hex(MANAGED_DOCUMENTS_MIGRATION_SQL) },
+  { version: 69, sql: ENTITY_DISPLAY_CODES_MIGRATION_SQL, checksum: sha256Hex(ENTITY_DISPLAY_CODES_MIGRATION_SQL) },
+  { version: 70, sql: GIT_NAMING_MIGRATION_SQL, checksum: sha256Hex(GIT_NAMING_MIGRATION_SQL) },
 ];

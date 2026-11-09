@@ -24,7 +24,7 @@
  * - 公共入口（packages/core/src/index.ts）导出选择能力。
  *
  * 本文件为纯函数测试：无 I/O、无数据库、无模型调用。Task 策略编辑、重新应用默认、
- * 凭据解析与 Attempt 快照不在本任务范围（见 docs/p03-1-task-strategy-selection.md）。
+ * 凭据解析与 Attempt 快照不在本任务范围（见 docs/phases/p03/p03-1-task-strategy-selection.md）。
  */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

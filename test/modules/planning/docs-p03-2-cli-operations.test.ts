@@ -1,5 +1,5 @@
 /**
- * P03-2 / F-008 文档核验：`docs/p03-2-cli-approval-input-operations.md` 的 CLI
+ * P03-2 / F-008 文档核验：`docs/phases/p03/p03-2-cli-approval-input-operations.md` 的 CLI
  * 操作说明必须与实现事实一致（命令面、参数、结构化输出、失败退出、恢复语义），
  * 且示例只使用脱敏逻辑身份（不含真实路径/秘密），避免文档另立一套。
  */
@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { APP_CLI_COMMAND_IDS, getAppCliHelp } from '../../../packages/cli/src/index.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const DOC_PATH = 'docs/p03-2-cli-approval-input-operations.md';
+const DOC_PATH = 'docs/phases/p03/p03-2-cli-approval-input-operations.md';
 
 function readDoc(): string {
   const path = resolve(REPO_ROOT, DOC_PATH);

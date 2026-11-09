@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const matrix = new URL('../../../docs/p04-4-f007-pi-support-matrix.md', import.meta.url);
-const handoff = new URL('../../../docs/p04-4-f007-recovery-handoff.md', import.meta.url);
+const matrix = new URL('../../../docs/phases/p04/p04-4-f007-pi-support-matrix.md', import.meta.url);
+const handoff = new URL('../../../docs/phases/p04/p04-4-f007-recovery-handoff.md', import.meta.url);
 
 describe('F-007 recovery handoff materials', () => {
   it('[case:support-matrix-statuses] records the supported state vocabulary and standard Pi production boundary', () => {

@@ -271,7 +271,8 @@ function validateRecorder(value: unknown, operation: string): BackupRecorderWate
   const item = object(value, operation, 'recorder[]', { type: 'backup' });
   exact(item, ['sessionId', 'watermark', 'coverage', 'gaps'], operation, 'recorder[]', { type: 'backup' });
   const gaps = item.gaps;
-  if (!Array.isArray(gaps) || gaps.some(gap => typeof gap !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(gap))) {
+  // Match the backup writer's bounded namespaced reasons (e.g. recording_failed:aborted).
+  if (!Array.isArray(gaps) || gaps.some(gap => typeof gap !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(gap))) {
     throw validationError(context(operation, { type: 'backup' }), 'recorder[].gaps', '必须是有界原因字符串数组');
   }
   const coverage = enumValue(item.coverage, RECORDER_COVERAGES, operation, 'recorder[].coverage', { type: 'backup' });

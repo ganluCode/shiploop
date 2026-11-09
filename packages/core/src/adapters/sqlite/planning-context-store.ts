@@ -1,3 +1,4 @@
+import { resolveWorkflowLocale } from '../../ports/locale.js';
 /**
  * P05-1 / F-002 规划上下文窄存储原语（adapters/sqlite 层）。
  *
@@ -55,6 +56,9 @@ import type {
 import { validatePlanArtifactRefs } from '../../ports/feature-plan.js';
 import { PLANNING_CONTEXT_REQUIREMENT_REFS_MAX_COUNT } from '../../ports/planning-context.js';
 import { validateStableId } from '../../ports/validation.js';
+import type { PlanningRetireInput, PlanningRetireResult } from '../../ports/planning-retire.js';
+import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
+import { inspectPlanningPreReleaseProof } from './planning-retirement-evidence.js';
 
 /** 发布结果：published=首次绑定；reused=同身份重放复用原记录（零新增）。 */
 export interface PlanningCandidatePublication {
@@ -94,6 +98,7 @@ const SELECT_PLANNING_CONTEXT =
   'decided_at, applied_revision, applied_at FROM planning_contexts';
 
 export interface SqlitePlanningContextStore {
+  retireFailedPlanningInTransaction(input: PlanningRetireInput, evidence?: object): PlanningRetireResult;
   /** 创建规划上下文与 planning Task（同一写事务内；见模块契约）。 */
   createPlanningContextInTransaction(input: unknown): PlanningContextRecord;
   /** 按候选身份读取（一致读；不存在返回 null）。 */
@@ -402,7 +407,9 @@ export function createSqlitePlanningContextStore(
     const validFeatureId = validateStableId(featureId, { operation, entity: { type: 'feature' } }, 'featureId');
     const row = session.database
       .prepare<[string, string], PlanningContextSqlRow>(
-        `${SELECT_PLANNING_CONTEXT} WHERE project_id = ? AND feature_id = ? AND status IN ('open', 'candidate_published') ORDER BY id LIMIT 1`,
+        `${SELECT_PLANNING_CONTEXT} WHERE project_id = ? AND feature_id = ?
+          AND status IN ('open', 'candidate_published')
+          ORDER BY id LIMIT 1`,
       )
       .get(validProjectId, validFeatureId);
     return row === undefined ? null : contextFromRow(row, operation);
@@ -549,7 +556,9 @@ export function createSqlitePlanningContextStore(
         inputSnapshot: basis,
       };
 
-      return { context, planningTask, feature, run };
+      const global = session.database.prepare<[], { payload: string }>('SELECT payload FROM global_settings LIMIT 1').get();
+      const locale = resolveWorkflowLocale(global ? JSON.parse(global.payload).locale : undefined);
+      return { context, planningTask, feature, run, locale };
     });
   }
 
@@ -687,7 +696,134 @@ export function createSqlitePlanningContextStore(
     return decided;
   }
 
+  function retireFailedPlanningInTransaction(input: PlanningRetireInput, evidence?: object): PlanningRetireResult {
+    const operation = 'planning.retire';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const db = session.database;
+    const entity: StorageEntityRef = { type: 'planning_context', projectId: input.projectId, id: input.contextId };
+    const refuse = (reason: string): never => { throw conflict(operation, reason, entity, { reason, runId: input.runId }); };
+    const existing = getContextByCandidateRow(input.projectId, input.candidateId, operation);
+    if (existing === null) return refuse('planning_retirement_identity_mismatch');
+    if (existing.id !== input.contextId || existing.featureId !== input.featureId || existing.runId !== input.runId) {
+      refuse('planning_retirement_identity_mismatch');
+    }
+    if (!['open', 'candidate_published'].includes(existing.status)) refuse('planning_context_not_active');
+    const feature = db.prepare<[string, string], { revision: number }>(
+      'SELECT revision FROM features WHERE project_id=? AND id=?').get(input.projectId, input.featureId);
+    if (feature?.revision !== input.expectedFeatureRevision) refuse('stale_revision');
+    const run = db.prepare<[string, string, string], { status: string; purpose: string }>(
+      'SELECT status,purpose FROM runs WHERE project_id=? AND feature_id=? AND id=?').get(input.projectId, input.featureId, input.runId);
+    if (!run || run.purpose !== 'plan' || !['failed', 'cancelled'].includes(run.status)) refuse('planning_run_not_terminal');
+    const attempts = db.prepare<[string], { id: string; project_id: string; feature_id: string; run_id: string;
+      status: string; owner_id: string; host_instance_id: string; execution_version: number;
+      session_id: string|null; started_at: number|null }>(
+      'SELECT * FROM attempts WHERE run_id=?').all(input.runId);
+    // Interrupted history can outlive a cancelled Run. Only a stopped Session with
+    // fully settled occupancy may be excluded; recording completeness is separate.
+    if (db.prepare(`SELECT a.id FROM attempts a JOIN runs r ON r.id=a.run_id
+      WHERE a.project_id=? AND a.feature_id=? AND a.run_id<>?
+      AND (a.status IN ('preparing','executing','verifying') OR (a.status='interrupted' AND (
+        r.status NOT IN ('failed','cancelled','succeeded')
+        OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.attempt_id=a.id AND s.status='stopped')
+        OR EXISTS (SELECT 1 FROM workspace_leases l WHERE l.owner_id=a.id)
+        OR EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id=a.run_id AND c.state<>'released')
+        OR EXISTS (SELECT 1 FROM execution_slot_claims c WHERE c.run_id=a.run_id AND c.state<>'released')
+      ))) LIMIT 1`).get(input.projectId,input.featureId,input.runId)) {
+      refuse('planning_retirement_foreign_writer');
+    }
+    const dispatch = createSqliteDispatchRecovery(session);
+    const preRelease = inspectPlanningPreReleaseProof(session,input,evidence);
+    for (const attempt of attempts) {
+      if (attempt.project_id !== input.projectId || attempt.feature_id !== input.featureId) refuse('planning_retirement_identity_mismatch');
+      if (!['failed', 'cancelled', 'succeeded'].includes(attempt.status)) refuse('planning_retirement_active_attempt');
+      const recording = db.prepare<[string], { status: string; recording_watermark: number | null; recording_gaps: string | null }>(
+        'SELECT status,recording_watermark,recording_gaps FROM sessions WHERE attempt_id=?').get(attempt.id);
+      // Runtime launch requires an atomic start reservation and Session first.
+      // A terminal pre-reservation rejection may retire only after occupancy was settled.
+      const beforeRuntimeReservation = !recording && attempt.session_id===null && attempt.started_at===null
+        && !db.prepare('SELECT id FROM runtime_start_reservations WHERE run_id=? LIMIT 1').get(input.runId)
+        && !db.prepare('SELECT id FROM workspace_leases WHERE owner_id=? LIMIT 1').get(attempt.id);
+      // Missing PID/start time is not evidence of non-launch. Only Core's stopped recording can release an Attempt.
+      if (!beforeRuntimeReservation && preRelease?.attemptId !== attempt.id && (!recording || recording.status !== 'stopped' || recording.recording_watermark === null
+        || recording.recording_gaps !== '[]')) refuse('planning_retirement_stop_unconfirmed');
+      if (dispatch.link(attempt).gaps.length > 0) refuse('planning_retirement_dispatch_owner_mismatch');
+      const leases = db.prepare<[string], { project_id: string; host_instance_id: string; execution_version: number; process_identity:string|null; state:string }>(
+        'SELECT project_id,host_instance_id,execution_version,process_identity,state FROM workspace_leases WHERE owner_id=?').all(attempt.id);
+      if (leases.some(lease => lease.project_id !== attempt.project_id || lease.host_instance_id !== attempt.host_instance_id
+        || lease.execution_version !== attempt.execution_version)) refuse('planning_retirement_resource_owner_mismatch');
+      // A terminal Session is necessary but cannot replace recovery's current process/tree verification.
+      // This command consumes already reconciled occupancy; it never force-unlocks quarantined writers.
+      if (leases.length > 0 && (preRelease?.attemptId !== attempt.id || leases.length!==3
+        || leases.some(lease=>lease.process_identity!==null || lease.state!=='quarantined'))) refuse('planning_retirement_resources_unresolved');
+    }
+    const workspace = db.prepare<[string, string], { revision: number; status: string; run_id: string; attempt_id: string;
+      owner_id: string; host_instance_id: string; execution_version: number }>(
+      'SELECT * FROM managed_workspaces WHERE project_id=? AND feature_id=?').get(input.projectId, input.featureId);
+    if ((workspace?.revision ?? null) !== input.workspaceRevision) refuse('workspace_revision_changed');
+    if (workspace) {
+      const owner = attempts.find(attempt => attempt.id === workspace.attempt_id)
+        ?? (workspace.status==='retained' || preRelease?.workspaceAttemptId===workspace.attempt_id ? db.prepare<[string,string,string], typeof attempts[number]>(
+          `SELECT a.* FROM attempts a JOIN runs r ON r.id=a.run_id JOIN sessions s ON s.attempt_id=a.id
+           WHERE a.id=? AND a.project_id=? AND a.feature_id=? AND r.status IN ('failed','cancelled','succeeded')
+           AND a.status IN ('failed','cancelled','succeeded','interrupted') AND s.status='stopped'
+           AND NOT EXISTS (SELECT 1 FROM workspace_leases l WHERE l.owner_id=a.id)
+           AND NOT EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id=a.run_id AND c.state<>'released')
+           AND NOT EXISTS (SELECT 1 FROM execution_slot_claims c WHERE c.run_id=a.run_id AND c.state<>'released')`)
+          .get(workspace.attempt_id,input.projectId,input.featureId) : undefined);
+      if (!owner || workspace.run_id !== owner.run_id || workspace.owner_id !== owner.owner_id
+        || workspace.host_instance_id !== owner.host_instance_id || workspace.execution_version !== owner.execution_version) {
+        refuse('planning_retirement_workspace_owner_mismatch');
+      }
+      if (workspace.status !== 'retained' && !(preRelease?.workspaceAttemptId===workspace.attempt_id && workspace.status==='quarantined')) refuse('planning_retirement_workspace_unreconciled');
+    }
+    if (db.prepare("SELECT id FROM workspace_operations WHERE project_id=? AND feature_id=? AND status='pending' LIMIT 1")
+      .get(input.projectId, input.featureId)
+      || db.prepare("SELECT id FROM git_operations WHERE project_id=? AND feature_id=? AND status='pending' LIMIT 1")
+        .get(input.projectId, input.featureId)) refuse('planning_retirement_operation_pending');
+    if (attempts.length === 0 && db.prepare('SELECT id FROM runtime_start_reservations WHERE run_id=? LIMIT 1').get(input.runId)) {
+      refuse('planning_retirement_stop_unconfirmed');
+    }
+    if (attempts.length === 0 && (db.prepare("SELECT id FROM run_dispatch_claims WHERE run_id=? AND state<>'released' LIMIT 1").get(input.runId)
+      || db.prepare("SELECT id FROM execution_slot_claims WHERE run_id=? AND state<>'released' LIMIT 1").get(input.runId))) {
+      refuse('planning_retirement_dispatch_owner_mismatch');
+    }
+    const activeClaims = db.prepare<[string], {id:string}>("SELECT id FROM run_dispatch_claims WHERE run_id=? AND state<>'released'").all(input.runId);
+    if (activeClaims.some(claim => !attempts.some(attempt => dispatch.link(attempt).claim?.id === claim.id))) {
+      refuse('planning_retirement_dispatch_owner_mismatch');
+    }
+    if (db.prepare(`SELECT s.id FROM execution_slot_claims s LEFT JOIN run_dispatch_claims c ON c.id=s.claim_id
+      WHERE s.run_id=? AND s.state<>'released' AND (c.id IS NULL OR c.state='released' OR c.run_id<>s.run_id
+        OR c.project_id<>s.project_id OR c.feature_id<>s.feature_id OR c.owner_id<>s.owner_id
+        OR c.host_instance_id<>s.host_instance_id OR c.claim_version<>s.claim_version) LIMIT 1`).get(input.runId)) {
+      refuse('planning_retirement_dispatch_owner_mismatch');
+    }
+    // All proofs, ownership checks and CAS precede mutation. Any later error rolls back with the command receipt.
+    const timestamp = nowUtcMs();
+    if (preRelease) {
+      const owner=attempts.find(attempt=>attempt.id===preRelease.attemptId)!;
+      db.prepare('DELETE FROM workspace_leases WHERE project_id=? AND owner_id=? AND host_instance_id=? AND execution_version=? AND process_identity IS NULL')
+        .run(input.projectId,owner.id,owner.host_instance_id,owner.execution_version);
+      db.prepare("UPDATE managed_workspaces SET status='retained',revision=revision+1,updated_at=MAX(updated_at,?) WHERE project_id=? AND feature_id=? AND revision=? AND attempt_id=?")
+        .run(timestamp,input.projectId,input.featureId,input.workspaceRevision,preRelease.workspaceAttemptId);
+    }
+    dispatch.releaseForRun(input.runId, timestamp);
+    db.prepare("UPDATE planning_contexts SET status='cancelled',decision_reason=COALESCE(decision_reason,'planning_retired'),updated_at=MAX(updated_at,?) WHERE id=? AND status=?")
+      .run(timestamp, existing.id, existing.status);
+    db.prepare("UPDATE tasks SET status='cancelled',revision=revision+1,updated_at=MAX(updated_at,?) WHERE id=? AND kind='planning' AND status IN ('pending','running')")
+      .run(timestamp, existing.planningTaskId);
+    const runRevision = db.prepare<[string], { revision: number }>('SELECT revision FROM runs WHERE id=?').get(input.runId)!.revision;
+    db.prepare(`INSERT INTO state_events (id,created_at,updated_at,revision,project_id,sequence,event_type,
+      aggregate_type,aggregate_id,aggregate_revision,payload,occurred_at,run_id)
+      VALUES (?,?,?,1,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM state_events),'work.recovery.updated','run',?,?,?,?,?)`)
+      .run(randomUUID(), timestamp, timestamp, input.projectId, input.runId, runRevision,
+        JSON.stringify({ schemaVersion: 1, phase: 'planning_retired', projectId: input.projectId, runId: input.runId,
+          ...(preRelease?{evidenceRef:preRelease.evidenceRef}:{}) }), timestamp, input.runId);
+    return { contextId: existing.id, candidateId: existing.candidateId, runId: existing.runId, status: 'cancelled', resourcesReleased: true };
+  }
+
   return {
+    retireFailedPlanningInTransaction,
     createPlanningContextInTransaction,
     getPlanningContextByCandidate,
     getPlanningContextByRun,

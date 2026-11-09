@@ -36,6 +36,10 @@ export interface RuntimeRequestRetryDeps {
 }
 
 export function createRuntimeRequestRetryController(deps: RuntimeRequestRetryDeps): RuntimeRequestRetryController {
+  if ((deps.policy.budgetScope !== undefined && !['attempt', 'consecutive'].includes(deps.policy.budgetScope))
+    || (deps.policy.backoffMode !== undefined && !['exponential', 'linear'].includes(deps.policy.backoffMode))) {
+    throw new RuntimeError('configuration', 'invalid_request_retry_policy');
+  }
   for (const key of ['maxRetries', 'maxTotalRetries', 'baseBackoffMs', 'maxBackoffMs'] as const) {
     const limit = deps.policy[key];
     if (!Number.isSafeInteger(limit) || limit < 0 || limit > (key.endsWith('Ms') ? 86_400_000 : 100)) {

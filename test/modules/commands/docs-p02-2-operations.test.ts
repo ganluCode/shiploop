@@ -1,7 +1,7 @@
 /**
- * F-019 文档核验：`docs/p02-2-operations.md` 的应用命令/查询/事件示例必须与真实
+ * F-019 文档核验：`docs/phases/p02/p02-2-operations.md` 的应用命令/查询/事件示例必须与真实
  * dist CLI（`runAppCli`，即 `packages/cli/dist/bin.js` 同一路径）一致，
- * `docs/p02-2-handoff.md` 必须指向真实可复用的 Core 端口、Host 路由、HostClient
+ * `docs/phases/p02/p02-2-handoff.md` 必须指向真实可复用的 Core 端口、Host 路由、HostClient
  * 方法、迁移版本与事件种类。
  *
  * 定位：F-019 只交付文档（+ 本守护）；为避免文档与实现漂移，本套件在真实临时
@@ -34,8 +34,8 @@ import { commitAll, initGitRepo } from '../../helpers/git-repo.ts';
 import { openStorageProbe } from '../../helpers/p02-2/storage-probe.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const OPERATIONS_DOC_PATH = 'docs/p02-2-operations.md';
-const HANDOFF_DOC_PATH = 'docs/p02-2-handoff.md';
+const OPERATIONS_DOC_PATH = 'docs/phases/p02/p02-2-operations.md';
+const HANDOFF_DOC_PATH = 'docs/phases/p02/p02-2-handoff.md';
 const README_PATH = 'README.md';
 const F018_EVIDENCE_PATH = 'docs/acceptance/evidence-p02-2/f018-regression-evidence.md';
 
@@ -573,8 +573,8 @@ describe('F-019 P02-2 操作说明与接口交接文档', () => {
     }
 
     // README 记录 P02-2 交付入口与本文档。
-    expect(readmeDoc).toContain('docs/p02-2-operations.md');
-    expect(readmeDoc).toContain('docs/p02-2-handoff.md');
+    expect(readmeDoc).toContain('docs/phases/p02/p02-2-operations.md');
+    expect(readmeDoc).toContain('docs/phases/p02/p02-2-handoff.md');
 
     // 交接文档与 README 不含开发机路径或真实凭据样例。
     expect(handoffDoc).not.toContain('/Users/ganlu');

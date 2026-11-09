@@ -240,6 +240,8 @@ describe('F-014 正式构建入口：回执重放/过期摘要/越权主体/重�
     const hookCalls = join(fixture!.box.root, 'slow-commit-hooks/pre-commit.calls');
     expect(readFileSync(hookCalls, 'utf8')).toBe('commit\n');
     expect(db.prepare("SELECT status FROM git_operations WHERE operation_type = 'task_commit'").all()).toEqual([{ status: 'succeeded' }]);
+    const commitIntent = db.prepare("SELECT message FROM git_operations WHERE operation_type = 'task_commit'").get() as { message: string };
+    expect(commitIntent.message).toMatch(/^T001: .+/);
 
     /* 显式继续复用有效证据时零新增编码调用：代码额度与 Runtime 启动计数不变。 */
     const codeAfter = (

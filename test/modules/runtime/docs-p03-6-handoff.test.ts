@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const doc = new URL('../../../docs/p03-6-handoff.md', import.meta.url);
+const doc = new URL('../../../docs/phases/p03/p03-6-handoff.md', import.meta.url);
 
 describe('F-014 runtime/fake-runtime integration handoff', () => {
   it('hands off delivered runtime/fake surfaces with real-resource evidence, recovery boundary and not_run gaps', () => {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const doc = new URL('../../../../docs/p03-3-handoff.md', import.meta.url);
+const doc = new URL('../../../../docs/phases/p03/p03-3-handoff.md', import.meta.url);
 
 describe('F-014 integration handoff', () => {
   it('records public integration points, compatibility and later ownership without claiming runtime completion', () => {

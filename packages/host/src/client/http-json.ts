@@ -1,7 +1,7 @@
 /**
  * F-009 HostClient 的回环 JSON 传输原语（client/ 非契约基础设施面）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §7.2/§12.1：
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §7.2/§12.1：
  * - 只连接字面量 127.0.0.1（发现文件给出的固定端口）；不解析主机名、不连接
  *   其他地址；绝不跟随重定向（3xx 一律 redirect_rejected，不向新地址重发
  *   凭据）；
@@ -280,6 +280,7 @@ const SAFE_DETAIL_KEYS = [
   'activityScope',
   'unsupportedCapability',
   'commandId',
+  'contextId', 'candidateId', 'runId', 'featureId', 'constraint', 'status',
   // P02-2：CAS 冲突修订号与 snapshot_required 的重取快照指引（§9.4）。
   'expectedRevision',
   'actualRevision',

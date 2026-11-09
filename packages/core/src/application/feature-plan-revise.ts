@@ -2,7 +2,7 @@
  * P03-1 / F-008 未执行草稿的实质计划修订应用用例（application 层；在调用方
  * 的同一 BEGIN IMMEDIATE 写事务内执行，无任何事务外 I/O）。
  *
- * 设计依据：docs/p03-1-plan-import-contract.md §6.2（更新条款：实质修订在
+ * 设计依据：docs/phases/p03/p03-1-plan-import-contract.md §6.2（更新条款：实质修订在
  * Feature 聚合的同一写事务内整体替换计划成员与边，一次 CAS 一次递增）与
  * §6.8（F-008 定案）、core-design/02 §10（标签/元数据纪律与实质修订边界）、
  * core-design/03 §4（CAS revision 纪律）、core-design/12（活动执行不越过
@@ -400,6 +400,7 @@ export function submitFeaturePlanRevise(
         title: task.title,
         description: task.description,
         labels: [...task.labels],
+        languages: [...task.languages],
         ...(task.complexity === null ? {} : { complexity: task.complexity }),
         acceptance: { criteria: [...task.acceptance.criteria] },
         requirementsRefs: task.requirementsRefs.map(ref => ({ ...ref })),

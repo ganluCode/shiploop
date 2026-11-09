@@ -25,7 +25,7 @@ Ordinary project tests do not load this experimental dependency. The opt-in
 variable is required for the project wrapper's actual SDK test; without it,
 only static version isolation checks run. There are no install-on-test hooks.
 
-- [Chinese capability matrix and P04 decision](../../docs/p03-3a-pi-durable-capability-matrix.md)
+- [Chinese capability matrix and P04 decision](../../docs/phases/p03/p03-3a-pi-durable-capability-matrix.md)
 - [Locked source references and command outcomes](sources.json)
 - [Generated local SDK observations](evidence.json)
 

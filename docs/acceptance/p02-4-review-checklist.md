@@ -1,8 +1,8 @@
 # P02-4 人工审阅清单（FR-1/FR-2、T 索引子集与放行）
 
 - 对应阶段：P02-4（P02 双客户端与初始化验收）。检查 ID 与证据字段以
-  [../../docs/p02-4-acceptance-contract.md](../../docs/p02-4-acceptance-contract.md) 为准；
-  操作步骤与验收复跑见 [../../docs/p02-4-operations.md](../../docs/p02-4-operations.md)；
+  [../../docs/phases/p02/p02-4-acceptance-contract.md](../phases/p02/p02-4-acceptance-contract.md) 为准；
+  操作步骤与验收复跑见 [../../docs/phases/p02/p02-4-operations.md](../phases/p02/p02-4-operations.md)；
   机器可读必需检查清单为 `acceptance/p02.config.json`。
 - 适用平台：**macOS**（唯一正式支持与验收平台）；Windows / WSL / Linux 未验收。
 - **当前状态：负责人已于 2026-10-11 明确验收通过，允许进入 P03。** 受测提交及授权原文见 §8。

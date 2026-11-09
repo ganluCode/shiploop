@@ -1,7 +1,7 @@
 /**
  * F-002 显式停止契约（POST /v1/host/stop）：请求/视图类型、运行时校验与摘要。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §10（版本化 stop）：
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §10（版本化 stop）：
  * - §10.1 请求形状：commandId（UUID v4）、hostInstanceId（必填预期实例）、
  *   requestDigest（64 hex）、options 可省略（等价 {mode:'graceful'}）；
  * - §10.1 命名未实现能力（mode 非 graceful、cancelWorkers、killProcessTree、

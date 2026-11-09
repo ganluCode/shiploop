@@ -22,7 +22,7 @@ import type { WorkTaskResult } from '../../../packages/core/src/application/work
 import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { deriveFeatureWorktreeRelativeDir } from '../../../packages/core/src/ports/path-service.ts';
-import { deriveManagedFeatureBranch } from '../../../packages/core/src/ports/workspace-preparation.ts';
+import { readFeatureBranch } from '../feature-branch.ts';
 import { PLANNING_START_OPERATION } from '../../../packages/core/src/ports/planning-start.ts';
 import { PLANNING_CANDIDATE_SUBMIT_OPERATION } from '../../../packages/core/src/ports/planning-candidates.ts';
 import type { CommandReceipt, PlanningAcceptedCommandReceipt } from '../../../packages/core/src/ports/commands.ts';
@@ -76,7 +76,7 @@ export async function seedFeatureWorkspace(box: CommandsTestFixture, session: Sq
   const binding = session.database.prepare<[string], {
     id: string; binding_revision: number; repo_identity: string; git_common_dir: string;
   }>('SELECT id, binding_revision, repo_identity, git_common_dir FROM repository_bindings WHERE project_id = ?').get(projectId)!;
-  const branch = deriveManagedFeatureBranch(projectId, featureId);
+  const branch = readFeatureBranch(session, projectId, featureId);
   const worktreePath = join(box.dataRoot, deriveFeatureWorktreeRelativeDir(projectId, featureId));
   mkdirSync(join(worktreePath, '..'), { recursive: true });
   git(['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], box.repoDirA);
@@ -138,9 +138,13 @@ export async function openF007Fixture(options: {
   readonly startFailure?: { readonly kind: string; readonly reason: string };
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number } | null;
   readonly runTimeLimitMs?: number;
+  readonly executionLimits?: { readonly workTimeoutMs: number; readonly toolTimeoutMs: number };
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  readonly plannerCredentialRef?: string;
   /** P05-1 / F-010：提升 Run/Batch 尝试与启动上限（显式 resume 的新 Attempt 预算）。 */
   readonly attemptBudget?: number;
+  readonly managedPrd?: string;
+  readonly skipSeedWorkspace?: boolean;
 }): Promise<F007Fixture> {
   const box = createCommandsTestFixture({ prefix: options.prefix });
   try {
@@ -181,15 +185,20 @@ export async function openF007Fixture(options: {
       const scope = { kind: 'project' as const, projectId };
       const plannerStrategy = options.workRuntimeFactory === undefined
         ? { runtime: 'fake', provider: 'test-provider', model: 'fake-model' }
-        : { runtime: 'pi', provider: 'provider', model: 'model' };
+        : { runtime: 'pi', provider: 'provider', model: 'model',
+          ...(options.plannerCredentialRef === undefined ? {} : { credentialRef: options.plannerCredentialRef }) };
       await submitCommand('settings.global.create', {
         schemaVersion: 2, strategies: {
           defaultStrategy: plannerStrategy,
           purposeStrategies: { planner: plannerStrategy },
         },
+        ...(options.executionLimits ? { policies: { executionLimits: options.executionLimits } } : {}),
       }, { scope: { kind: 'global' } });
       await submitCommand('phase.create', { id: 'phase-1', title: 'P05-1', description: null, labels: [] }, { scope });
+      if (options.managedPrd !== undefined) await core.managedDocuments.writeDraft(owner, projectId,
+        { path: 'prd/feature.md', content: options.managedPrd });
       const featureRow = await submitCommand('feature.plan.import', {
+        ...(options.managedPrd === undefined ? {} : { documents: [{ path: 'prd/feature.md', role: 'prd' }] }),
         phaseId: 'phase-1', plan: {
           schemaVersion: 1,
           feature: { title: '规划执行目标', description: null, labels: [], sourceRefs: [] },
@@ -199,6 +208,7 @@ export async function openF007Fixture(options: {
       const featureId = featureRow.result.feature.id;
       const attempts = options.attemptBudget ?? 1;
       const planningReceipt = await submitCommand(PLANNING_START_OPERATION, {
+        ...(options.managedPrd === undefined ? {} : { managedDocuments: true }),
         schemaVersion: 1, projectId, phaseId: 'phase-1', featureId, requirementRefs: [],
         constraints: ['不改变既有公开接口'],
         acceptance: { criteria: ['候选包含 Task 拆分与验收'] },
@@ -209,7 +219,7 @@ export async function openF007Fixture(options: {
         },
       }, { scope, expectedRevision: featureRow.result.feature.revision });
       const accepted = planningReceipt as PlanningAcceptedCommandReceipt;
-      await seedFeatureWorkspace(box, session, projectId, featureId, accepted.runId, F007_NOW_BASE);
+      if (!options.skipSeedWorkspace) await seedFeatureWorkspace(box, session, projectId, featureId, accepted.runId, F007_NOW_BASE);
       const query = (sql: string, ...params: unknown[]) => session.database.prepare(sql).get(...params) as Record<string, unknown>;
       const candidateBody = (overrides: Record<string, unknown> = {}): string => JSON.stringify({
         schemaVersion: 1, projectId, featureId, runId: accepted.runId, candidateId: accepted.candidateId,

@@ -30,7 +30,7 @@
     "title": "P01-4 P01持久化闭环验收",
     "scope": "FR-1/FR-2 持久化闭环、回滚/CAS、制品缺失/恢复、当前配置/项目标签（macOS 正式范围）",
     "version": "0.2",
-    "contractDoc": "docs/p01-4-acceptance-contract.md"
+    "contractDoc": "docs/phases/p01/p01-4-acceptance-contract.md"
   },
   "priorBaselines": [
     {

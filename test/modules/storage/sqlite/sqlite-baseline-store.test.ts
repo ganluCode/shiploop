@@ -2,7 +2,7 @@ import { currentMigrationVersions } from '../../../helpers/current-schema.ts';
 /**
  * F-007（P02-3）SQLite 迁移 v4 与基线窄存储端口回归（真实临时 SQLite，非 mock）。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md §9.3（事件白名单随 v4 扩展）、
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md §9.3（事件白名单随 v4 扩展）、
  * §10（迁移 v4 与四张基线作用域表 + F-007 补充的占用 process_identity 与
  * 同项目复合外键，见契约 §10 的 F-007 写回注记）、§8（三轴状态枚举）、
  * §6.2（不可变授权摘要）、§13（全局单并发占用）。

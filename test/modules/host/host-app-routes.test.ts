@@ -374,7 +374,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
     expect(effective.json()).toMatchObject({ configured: true, schemaVersion: 2 });
     const exported = await s.get(`/v1/projects/${projectId}/settings/export`);
     expect(exported.statusCode).toBe(200);
-    expect(exported.json()).toMatchObject({ exportFormatVersion: 1 });
+    expect(exported.json()).toMatchObject({ exportFormatVersion: 2 });
     expect(exported.bodyText).not.toContain(STUB_TOKEN);
   });
 });
@@ -774,6 +774,7 @@ describe('F-011 传输纪律与版本门禁', () => {
         'execution.budget.revise',
         // P05-1 / F-012：一次性规划与候选人工决策已接通通用命令面。
         'planning.start',
+        'planning.retire',
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
@@ -1063,6 +1064,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.budget.revise',
         // P05-1 / F-012：规划命令经同一通用路由接线并宣告能力。
         'planning.start',
+        'planning.retire',
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',

@@ -1,7 +1,7 @@
 /**
  * F-002 握手契约（POST /v1/host/handshake）：请求/响应类型与运行时校验（纯模块）。
  *
- * 协议依据：docs/p02-1-host-lifecycle-contract.md §8（握手）、§7.1（版本）。
+ * 协议依据：docs/phases/p02/p02-1-host-lifecycle-contract.md §8（握手）、§7.1（版本）。
  *
  * 服务端校验顺序由 F-007 传输层编排（传输层 → 凭据 → 版本 → 实例 → 数据根），
  * 因此本模块把「结构/格式」与「版本兼容」拆成两个函数，避免结构校验越过认证
@@ -259,14 +259,19 @@ function validateCapabilities(input: unknown): HostCapabilities {
     application.commands,
     hostCapabilitiesForDelivery(Array.isArray(application.commands) &&
       FEATURE_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command)),
-      Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))).application.commands,
+      Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command)), false, [],
+      Array.isArray(application.commands) && application.commands.includes('documents.write')).application.commands
+      // Additive retirement capability: an older Host must remain queryable during a guarded upgrade.
+      // Keep its advertised set unchanged; calling retirement there still returns unsupported.
+      .filter(command => command !== 'planning.retire' || Array.isArray(application.commands) && application.commands.includes(command)),
   );
   requireStringSetEqual(
     surface,
     'capabilities.application.queries',
     application.queries,
     hostCapabilitiesForDelivery(false, false, Array.isArray(application.queries) && application.queries.includes('execution.batch.delivery.get'),
-      KNOWLEDGE_QUERY_CAPABILITIES.filter(query => Array.isArray(application.queries) && application.queries.includes(query))).application.queries,
+      KNOWLEDGE_QUERY_CAPABILITIES.filter(query => Array.isArray(application.queries) && application.queries.includes(query)),
+      Array.isArray(application.commands) && application.commands.includes('documents.write')).application.queries,
   );
   if (Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))
     && (!Array.isArray(application.queries) || !application.queries.includes('execution.batch.delivery.get'))) {

@@ -1,7 +1,7 @@
 /**
  * F-002 P02-3 静态接入与基线命令纯契约（ports 契约层）测试。
  *
- * 协议依据：docs/p02-3-onboarding-contract.md
+ * 协议依据：docs/phases/p02/p02-3-onboarding-contract.md
  * - §3.2 路由与 §6 命令 payload 白名单（preview/run/cancel）；
  * - §5.7 公开错误码与受控 reason（invalid_input 定位字段）；
  * - §6.1 检查计划（非空 argv 数组、cwdRef 仓库内、environmentRef、timeoutMs、

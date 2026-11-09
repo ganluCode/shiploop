@@ -55,3 +55,8 @@ export * from './locking/index.js';
 export * from './runtime/index.js';
 export * from './client/index.js';
 export * from './launcher/index.js';
+export { DEFAULT_LOCALE, SUPPORTED_LOCALES, resolveWorkflowLocale } from 'shiploop-core';
+export type { WorkflowLocale } from 'shiploop-core';
+export { loginProductionProvider, logoutProductionProvider, providerAuthStatus, productionProviderModels } from './runtime/production-pi-auth.js';
+export type { ProviderAuthStatus } from './runtime/production-pi-auth.js';
+export type { AuthInteraction, AuthPrompt, AuthEvent } from '@earendil-works/pi-ai';

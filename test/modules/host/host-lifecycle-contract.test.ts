@@ -1,7 +1,7 @@
 /**
  * F-002 Host 生命周期契约模块回归（纯类型 + 运行时校验，无任何 I/O 与副作用）。
  *
- * 协议依据（唯一）：docs/p02-1-host-lifecycle-contract.md
+ * 协议依据（唯一）：docs/phases/p02/p02-1-host-lifecycle-contract.md
  * - §3.2 数据根身份 sha256hex(realpath)；
  * - §5 发现文件严格结构（schemaVersion/protocolVersion/hostInstanceId/
  *   dataRootIdentity/listenAddress/port/pid/startedAt，未知字段拒绝）；
@@ -147,10 +147,10 @@ describe('F-002 冻结常量与能力声明', () => {
   it('版本、回环地址、体积与预算均为契约冻结值', () => {
     expect(DISCOVERY_SCHEMA_VERSION).toBe(1);
     // P02-2 §3.1：线消息升 v2；P02-3 / F-006 起升 v3（能力集合扩张，见
-    // docs/p02-3-onboarding-contract.md §3.1/§15.5）；P03-1 / F-009 起升 v4
-    //（计划域命令/查询进入握手能力集合，见 docs/p03-1-plan-import-contract.md §5/§9.6）；
+    // docs/phases/p02/p02-3-onboarding-contract.md §3.1/§15.5）；P03-1 / F-009 起升 v4
+    //（计划域命令/查询进入握手能力集合，见 docs/phases/p03/p03-1-plan-import-contract.md §5/§9.6）；
     // P03-2 / F-007 起升 v5（决策/策略/输入准备三命令与审批查询进入能力集合，
-    // 见 docs/p03-2-plan-approval-contract.md）；发现 schemaVersion 与线协议版本不联动。
+    // 见 docs/phases/p03/p03-2-plan-approval-contract.md）；发现 schemaVersion 与线协议版本不联动。
     expect(CURRENT_SCHEMA_VERSION).toBe(6);
     expect(CURRENT_PROTOCOL_VERSION).toBe(1);
     expect([...SUPPORTED_PROTOCOL_VERSIONS]).toEqual([1]);
@@ -226,6 +226,7 @@ describe('F-002 冻结常量与能力声明', () => {
       "execution.start",
       "execution.budget.revise",
       "planning.start",
+      "planning.retire",
       "planning.candidate.decide",
       "workspace.discard",
       "workspace.discard.preview",
@@ -679,6 +680,17 @@ describe('F-002 §8 握手响应校验（客户端侧严格核验）', () => {
     expect(response.lifecycleState).toBe('ready');
     expect(response.capabilities.stop.activityScope).toBe('idle-only');
   });
+
+  it('permits a pre-retirement Host for diagnostics without inventing the missing capability', () => {
+    const original=validateHandshakeResponse(validHandshakeResponse(),expectation);
+    const previous={...original,capabilities:{...original.capabilities,application:{...original.capabilities.application,
+      commands:original.capabilities.application.commands.filter(command=>command!=='planning.retire')}}};
+    expect(validateHandshakeResponse(previous,expectation).capabilities.application.commands).not.toContain('planning.retire');
+    expectHostError(()=>validateHandshakeResponse({...previous,capabilities:{...previous.capabilities,
+      application:{...previous.capabilities.application,commands:[...previous.capabilities.application.commands,'unknown.operation']}}},expectation),
+      'response_malformed','host.handshake');
+  });
+
 
   it('实例不符 → instance_mismatch；数据根不符 → data_root_mismatch（零业务请求前提）', () => {
     expectHostError(

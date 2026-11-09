@@ -190,7 +190,7 @@ describe('P07-3 / F-012 保留政策段合并、CAS 与导出', () => {
       expect(exported.effective.policies.retentionPolicy?.value).toEqual(GLOBAL_RETENTION);
       expect(exported.effective.policies.retentionPolicy?.source.kind).toBe('global_default');
       // 导出封套版本随既有通道（本 Task 未改变导出结构语义，仅白名单增段）。
-      expect(exported.exportFormatVersion).toBe(1);
+      expect(exported.exportFormatVersion).toBe(2);
     });
   });
 });

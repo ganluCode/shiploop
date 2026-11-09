@@ -234,6 +234,12 @@ export interface CommandServiceOptions {
    * 不传则命令 unsupported，不冒充能力）。装配者：composition 根。
    */
   readonly planningStart?: PlanningStartPort;
+  readonly preparePlanningRetirement?: (input: import('../ports/planning-retire.js').PlanningRetireInput) => Promise<object | undefined>;
+  readonly afterPlanningRetirement?: () => Promise<void>;
+  readonly prepareManagedPlanning?: (principal: TrustedPrincipal, projectId: string,
+    request: import('../ports/planning-candidates.js').ValidatedPlanningRequest) => Promise<import('../ports/planning-candidates.js').ValidatedPlanningRequest>;
+  readonly prepareFeatureDocuments?: (principal: TrustedPrincipal, projectId: string,
+    sources: readonly import('../ports/managed-documents.js').ManagedDocumentSource[]) => Promise<void>;
   /** P05-1 / F-008：候选 Artifact 正文的事务外核验与候选应用。 */
   readonly planningCandidateDecision?: PlanningCandidateDecisionPort;
   /**
@@ -297,7 +303,7 @@ export interface CommandServiceOptions {
 }
 
 function maintenanceWriteKind(operation: string): MaintenanceWriteKind | null {
-  if (operation === PLANNING_START_OPERATION) return 'planning';
+  if (operation === PLANNING_START_OPERATION || operation === 'planning.retire') return 'planning';
   if (operation === 'baseline.run' || operation === 'baseline.cancel') return 'baseline';
   if (operation === EXECUTION_START_OPERATION || operation === 'execution.resume' || operation === FINALIZATION_RETRY_OPERATION) return 'work';
   if (operation === 'feature.verification.continue' || operation === 'git.operation.start' || operation === 'git.operation.reconcile') return operation.startsWith('git.') ? 'git' : 'verification';
@@ -960,6 +966,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
           envelope.operation !== PLANNING_START_OPERATION &&
+          envelope.operation !== 'planning.retire' &&
           envelope.operation !== 'planning.candidate.decide' &&
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
@@ -991,6 +998,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
 
         let continuationStopEvidence: unknown;
+        const planningRetirementEvidence = envelope.operation === 'planning.retire' && existing === undefined
+          ? await options.preparePlanningRetirement?.({...envelope.payload,projectId:envelope.scope.projectId,
+            expectedFeatureRevision:envelope.expectedRevision}) : undefined;
         if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && existing === undefined) {
           if (typeof taskVerificationContinue?.verifyCurrentEvidence !== 'function') {
             throw new PublicError('unsupported', operation);
@@ -1122,10 +1132,18 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         // 模型 I/O，仅对新命令执行）；短写事务内重核并原子提交 Batch/Run/
         // planning Task/上下文/派发意图/事件/回执。
         let planningStartPrepared: PreparedPlanningStart | undefined;
+        if (envelope.operation === FEATURE_PLAN_IMPORT_OPERATION && existing === undefined && envelope.payload.documents) {
+          if (!options.prepareFeatureDocuments) throw new PublicError('unsupported', FEATURE_PLAN_IMPORT_OPERATION);
+          await options.prepareFeatureDocuments(principal, envelope.scope.projectId, envelope.payload.documents);
+        }
         if (envelope.operation === PLANNING_START_OPERATION && existing === undefined) {
+          const payload = envelope.payload.managedDocuments ? { ...envelope.payload,
+            request: options.prepareManagedPlanning
+              ? await options.prepareManagedPlanning(principal, envelope.scope.projectId, envelope.payload.request)
+              : (() => { throw new PublicError('unsupported', PLANNING_START_OPERATION); })() } : envelope.payload;
           planningStartPrepared = await planningStart!.preparePlanningStart(
             envelope.scope.projectId,
-            envelope.payload,
+            payload,
           );
         }
 
@@ -1705,6 +1723,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               { schedulerAssembled: executionDispatchSignal !== undefined },
             );
           }
+          if (envelope.operation === 'planning.retire') {
+            try { transaction.getProject(envelope.scope.projectId); }
+            catch (error) { mapProjectLookupError(error, envelope.operation); }
+            const result = transaction.retireFailedPlanning({ ...envelope.payload,
+              projectId: envelope.scope.projectId, expectedFeatureRevision: envelope.expectedRevision },planningRetirementEvidence);
+            const receipt = createCompletedReceipt({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)), result });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
           if (envelope.operation === PLANNING_START_OPERATION) {
             // P05-1 / F-003：一次性规划启动——事务外请求/预算校验已完成；本事务
             // 内重核全部前置条件并原子提交单 Feature Batch/purpose=plan Run/
@@ -1856,6 +1885,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             receipt,
             envelope.payload.request.featureId,
           );
+        }
+        if (envelope.operation==='planning.retire' && receipt.status==='completed') {
+          await options.afterPlanningRetirement?.();
         }
         // P03-9 / F-008：显式 resume 提交后只对新回执发出调度唤醒；approval 缺失
         // 步骤不唤醒调度器，replay 也不重复唤醒。

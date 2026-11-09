@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
 import { openDeliveryVertical } from '../../helpers/p03-8/delivery-vertical.ts';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 it.each([0, 1, 2])('default Core scan settles a Feature check exit=%i without restoring Task leases or calling another Runtime', async exitCode => {
   const check = { checkKey: 'tests', scope: 'task' as const, kind: 'command' as const,
@@ -20,10 +22,12 @@ it.each([0, 1, 2])('default Core scan settles a Feature check exit=%i without re
     const ledger = f.db.prepare('SELECT stage,reason FROM feature_closeouts WHERE project_id=? AND run_id=?').get(projectId, runId);
     const run = f.db.prepare('SELECT status,reason FROM runs WHERE id=?').get(runId);
     if (exitCode === 2) {
-      expect(ledger).toBeUndefined();
-      expect(run).toMatchObject({ status: 'paused', reason: 'feature_auto_fix_runtime_not_assembled' });
-      expect(f.db.prepare("SELECT count(*) AS n FROM verification_batches WHERE operation='FeatureVerification.full'").get()).toEqual({ n: 0 });
-      expect(f.counts().runtimeCalls).toBe(runtimeBefore);
+      expect({ ledger, run }).toMatchObject({ ledger: { stage: 'failed', reason: 'verification_failed' }, run: { status: 'failed' } });
+      expect(f.db.prepare("SELECT count(*) AS n FROM verification_batches WHERE operation='FeatureVerification.full'").get()).toEqual({ n: 4 });
+      expect(f.counts().runtimeCalls).toBe(runtimeBefore + 3);
+      expect(f.db.prepare('SELECT COUNT(*) AS n FROM feature_repair_attempts WHERE stop_confirmed=1').get()).toEqual({ n: 3 });
+      expect(f.db.prepare('SELECT DISTINCT locale FROM feature_repair_attempts').all()).toEqual([{ locale: 'en-US' }]);
+      expect(() => f.db.prepare("UPDATE feature_repair_attempts SET locale='zh-CN'").run()).toThrow('feature repair locale immutable');
       expect(f.db.prepare('SELECT count(*) AS n FROM attempts').get()).toEqual(before);
       expect(f.db.prepare("SELECT count(*) AS n FROM git_operations WHERE operation_type='feature_final_commit'").get()).toEqual({ n: 0 });
       return;
@@ -54,3 +58,28 @@ it.each([0, 1, 2])('default Core scan settles a Feature check exit=%i without re
     expect(f.db.prepare("SELECT count(*) AS n FROM verification_batches WHERE operation='FeatureVerification.full'").get()).toEqual({ n: 1 });
   } finally { await f.close(); }
 }, 120_000);
+
+it('repairs the failed Feature check then independently verifies and delivers without replaying passed Tasks', async () => {
+  const check = { checkKey: 'tests', scope: 'task' as const, kind: 'command' as const,
+    argv: [process.execPath, '-e', "const fs=require('node:fs');const ok=fs.readFileSync('README.md','utf8')==='downstream\\n';console.log('SHIPLOOP_NODE_CHECK_RESULT='+JSON.stringify({schemaVersion:1,protocol:'shiploop.node-check',collected:true,testCount:1,targets:['tests']}));process.exitCode=ok?0:1;"],
+    cwdRef: null, environmentRef: null, timeout: 5000, required: true, requirementRefs: [] };
+  const f = await openDeliveryVertical({ reserveFinalResources: false, repairReadme: 'downstream\n',
+    verificationPolicy: { checkDefinitions: [check], fullFallback: { checkRefs: ['tests'] }, featureChecks: ['tests'] },
+    featureAutoFixPolicy: { enabled: true,
+      strategy: { runtime: 'fake', provider: 'test-provider', model: 'fake-model' } } });
+  try {
+    const { projectId, featureId, runId } = f.fixture;
+    const workspace = f.db.prepare('SELECT canonical_path FROM managed_workspaces WHERE feature_id=?').get(featureId) as { canonical_path: string };
+    writeFileSync(join(workspace.canonical_path, 'README.md'), 'broken\n');
+    const attempts = f.db.prepare('SELECT COUNT(*) AS n FROM attempts').get();
+    const calls = f.counts().runtimeCalls;
+    await f.core.workExecution.scan();
+    expect(f.db.prepare('SELECT stage,repair_count FROM feature_closeouts WHERE project_id=? AND run_id=?').get(projectId, runId))
+      .toEqual({ stage: 'completed', repair_count: 1 });
+    expect(f.db.prepare('SELECT COUNT(*) AS n FROM attempts').get()).toEqual(attempts);
+    expect(f.counts().runtimeCalls).toBe(calls + 1);
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM verification_batches WHERE operation='FeatureVerification.full'").get()).toEqual({ n: 2 });
+    expect(f.db.prepare('SELECT status,stop_confirmed,result_ref FROM feature_repair_attempts').get())
+      .toMatchObject({ status: 'completed', stop_confirmed: 1, result_ref: expect.any(String) });
+  } finally { await f.close(); }
+}, 120000);

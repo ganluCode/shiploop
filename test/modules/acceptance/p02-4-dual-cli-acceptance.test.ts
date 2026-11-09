@@ -1,7 +1,7 @@
 /**
  * F-003 P02-4 双 CLI 竞争启动与共享持久项目状态的真实端到端验收场景。
  *
- * 对应 docs/p02-4-acceptance-contract.md §2.1 冻结的三个必需检查（全部 required）：
+ * 对应 docs/phases/p02/p02-4-acceptance-contract.md §2.1 冻结的三个必需检查（全部 required）：
  * - `P02-FR1-UNIQUE-HOST`：在无残留 Host 的同一临时数据根上，两个真实 dist CLI
  *   经同步屏障竞争启动——恰一实际持锁 Host/唯一写入者、两客户端取得同一
  *   `hostInstanceId` 与 `dataRootIdentity`、实际监听 `127.0.0.1` 的随机端口、

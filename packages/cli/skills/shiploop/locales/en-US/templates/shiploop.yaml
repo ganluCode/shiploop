@@ -1,0 +1,69 @@
+# Project policies only. Confirm tiers and ordered fallbacks before syncing.
+# Keep keys private; credentialRef is a reference, not a secret.
+# Global locale belongs in a separate --scope global configuration, not this file.
+schemaVersion: 2
+
+strategies:
+  modelMap:
+    low:
+      runtime: pi
+      model: xiaomi-token-plan-cn/mimo-v2.6-pro
+
+    medium:
+      runtime: pi
+      model: zai-coding-cn/glm-5.3
+      fallbacks:
+        - runtime: pi
+          model: ark-agentplan/glm-5.3
+        - runtime: pi
+          model: wlb/gpt-6.1-sol
+      fallbackPolicy:
+        onQuotaBlocked: switch
+        onTransientConnection: switch
+        onTransientServer: switch
+        onAuthentication: switch
+
+    high:
+      runtime: pi
+      model: wlb/gpt-6.1-sol
+
+  purposeStrategies:
+    planner:
+      runtime: pi
+      model: ark-agentplan/ark-code-latest
+
+policies:
+  piAgent:
+    transient_retry_attempts: 10
+    transient_retry_backoff_base_seconds: 1
+    fallback_on_connection_exhausted: true
+    fallback_on_server_exhausted: true
+    fallback_on_authentication: true
+  piExecution:
+    maxRequests: 256
+    maxInputBytes: 512000
+    maxOutputTokens: 16384
+    thinkingLevel: off
+    commandTimeoutMs: 600000
+    codemode: true
+# Default repair strategy: high, maxRepairs: 3; optional per-repair budgets.
+  featureAutoFix:
+    enabled: false
+# auto_push requires confirmed gitIdentity and commitMode: task_and_feature.
+  deliveryPolicy:
+    auto_push: false
+    push_remote: origin
+# Webhook/secret belong in private pi/auth.json, never this repository.
+  feishu:
+    enabled: false
+    notify:
+      task_completed: true
+      feature_completed: true
+      rate_limited: true
+      model_fallback: true
+      error_stopped: true
+      human_blocked: true
+
+
+# Saving this file alone has no effect. Explicit sync: shiploop config watch --project <project-id> --confirm
+# Existing planned Tasks require formal strategy reapplication/reapproval.

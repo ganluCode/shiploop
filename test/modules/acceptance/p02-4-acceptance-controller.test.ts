@@ -1,6 +1,6 @@
 /**
  * P02-4 / F-011 `npm run accept:p02` 验收控制器回归（检查 `P02-PHASE-FIXTURE`
- * 与阶段退出语义，契约见 docs/p02-4-acceptance-contract.md §2.1/§2.5/§3.8）。
+ * 与阶段退出语义，契约见 docs/phases/p02/p02-4-acceptance-contract.md §2.1/§2.5/§3.8）。
  *
  * 覆盖（F-011 验收第 4 条）：
  * - 成功：全部步骤退出 0 → exit 0、15 必需检查全 pass、预期负例携带冻结断言集合、
