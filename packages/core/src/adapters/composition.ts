@@ -292,6 +292,12 @@ import { createSqliteGitAgentRepairStore } from './sqlite/git-agent-repair-store
 import { createSqliteGitAgentRepairQueryStore } from './sqlite/git-agent-repair-query-store.js';
 import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
+import { createIntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
+import type {
+  IntegrationPlanScheduler,
+  IntegrationPlanScheduleCandidateReader,
+  IntegrationPlanDispatchWriter,
+} from '../application/integration-plan-scheduler.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
 import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
 import { createExecutionBaselineAuthority } from '../application/execution-baseline-authority.js';
@@ -326,6 +332,11 @@ export interface CoreApplicationOptions {
   }) => {
     readonly batches: IntegrationBatchApprovalReader;
     readonly predecessors: IntegrationPredecessorEvidenceReader;
+    /** Optional trusted operation-intent and SQLite candidate readers for event/scan scheduling. */
+    readonly scheduler?: {
+      readonly candidates: IntegrationPlanScheduleCandidateReader;
+      readonly dispatch: IntegrationPlanDispatchWriter;
+    };
   };
   /** P03-9 / F-011：受信 finalization-only Run 重验执行（未装配时调度保留 capability gap）。 */
   readonly finalizationExecution?: FinalizationExecutionPort;
@@ -484,7 +495,8 @@ export interface CoreApplication {
   readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
   /** P05-6: control and successor gating use the authoritative plan store. */
   readonly integrationPlanControl: IntegrationPlanControlService;
-  /** Trusted Core repair orchestration; never exposed as a raw Runtime tool. */
+  /** P05-6：Feature 交付事件后的低延迟重评估与 SQLite 有界补偿扫描。 */
+  readonly integrationPlanScheduler?: IntegrationPlanScheduler;
   readonly gitAgentRepair: GitAgentRepairService;
   /**
    * P05-1 / F-011：规划上下文/候选只读授权查询（planning.contexts.list /
@@ -1567,7 +1579,21 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const batchDelivery = (object.batchDeliveryFactory as BatchDeliveryFactory | undefined)?.({ atomicStore });
     if (object.batchDeliveryFactory !== undefined && batchDelivery === undefined) throw validationError(context, 'batchDeliveryFactory', 'delivery_adapters_required');
-    const featureDelivery = (object.featureDeliveryFactory as FeatureDeliveryFactory | undefined)?.({ atomicStore });
+    let integrationPlanScheduler: IntegrationPlanScheduler | undefined;
+    const featureDelivery = (object.featureDeliveryFactory as FeatureDeliveryFactory | undefined)?.({
+      atomicStore,
+      afterFinalization(record) {
+        const scheduler = integrationPlanScheduler;
+        if (scheduler === undefined) return;
+        void scheduler.onFeatureFinalized({
+          projectId: record.feature.projectId,
+          featureId: record.feature.id,
+          batchId: record.batch.id,
+          outcome: record.outcome,
+          deliveryStatus: record.deliveryStatus,
+        }).catch(() => { /* SQLite compensation scan remains authoritative after a lost wakeup */ });
+      },
+    });
     if (object.featureDeliveryFactory !== undefined && featureDelivery === undefined) {
       throw validationError(context, 'featureDeliveryFactory', 'delivery_adapters_required');
     }
@@ -1580,6 +1606,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     )) {
       throw validationError(context, 'integrationPlanFactory', 'integration_fact_adapters_required');
     }
+    if (integrationPlanFacts?.scheduler !== undefined && (
+      typeof integrationPlanFacts.scheduler.candidates?.list !== 'function'
+      || typeof integrationPlanFacts.scheduler.dispatch?.reserve !== 'function'
+    )) {
+      throw validationError(context, 'integrationPlanFactory', 'integration_scheduler_adapters_required');
+    }
     const gitAgentRepair = createGitAgentRepairService({ atomic: atomicStore,
       store: createSqliteGitAgentRepairStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }) });
     const integrationPlanControl = createIntegrationPlanControlService({ atomic: atomicStore, plans: integrationPlanStore });
@@ -1589,6 +1621,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       batches: integrationPlanFacts.batches,
       predecessors: integrationPlanFacts.predecessors,
     });
+    if (integrationPlanGeneration !== undefined && integrationPlanFacts?.scheduler !== undefined) {
+      integrationPlanScheduler = createIntegrationPlanScheduler({
+        generation: integrationPlanGeneration,
+        candidates: integrationPlanFacts.scheduler.candidates,
+        dispatch: integrationPlanFacts.scheduler.dispatch,
+      });
+    }
     // P07-3 / F-008：项目软归档/显式恢复命令句柄（收尾只读快照来自同一 SQLite 会话；
     // 等待预算默认值见端口常量，Host/CLI 可后续按需装配更小预算）。
     const projectLifecycleCloseouts = createSqliteProjectLifecycleAccess(session);
@@ -1890,6 +1929,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       retentionCleanupCommand,
       projectDeletePreview,
       integrationPlanGeneration,
+      integrationPlanScheduler,
       integrationPlanControl,
       gitAgentRepair,
       executionInputPrepare,

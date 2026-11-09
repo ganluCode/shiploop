@@ -42,9 +42,13 @@ export interface FeatureDeliveryDependencies {
   readonly commit: ControlledGitCommitService;
   readonly reconciliation: GitCommitReconciliationService;
   readonly integrationStart?: IntegrationStartExecution;
+  /** Post-finalization wakeup; delivery state is still committed by Core transaction. */
+  readonly afterFinalization?: (record: import('../ports/feature-finalization.js').FeatureFinalizationRecord) => void;
 }
 export type FeatureDeliveryFactory = (context: {
   readonly atomicStore: AtomicCommandStore;
+  /** Best-effort wakeup after Core commits a finalized delivery fact. */
+  readonly afterFinalization?: (record: import('../ports/feature-finalization.js').FeatureFinalizationRecord) => void;
 }) => FeatureDeliveryDependencies;
 
 export function createFeatureDeliveryCommandHandler(options: {
@@ -59,6 +63,7 @@ export function createFeatureDeliveryCommandHandler(options: {
     throw new TypeError('Feature delivery requires trusted verification, commit and reconciliation adapters');
   }
   const finalization = createFeatureFinalizationService({ atomic: store, verify: deps.verify, commit: deps.commit,
+    ...(deps.afterFinalization === undefined ? {} : { onFinalized: deps.afterFinalization }),
     async readApproval(input) {
       return store.transact('FeatureDelivery.approval', transaction => {
         const intent = checkedIntent(input);

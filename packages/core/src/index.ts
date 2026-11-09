@@ -132,6 +132,7 @@ export * from './ports/integration-plan-store.js';
 export * from './ports/integration-plan-query.js';
 export * from './application/integration-plan-generation.js';
 export * from './application/integration-plan-control.js';
+export * from './application/integration-plan-scheduler.js';
 export * from './ports/feature-dag-update.js';
 export { toPublicTaskStrategyReapplicationPreview } from './ports/task-strategy-reapplication-wire.js';
 export * from './ports/task-strategy-preview.js';

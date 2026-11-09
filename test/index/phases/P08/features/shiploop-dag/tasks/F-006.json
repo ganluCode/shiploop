@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p05-6-f006-integration-plan-scheduler.test.ts",
+          "level": "unit",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

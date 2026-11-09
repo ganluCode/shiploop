@@ -29,6 +29,8 @@ export interface FeatureFinalizationOptions {
   readonly verify: (input: FeatureFinalizationInput) => Promise<FeatureFinalizationVerification>;
   readonly readApproval: (input: FeatureFinalizationInput) => Promise<FeatureFinalizationApproval>;
   readonly commit?: ControlledGitCommitService;
+  /** Best-effort post-commit wakeup; the finalized SQLite row remains authoritative. */
+  readonly onFinalized?: (record: FeatureFinalizationRecord) => void;
 }
 
 function isTerminal(feature: { status: string }, run: { status: string }): boolean {
@@ -121,7 +123,11 @@ export function createFeatureFinalizationService(options: FeatureFinalizationOpt
     if (existing !== undefined) return existing;
     const promise = runFinalize(input);
     inFlight.set(key, promise);
-    try { return await promise; } finally { if (inFlight.get(key) === promise) inFlight.delete(key); }
+    try {
+      const result = await promise;
+      try { options.onFinalized?.(result); } catch { /* wakeups are best effort; SQLite facts remain authoritative */ }
+      return result;
+    } finally { if (inFlight.get(key) === promise) inFlight.delete(key); }
   }
   return { finalize };
 }
