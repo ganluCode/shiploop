@@ -1,3 +1,4 @@
+import type { FeatureResourceLeaseRecord, FeatureResourceSet } from './feature-resources.js';
 import type { AtomicCommandStore, CommandTransaction } from './atomic-commands.js';
 import type { IntegrationExecutionObservation } from './git-integration-journal.js';
 import type { GitOperationIntent, GitOperationRecord } from './git-operations.js';
@@ -13,6 +14,9 @@ export interface GitIntegrationRecoveryAuthorization {
   readonly intent: GitOperationIntent;
   readonly ownerVersion: number;
   readonly approvalCurrent: boolean;
+  /** Current durable long-lived leases; expiry permits isolation only, never takeover. */
+  readonly resourceSet: FeatureResourceSet;
+  readonly leases: readonly FeatureResourceLeaseRecord[];
 }
 
 export interface GitIntegrationTargetFacts {

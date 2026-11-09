@@ -22,6 +22,9 @@ export interface IntegrationExecutionObservation {
  * Private workspace/process information must not be exposed through public event payloads.
  */
 export interface GitIntegrationJournal {
+  readCommand(transaction: CommandTransaction, projectId: string, commandId: string): {
+    readonly operationId: string; readonly requestDigest: string;
+  } | null;
   claim(transaction: CommandTransaction, request: IntegrationStartRequest, requestDigest: string): void;
   read(transaction: CommandTransaction, projectId: string, operationId: string): IntegrationExecutionObservation | null;
   append(transaction: CommandTransaction, projectId: string, operationId: string,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createGitIntegrationReconciliationService } from '../../../packages/core/src/application/git-integration-reconciliation.ts';
+import { normalizeFeatureResourceSet } from '../../../packages/core/src/ports/feature-resources.ts';
 import type { GitIntegrationRecoveryAuthorization } from '../../../packages/core/src/ports/git-integration-reconciliation.ts';
 import type { IntegrationExecutionObservation } from '../../../packages/core/src/ports/git-integration-journal.ts';
 
@@ -38,7 +39,14 @@ function fixture() {
   const atomic = { transact: vi.fn((_name: string, callback: (tx: unknown) => unknown) => callback({
     getGitOperation: () => state.operation,
   })) };
-  let authorization: GitIntegrationRecoveryAuthorization = { intent, ownerVersion: 1, approvalCurrent: true };
+  const resourceSet = normalizeFeatureResourceSet({ projectId: 'project-1', resources: [
+    { kind: 'feature_code_shared', key: 'feature-code' },
+    { kind: 'worktree_write_exclusive', key: `worktree:${plan.integrationId}` },
+  ] });
+  let authorization: GitIntegrationRecoveryAuthorization = { intent, ownerVersion: 1, approvalCurrent: true, resourceSet,
+    leases: resourceSet.resources.map((resource, i) => ({ id: `lease-${i}`, projectId: 'project-1', resource,
+      ownerId: 'owner-1', ownerVersion: 1, revision: 1, acquiredAtUtcMs: 1, leaseUntilUtcMs: 100,
+      state: 'held', waitingReason: null, releasedAtUtcMs: null })) };
   const reader: any = { inspect: vi.fn(async () => ({ workspace, steps: [step], target: {
     head: sha('b'), repoIdentity: 'repo-1', gitCommonDir: '/repo/.git', statusPorcelain: '',
   } })) };
@@ -76,7 +84,7 @@ describe('P05-7 F-006 integration reconciliation', () => {
     const blocked = createGitIntegrationReconciliationService({
       atomic: { transact: vi.fn((_name: string, callback: (tx: unknown) => unknown) => callback({ getGitOperation: () => f.state.operation })) } as any,
       reader: f.reader, journal: { read: () => f.state.observation, append: f.append } as any,
-      readAuthorization: () => f.authorization, verifyWriterStopped: verify,
+      readAuthorization: () => f.authorization, verifyWriterStopped: verify, nowUtcMs: () => 10,
     });
     await expect(blocked.reconcile({ projectId: 'project-1', operationId: f.operation.intent.operationId })).resolves.toMatchObject({ outcome: 'unknown', reasonCode: 'previous_writer_stop_unconfirmed' });
     expect(f.reader.inspect).not.toHaveBeenCalled();
@@ -84,6 +92,65 @@ describe('P05-7 F-006 integration reconciliation', () => {
     f.authorization = { ...f.authorization, ownerVersion: 2 };
     await expect(f.service.reconcile({ projectId: 'project-1', operationId: f.operation.intent.operationId })).resolves.toMatchObject({ outcome: 'blocked', reasonCode: 'authorization_changed' });
     expect(f.append).not.toHaveBeenCalled();
+  });
+
+  it.each(['expired', 'quarantined', 'released', 'new-owner'] as const)(
+    '[case:integration-recovery-lease-%s] retains isolation without inspecting Git or publishing facts', async reason => {
+      const f = fixture();
+      const leases = f.authorization.leases.map(lease => ({ ...lease }));
+      if (reason === 'expired') leases[1]!.leaseUntilUtcMs = 10;
+      if (reason === 'quarantined') {
+        leases[1]!.state = 'quarantined';
+        leases[1]!.waitingReason = { code: 'resource_quarantined', resourceKey: leases[1]!.resource.key,
+          blockingOwnerId: 'owner-1', blockingOwnerVersion: 1 };
+      }
+      if (reason === 'released') { leases[1]!.state = 'released'; leases[1]!.releasedAtUtcMs = 9; }
+      if (reason === 'new-owner') leases[1]!.ownerVersion = 2;
+      f.authorization = { ...f.authorization, leases };
+      await expect(f.service.reconcile({ projectId: 'project-1', operationId: f.operation.intent.operationId }))
+        .resolves.toMatchObject({ outcome: 'blocked', reasonCode: 'workspace_not_held' });
+      expect(f.reader.inspect).not.toHaveBeenCalled();
+      expect(f.append).not.toHaveBeenCalled();
+    });
+
+  it('[case:integration-recovery-rejects-journal-race] does not overwrite an observation published while Git facts were being read', async () => {
+    const f = fixture();
+    const inspect = f.reader.inspect.getMockImplementation()!;
+    f.reader.inspect.mockImplementation(async () => {
+      const facts = await inspect();
+      f.state.observation = { outcome: 'unknown', reason: 'stop_unconfirmed', workspace: null, steps: [] };
+      return facts;
+    });
+    await expect(f.service.reconcile({ projectId: 'project-1', operationId: f.operation.intent.operationId }))
+      .resolves.toMatchObject({ outcome: 'blocked', reasonCode: 'reconciliation_conflict' });
+    expect(f.append).not.toHaveBeenCalled();
+    expect(f.state.observation?.outcome).toBe('unknown');
+  });
+
+  it('[case:integration-recovery-rejects-operation-race] fences a newer operation revision even when its intent is unchanged', async () => {
+    const f = fixture();
+    const inspect = f.reader.inspect.getMockImplementation()!;
+    f.reader.inspect.mockImplementation(async () => {
+      const facts = await inspect();
+      f.state.operation = { ...f.operation, revision: f.operation.revision + 1 };
+      return facts;
+    });
+    await expect(f.service.reconcile({ projectId: 'project-1', operationId: f.operation.intent.operationId }))
+      .resolves.toMatchObject({ outcome: 'blocked', reasonCode: 'reconciliation_conflict' });
+    expect(f.append).not.toHaveBeenCalled();
+  });
+
+  it('[case:integration-recovery-already-included] accepts an ancestry-proven input without manufacturing a merge commit', async () => {
+    const f = fixture();
+    const step = { ...f.workspace.steps[0]!, status: 'already_included' as const,
+      commitSha: sha('b'), parentBefore: sha('b'), parents: [] };
+    f.reader.inspect.mockResolvedValue({ workspace: { ...f.workspace, currentHead: sha('b'), steps: [step],
+      facts: { ...f.workspace.facts, head: sha('b'), parents: [] } }, steps: [step], target: {
+      head: sha('b'), repoIdentity: 'repo-1', gitCommonDir: '/repo/.git', statusPorcelain: '',
+    } });
+    await expect(f.service.reconcile({ projectId: 'project-1', operationId: f.operation.intent.operationId }))
+      .resolves.toMatchObject({ outcome: 'matched', observation: { outcome: 'pending_verification' } });
+    expect(f.append).toHaveBeenCalledTimes(1);
   });
 
   it('[case:integration-target-drift-retains-claim] blocks a target drift without adopting the current HEAD or releasing anything', async () => {

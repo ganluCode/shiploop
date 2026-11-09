@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { assertIntegrationResourceFence } from './integration-resource-fence.js';
 import { StorageError } from '../ports/errors.js';
 import { validateStableId } from '../ports/validation.js';
 import { validateIntegrationObservation } from '../ports/git-integration-observation.js';
@@ -67,8 +68,11 @@ function expectedStepPrefix(
     const inputSha = predecessor?.delivery?.commitSha;
     if (!featureId || !inputSha || !OID.test(step.commitSha) || !OID.test(step.treeSha)
       || step.ordinal !== index + 1 || step.featureId !== featureId || step.inputSha !== inputSha
-      || step.parentBefore !== parent || step.parents.length !== 2
-      || step.parents[0] !== parent || step.parents[1] !== inputSha || step.status !== 'succeeded') return false;
+      || step.parentBefore !== parent
+      || (step.status === 'already_included'
+        ? step.commitSha !== parent
+        : step.status !== 'succeeded' || step.parents.length !== 2
+          || step.parents[0] !== parent || step.parents[1] !== inputSha)) return false;
     parent = step.commitSha;
   }
   return true;
@@ -124,6 +128,17 @@ export function createGitIntegrationReconciliationService(
   deps: GitIntegrationReconciliationDependencies,
 ): GitIntegrationReconciliationService {
 
+  const now = deps.nowUtcMs ?? Date.now;
+  function ownershipCurrent(authorization: GitIntegrationRecoveryAuthorization): boolean {
+    const plan = authorization.intent.integrationPlan;
+    if (!plan) return false;
+    try {
+      assertIntegrationResourceFence({ projectId: authorization.intent.projectId, integrationId: plan.integrationId,
+        ownerId: authorization.intent.ownerId, ownerVersion: authorization.ownerVersion,
+        resourceSet: authorization.resourceSet, leases: authorization.leases }, now());
+      return true;
+    } catch { return false; }
+  }
   function readState(request: GitIntegrationReconciliationRequest) {
     return deps.atomic.transact(`${OP}.read`, tx => ({
       operation: tx.getGitOperation(request.projectId, request.operationId),
@@ -138,7 +153,7 @@ export function createGitIntegrationReconciliationService(
       }
       const request = { projectId: validateStableId(rawRequest.projectId, { operation: OP }, 'projectId'),
         operationId: validateStableId(rawRequest.operationId, { operation: OP }, 'operationId') };
-      let state = readState(request);
+      const state = structuredClone(readState(request));
       if (state.operation.intent.operationType !== 'integration' || state.operation.intent.integrationPlan == null) {
         fail('operation_not_integration');
       }
@@ -152,11 +167,16 @@ export function createGitIntegrationReconciliationService(
       if (!sameAuthorization(state.operation, authorization) || authorization.approvalCurrent !== true) {
         return result('blocked', 'authorization_changed', state.operation, state.observation);
       }
-      if (await deps.verifyWriterStopped(authorization) !== true) {
+      if (!ownershipCurrent(authorization)) return result('blocked', 'workspace_not_held', state.operation, state.observation);
+      let stopped = false;
+      try { stopped = await deps.verifyWriterStopped(authorization) === true; } catch { /* Unknown process facts retain isolation. */ }
+      if (!stopped) {
         return result('unknown', 'previous_writer_stop_unconfirmed', state.operation, state.observation);
       }
-      const afterStop = deps.readAuthorization(request);
-      if (!sameAuthorization(state.operation, afterStop) || afterStop.approvalCurrent !== true) {
+      let afterStop: GitIntegrationRecoveryAuthorization;
+      try { afterStop = deps.readAuthorization(request); }
+      catch { return result('blocked', 'authorization_unavailable', state.operation, state.observation); }
+      if (!isDeepStrictEqual(authorization, afterStop) || !sameAuthorization(state.operation, afterStop) || afterStop.approvalCurrent !== true) {
         return result('blocked', 'authorization_changed', state.operation, state.observation);
       }
 
@@ -198,10 +218,6 @@ export function createGitIntegrationReconciliationService(
       if (recovered === null) return result('pending', 'workspace_missing', state.operation, state.observation);
       try { validateIntegrationObservation(recovered, state.operation.intent); }
       catch { return result('blocked', 'integration_facts_invalid', state.operation, state.observation); }
-      if (state.observation?.outcome === 'pending_verification'
-        && isDeepStrictEqual(state.observation, recovered)) {
-        return result('matched', null, state.operation, state.observation);
-      }
       if (!complete && facts.steps.length === 0 && facts.workspace.currentHead === plan.target.baseCommit) {
         return result('pending', 'no_side_effect_observed', state.operation, state.observation);
       }
@@ -210,9 +226,20 @@ export function createGitIntegrationReconciliationService(
         const current = tx.getGitOperation(request.projectId, request.operationId);
         const observed = deps.journal.read(tx, request.projectId, request.operationId);
         if (current.status !== 'pending') return { operation: current, observation: observed, outcome: terminalOutcome(current) as GitIntegrationReconciliation['outcome'], reasonCode: current.reasonCode };
-        const currentAuthorization = deps.readAuthorization(request);
-        if (!sameAuthorization(current, currentAuthorization) || currentAuthorization.approvalCurrent !== true) {
+        if (current.revision !== state.operation.revision || current.intentDigest !== state.operation.intentDigest
+          || !isDeepStrictEqual(current.intent, state.operation.intent)
+          || !isDeepStrictEqual(observed, state.observation)) {
+          return { operation: current, observation: observed, outcome: 'blocked' as const, reasonCode: 'reconciliation_conflict' };
+        }
+        let currentAuthorization: GitIntegrationRecoveryAuthorization;
+        try { currentAuthorization = deps.readAuthorization(request); }
+        catch { return { operation: current, observation: observed, outcome: 'blocked' as const, reasonCode: 'authorization_unavailable' }; }
+        if (!isDeepStrictEqual(authorization, currentAuthorization)
+          || !sameAuthorization(current, currentAuthorization) || currentAuthorization.approvalCurrent !== true) {
           return { operation: current, observation: observed, outcome: 'blocked' as const, reasonCode: 'authorization_changed' };
+        }
+        if (!ownershipCurrent(currentAuthorization)) {
+          return { operation: current, observation: observed, outcome: 'blocked' as const, reasonCode: 'workspace_not_held' };
         }
         if (observed && isDeepStrictEqual(observed, recovered)) {
           return { operation: current, observation: observed, outcome: complete ? 'matched' as const : 'pending' as const, reasonCode: null };

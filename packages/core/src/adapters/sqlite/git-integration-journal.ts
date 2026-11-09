@@ -17,6 +17,12 @@ export function createSqliteGitIntegrationJournal(session: SqliteStorageSession,
     throw new StorageError('conflict', 'GitIntegrationJournal', reason, { details: { reason } });
   }
   return {
+    readCommand(_tx, projectId, commandId) {
+      active();
+      const row = db.prepare('SELECT operation_id, request_digest FROM git_integration_commands WHERE project_id = ? AND command_id = ?')
+        .get(projectId, commandId) as { operation_id: string; request_digest: string } | undefined;
+      return row ? { operationId: row.operation_id, requestDigest: row.request_digest } : null;
+    },
     claim(tx, request, requestDigest) {
       active();
       const operation = tx.getGitOperation(request.projectId, request.operationId);

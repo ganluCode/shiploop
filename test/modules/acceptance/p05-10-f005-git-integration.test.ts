@@ -249,7 +249,8 @@ describe('P05-10 F-005 controlled Git integration and bounded GitAgent acceptanc
         reader: createIntegrationGitRecoveryReader({
           driverFor: () => createGitCommitDriver({ confirmProcessIdentity: async identity => ({ launchId: identity.launchId }) }),
         }),
-        readAuthorization: () => ({ intent: persisted.intent, ownerVersion: 1, approvalCurrent: true }),
+        readAuthorization: () => ({ intent: persisted.intent, ownerVersion: 1, approvalCurrent: true,
+          resourceSet: f.authorization.resourceSet, leases: f.authorization.leases }),
         verifyWriterStopped: async () => true,
       });
       const first = await recovery.reconcile({ projectId: f.box.projectId, operationId: real.plan.integrationId });

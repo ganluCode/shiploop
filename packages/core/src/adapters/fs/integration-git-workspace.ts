@@ -103,7 +103,8 @@ export function createIntegrationGitWorkspace(options: {
   }
   const states = new Map<string, State>();
 
-  async function withLock<T>(input: IntegrationWorkspacePrepareInput, workspacePath: string, work: () => Promise<T>): Promise<T> {
+  async function withLock<T>(input: IntegrationWorkspacePrepareInput, workspacePath: string,
+    work: (beforeLaunch: () => void) => Promise<T>): Promise<T> {
     let lease;
     try {
       lease = await metadataLock.acquire({ repoIdentity: input.plan.target.repoIdentity, workspacePath,
@@ -111,11 +112,24 @@ export function createIntegrationGitWorkspace(options: {
     } catch {
       throw new IntegrationGitError('git_lock_present');
     }
-    try { return await work(); } finally { await lease.release(); }
+    let stopConfirmed = true;
+    const beforeLaunch = () => {
+      if (input.signal?.aborted) throw new IntegrationGitError('cancelled');
+      lease.assertCurrent?.();
+      input.beforeWrite?.();
+    };
+    try {
+      beforeLaunch();
+      return await work(beforeLaunch);
+    } catch (error) {
+      // An absent exit/stop receipt is not permission for another metadata writer.
+      if (error instanceof IntegrationGitError && !error.stopConfirmed) stopConfirmed = false;
+      throw error;
+    } finally { if (stopConfirmed) await lease.release(); }
   }
 
   async function run(cwd: string, args: readonly string[], input: IntegrationWorkspacePrepareInput,
-    allowedExitCodes: readonly number[] = [0], stdin?: Uint8Array): Promise<GitResult> {
+    allowedExitCodes: readonly number[] = [0], stdin?: Uint8Array, beforeLaunch?: () => void): Promise<GitResult> {
     let handle;
     try {
       handle = await processes.start({
@@ -127,7 +141,13 @@ export function createIntegrationGitWorkspace(options: {
         GIT_COMMITTER_EMAIL: input.gitIdentity.email,
       } : {}) },
       stdin, timeoutMs, maxInputBytes: 65_536, maxOutputBytes,
-      }, async identity => options.confirmProcessIdentity(identity), input.signal);
+      }, async identity => {
+        const receipt = await options.confirmProcessIdentity(identity);
+        // The durable identity commit yields; fence again before the supervisor releases Git.
+        beforeLaunch?.();
+        if (input.signal?.aborted) throw new IntegrationGitError('cancelled');
+        return receipt;
+      }, input.signal);
     } catch (error) {
       if (error instanceof Error && error.message.includes('stop_unconfirmed')) throw new IntegrationGitError('stop_unconfirmed', false);
       throw new IntegrationGitError('git_failed');
@@ -141,12 +161,15 @@ export function createIntegrationGitWorkspace(options: {
         else if (event.stream === 'stdout') stdout.push(Buffer.from(event.bytes));
       }
     } catch {
-      await handle.cancel();
-      const stopped = (await handle.stopped).confirmed;
+      let stopped = false;
+      try { await handle.cancel(); stopped = (await handle.stopped).confirmed; } catch { /* Retain the lock without a stop receipt. */ }
       throw new IntegrationGitError(stopped ? 'git_failed' : 'stop_unconfirmed', stopped);
     }
-    const result = await handle.result;
-    const stopped = result.stop.confirmed && (await handle.stopped).confirmed;
+    let result, stopped: boolean;
+    try {
+      result = await handle.result;
+      stopped = result.stop.confirmed && (await handle.stopped).confirmed;
+    } catch { throw new IntegrationGitError('stop_unconfirmed', false); }
     if (!stopped) throw new IntegrationGitError('stop_unconfirmed', false);
     if (result.droppedOutputBytes > 0 || outputBytes > maxOutputBytes) throw new IntegrationGitError('git_failed');
     if (result.reason !== null || result.signal !== null) throw new IntegrationGitError('operation_unknown');
@@ -207,6 +230,9 @@ export function createIntegrationGitWorkspace(options: {
     return false;
   }
   async function facts(path: string, input: IntegrationWorkspacePrepareInput): Promise<IntegrationWorkspaceFacts> {
+    const branch = await run(path, ['symbolic-ref', '--quiet', 'HEAD'], input, [0, 1]);
+    if (branch.exitCode === 0) throw new IntegrationGitError('workspace_branch_changed');
+    if (branch.exitCode !== 1) throw new IntegrationGitError('git_failed');
     const head = oid(text((await run(path, ['rev-parse', '--verify', 'HEAD^{commit}'], input)).output));
     const tree = oid(text((await run(path, ['rev-parse', '--verify', 'HEAD^{tree}'], input)).output));
     const raw = text((await run(path, ['cat-file', 'commit', head], input)).output);
@@ -264,11 +290,9 @@ export function createIntegrationGitWorkspace(options: {
       const source = await verifyTarget(input);
       const workspaceId = input.plan.integrationId;
       state = { input: { ...input, integrationPath: path }, source, privateGitDir: '', workspaceId };
-      const added = await withLock(input, input.plan.target.canonicalPath, () => {
-        input.beforeWrite?.();
-        return run(input.plan.target.canonicalPath,
-          ['worktree', 'add', '--detach', path, input.plan.target.baseCommit], input);
-      });
+      const added = await withLock(input, input.plan.target.canonicalPath, beforeLaunch =>
+        run(input.plan.target.canonicalPath,
+          ['worktree', 'add', '--detach', path, input.plan.target.baseCommit], input, [0], undefined, beforeLaunch));
       if (added.exitCode !== 0 || added.reason !== null) throw new IntegrationGitError('workspace_creation_failed');
       if (await safeRealpath(path) !== path) throw new IntegrationGitError('path_changed');
       const privateDir = await privateGitDir(path, input);
@@ -278,6 +302,8 @@ export function createIntegrationGitWorkspace(options: {
       if (workspaceFacts.head !== input.plan.target.baseCommit || workspaceFacts.statusPorcelain !== '') {
         throw new IntegrationGitError('workspace_creation_failed');
       }
+      input.beforeWrite?.();
+      if (input.signal?.aborted) throw new IntegrationGitError('cancelled');
       await writeFile(join(privateDir, OWNER_FILE), JSON.stringify({ workspaceId, ownerId: input.owner.ownerId,
         ownerVersion: input.owner.ownerVersion, planId: input.plan.integrationId, targetBase: input.plan.target.baseCommit }) + '\n', { flag: 'wx', mode: 0o600 });
       if (!(await sourceUnchanged(state, input))) throw new IntegrationGitError('source_changed');
@@ -320,9 +346,11 @@ export function createIntegrationGitWorkspace(options: {
           parentBefore: actualFacts.head, parents: actualFacts.parents, commitSha: actualFacts.head,
           treeSha: actualFacts.tree, status: 'already_included' };
         const steps = [...current.steps, step];
+        state.input.beforeWrite?.();
+        if (state.input.signal?.aborted) throw new IntegrationGitError('cancelled');
         await writeFile(join(state.privateGitDir, OWNER_FILE), JSON.stringify({ workspaceId: state.workspaceId,
           ownerId: state.input.owner.ownerId, ownerVersion: state.input.owner.ownerVersion,
-          planId: state.input.plan.integrationId, targetBase: state.input.plan.target.baseCommit, steps }) + '\\n', { mode: 0o600 });
+          planId: state.input.plan.integrationId, targetBase: state.input.plan.target.baseCommit, steps }) + '\n', { mode: 0o600 });
         if (!(await sourceUnchanged(state, state.input))) throw new IntegrationGitError('source_changed');
         current = makeHandle(state, 'ready', actualFacts.head, steps, actualFacts);
         state.input.onStep?.(current);
@@ -333,10 +361,8 @@ export function createIntegrationGitWorkspace(options: {
         continue;
       }
       const parentBefore = actualFacts.head;
-      const merged = await withLock(state.input, state.input.integrationPath, () => {
-        state.input.beforeWrite?.();
-        return run(state.input.integrationPath, ['merge', '--no-ff', '--no-commit', '--no-edit', inputSha], state.input, [0, 1]);
-      });
+      const merged = await withLock(state.input, state.input.integrationPath, beforeLaunch =>
+        run(state.input.integrationPath, ['merge', '--no-ff', '--no-commit', '--no-edit', inputSha], state.input, [0, 1], undefined, beforeLaunch));
       const afterMerge = await facts(state.input.integrationPath, state.input);
       if (merged.exitCode !== 0 || afterMerge.unresolvedPaths.length > 0) {
         const reason: IntegrationWorkspaceReason = afterMerge.unresolvedPaths.length > 0 ? 'merge_conflict' : 'merge_failed';
@@ -346,10 +372,8 @@ export function createIntegrationGitWorkspace(options: {
       const mergeHead = text((await run(state.input.integrationPath, ['rev-parse', '--verify', 'MERGE_HEAD'], state.input)).output).trim();
       if (mergeHead !== inputSha) throw new IntegrationGitError('commit_facts_mismatch');
       const message = `Merge ${inputSha} into ShipLoop integration ${state.input.plan.integrationId}\n`;
-      const committed = await withLock(state.input, state.input.integrationPath, () => {
-        state.input.beforeWrite?.();
-        return run(state.input.integrationPath, ['commit', '--no-gpg-sign', '--cleanup=verbatim', '--file=-'], state.input, [0], Buffer.from(message));
-      });
+      const committed = await withLock(state.input, state.input.integrationPath, beforeLaunch =>
+        run(state.input.integrationPath, ['commit', '--no-gpg-sign', '--cleanup=verbatim', '--file=-'], state.input, [0], Buffer.from(message), beforeLaunch));
       if (committed.exitCode !== 0) throw new IntegrationGitError('merge_failed');
       const afterCommit = await facts(state.input.integrationPath, state.input);
       if (afterCommit.head === parentBefore || afterCommit.parents[0] !== parentBefore || !afterCommit.parents.includes(inputSha)
@@ -357,6 +381,8 @@ export function createIntegrationGitWorkspace(options: {
       const step: IntegrationWorkspaceStep = { ordinal: current.steps.length + 1, featureId: next, inputSha,
         parentBefore, parents: afterCommit.parents, commitSha: afterCommit.head, treeSha: afterCommit.tree, status: 'succeeded' };
       const steps = [...current.steps, step];
+      state.input.beforeWrite?.();
+      if (state.input.signal?.aborted) throw new IntegrationGitError('cancelled');
       await writeFile(join(state.privateGitDir, OWNER_FILE), JSON.stringify({ workspaceId: state.workspaceId,
         ownerId: state.input.owner.ownerId, ownerVersion: state.input.owner.ownerVersion,
         planId: state.input.plan.integrationId, targetBase: state.input.plan.target.baseCommit, steps }) + '\n', { mode: 0o600 });
@@ -386,8 +412,8 @@ export function createIntegrationGitWorkspace(options: {
       if (current.statusPorcelain !== '' || current.unresolvedPaths.length > 0) return outcome('blocked', 'workspace_not_clean', workspace);
       if (await lockPresent(state.privateGitDir, state.source.commonDir, state.input)) return outcome('blocked', 'git_lock_present', workspace);
       if (!(await sourceUnchanged(state, state.input))) return outcome('blocked', 'source_changed', workspace);
-      const removed = await withLock(state.input, state.input.plan.target.canonicalPath, () => run(state.input.plan.target.canonicalPath,
-        ['worktree', 'remove', state.input.integrationPath], state.input));
+      const removed = await withLock(state.input, state.input.plan.target.canonicalPath, beforeLaunch => run(state.input.plan.target.canonicalPath,
+        ['worktree', 'remove', state.input.integrationPath], state.input, [0], undefined, beforeLaunch));
       if (removed.exitCode !== 0 || removed.reason !== null) return outcome('blocked', 'workspace_not_clean', workspace);
       try { await lstat(state.input.integrationPath); return outcome('blocked', 'workspace_not_clean', workspace); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }

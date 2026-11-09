@@ -216,7 +216,7 @@ export function createIntegrationVerificationService(deps: {
     if (settled !== null) return settled;
     let candidate: Candidate;
     try {
-      candidate = deps.atomic.transact(`${OPERATION}.admit`, tx => assertCandidate(tx, request, deps.journal, deps.readAuthorization));
+      candidate = structuredClone(deps.atomic.transact(`${OPERATION}.admit`, tx => assertCandidate(tx, request, deps.journal, deps.readAuthorization)));
     } catch (error) {
       if (error instanceof StorageError && error.details?.reason === 'authorization_not_current') {
         return blocked('authorization_not_current');
@@ -234,9 +234,11 @@ export function createIntegrationVerificationService(deps: {
     ): IntegrationVerificationResult => {
       try {
         const integration = deps.atomic.transact(`${OPERATION}.block`, tx => {
-          const current = tx.getIntegrationPlan(request.projectId, candidate.sourcePlanId);
-          if (current.integrationResult?.operationId !== request.operationId
-            || current.integrationResult?.operationStatus !== 'pending') return current;
+          const live = assertCandidate(tx, request, deps.journal, deps.readAuthorization);
+          if (live.operation.revision !== candidate.operation.revision
+            || live.sourcePlan.revision !== candidate.sourcePlan.revision
+            || !isDeepStrictEqual(live.observation, candidate.observation)) fail('source_changed');
+          const current = live.sourcePlan;
           return tx.updateIntegrationPlanStatus({
             projectId: request.projectId, integrationId: candidate.sourcePlanId, expectedRevision: current.revision,
             status: 'blocked', blockReasons: [...new Set([...current.blockReasons, blockReason])],
@@ -318,7 +320,7 @@ export function createIntegrationVerificationService(deps: {
         } satisfies IntegrationVerificationResult;
       });
     } catch (error) {
-      if (error instanceof StorageError && ['source_changed', 'stale_revision', 'owner_fenced', 'operation_fenced'].includes(String(error.details?.reason))) {
+      if (error instanceof StorageError && ['source_changed', 'stale_revision', 'owner_fenced', 'operation_fenced', 'authorization_not_current', 'source_plan_changed', 'candidate_not_ready'].includes(String(error.details?.reason))) {
         return blocked('settlement_conflict', candidate.sourcePlan, candidate.operation);
       }
       throw error;

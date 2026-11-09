@@ -5,6 +5,7 @@ export const INTEGRATION_WORKSPACE_STATUSES = ['ready', 'succeeded', 'blocked', 
 export type IntegrationWorkspaceStatus = typeof INTEGRATION_WORKSPACE_STATUSES[number];
 
 export type IntegrationWorkspaceReason =
+  | 'cancelled'
   | 'source_dirty'
   | 'target_head_drift'
   | 'repo_identity_changed'
@@ -13,6 +14,7 @@ export type IntegrationWorkspaceReason =
   | 'input_not_approved'
   | 'workspace_dirty'
   | 'workspace_not_clean'
+  | 'workspace_branch_changed'
   | 'workspace_head_drift'
   | 'git_lock_present'
   | 'merge_conflict'

@@ -453,6 +453,26 @@
           "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p05-10-f005-git-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p05-5-f008-cross-layer.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }

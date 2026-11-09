@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/delivery/integration-workspace-fencing.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/delivery/integration-recovery-reader.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/delivery/integration-command-replay.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/delivery/p05-7-f006-integration-reconciliation.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/delivery/p05-7-f005-integration-verification.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/scheduling/p05-5-f001-feature-resources.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/delivery/p05-7-f004-deterministic-integration.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/delivery/p07-5-f004-git-recovery-boundary.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/acceptance/p05-10-f005-git-integration.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/scheduling/p05-5-f008-cross-layer.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/runtime/p06-7-f005-process-recovery.test.ts", "all": true, "level": "integration" }
+    ]
+  }]
+}

@@ -130,6 +130,25 @@ describe('P05-7 F-005 integration verification', () => {
     expect(f.tx.updateIntegrationPlanStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'blocked', blockReasons: ['integration_evidence_incomplete'] }));
   });
 
+  it.each(['failure', 'late-success'] as const)(
+    '[case:integration-verification-late-%s-fenced] never publishes or changes the plan after authorization is revoked', async mode => {
+      const f = fixture();
+      let authorized = true;
+      const executor = { start: async () => {
+        authorized = false;
+        if (mode === 'failure') throw new Error('late verifier failure');
+        return { status: 'passed' as const, stopped: true, commitSha: SHA('c'), treeSha: SHA('d'),
+          inputDigest: 'c'.repeat(64), targetBase: SHA('b'), verificationPlan: { id: 'plan-ref', digest: DIGEST('a') },
+          verificationResult: { id: 'result-ref', digest: DIGEST('b') } };
+      } };
+      const result = await createIntegrationVerificationService({ atomic: f.atomic, journal: f.journal,
+        executor, readAuthorization: () => authorized }).run(request());
+      expect(result.outcome).toBe('blocked');
+      expect(f.tx.updateIntegrationPlanStatus).not.toHaveBeenCalled();
+      expect(f.tx.updateIntegrationPlanResult).not.toHaveBeenCalled();
+      expect(f.tx.finalizeGitOperation).not.toHaveBeenCalled();
+    });
+
   it('[case:integration-verification-stop-unconfirmed-keeps-pending-facts] blocks without settling the Git operation', async () => {
     const f = fixture();
     const executor = { start: async () => ({ status: 'passed' as const, stopped: false,

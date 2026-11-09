@@ -37,6 +37,7 @@ async function reconcile(
       intent: persisted.intent,
       ownerVersion: persisted.intent.budgetSnapshot?.ownerVersion as number,
       approvalCurrent: true,
+      resourceSet: f.authorization.resourceSet, leases: f.authorization.leases,
     }),
     verifyWriterStopped: async () => true,
     nowUtcMs: () => 1_900_000_100_010,

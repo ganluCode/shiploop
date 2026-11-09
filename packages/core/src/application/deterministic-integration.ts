@@ -5,7 +5,7 @@ import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { stableCanonicalJson } from '../ports/command-receipts.js';
 import { evaluateBatchBudgetReservation } from '../ports/execution-budget.js';
-import { normalizeFeatureResourceSet, validateFeatureResourceLeaseRecord } from '../ports/feature-resources.js';
+import { assertIntegrationResourceFence } from './integration-resource-fence.js';
 import type { FeatureResourceLeaseRecord, FeatureResourceSet } from '../ports/feature-resources.js';
 import { validateGitOperationRegisterInput } from '../ports/git-operations.js';
 import type { GitOperationRegisterInput } from '../ports/git-operations.js';
@@ -34,7 +34,7 @@ export interface IntegrationStartAuthorization {
 }
 
 export interface DeterministicIntegrationService {
-  start(request: IntegrationStartRequest): Promise<IntegrationExecutionObservation>;
+  start(request: IntegrationStartRequest, options?: { readonly signal?: AbortSignal }): Promise<IntegrationExecutionObservation>;
 }
 
 export function createDeterministicIntegrationService(deps: {
@@ -105,25 +105,13 @@ export function createDeterministicIntegrationService(deps: {
     // Existing cumulative ceilings and the original absolute deadlines still gate it.
     if (!budget.allowed || batch.deadlineAtUtcMs <= now()
       || run.startedAtUtcMs !== null && run.startedAtUtcMs + run.runTimeLimitMs <= now()) fail('budget_exhausted');
-    const resources = normalizeFeatureResourceSet(auth.resourceSet);
-    const leases = auth.leases.map(validateFeatureResourceLeaseRecord);
-    if (resources.projectId !== request.projectId
-      || !resources.resources.some(resource => resource.kind === 'feature_code_shared' && resource.key === `project:${request.projectId}:feature-code`)
-      || !resources.resources.some(resource => resource.kind === 'worktree_write_exclusive'
-        && resource.key === `project:${request.projectId}:worktree:${plan.integrationId}`)) fail('workspace_not_held');
-    for (const resource of resources.resources) {
-      const matching = leases.filter(lease => lease.resource.key === resource.key && lease.state !== 'released');
-      if (resource.accessMode === 'exclusive' && matching.some(lease => lease.ownerId !== intent.ownerId
-        || lease.ownerVersion !== auth.ownerVersion || lease.state !== 'held')) fail('workspace_not_held');
-      if (!matching.some(lease => isDeepStrictEqual(lease.resource, resource) && lease.projectId === request.projectId
-        && lease.ownerId === intent.ownerId && lease.ownerVersion === auth.ownerVersion
-        && lease.state === 'held' && lease.leaseUntilUtcMs > now())) fail('workspace_not_held');
-    }
+    assertIntegrationResourceFence({ projectId: request.projectId, integrationId: plan.integrationId,
+      ownerId: intent.ownerId, ownerVersion: auth.ownerVersion, resourceSet: auth.resourceSet, leases: auth.leases }, now());
     if (original && !isDeepStrictEqual(auth, original)) fail('authorization_changed');
     return { ...auth, intent };
   }
 
-  return { async start(raw) {
+  return { async start(raw, options) {
     if (!raw || Object.keys(raw).some(key => !['projectId', 'operationId', 'commandId', 'expectedFeatureRevision', 'inputDigest'].includes(key))) fail('invalid_request');
     const request = structuredClone(raw);
     validateStableId(request.projectId, { operation: OP }, 'projectId');
@@ -133,6 +121,16 @@ export function createDeterministicIntegrationService(deps: {
     if (!isUuidV4(request.commandId)) fail('invalid_command_id');
     const { commandId: _command, ...body } = request;
     const requestDigest = createHash('sha256').update(stableCanonicalJson(body)).digest('hex');
+    const replay = deps.atomic.transact(`${OP}.replay`, tx => {
+      const command = deps.journal.readCommand(tx, request.projectId, request.commandId);
+      if (command === null) return null;
+      if (command.operationId !== request.operationId || command.requestDigest !== requestDigest) fail('idempotency_key_reuse');
+      const recorded = deps.journal.read(tx, request.projectId, request.operationId);
+      if (!recorded || recorded.outcome === 'merging') fail('reconciliation_required');
+      return recorded;
+    });
+    if (replay !== null) return replay;
+    if (options?.signal?.aborted) fail('cancelled');
     const authorization = deps.atomic.transact(OP, tx => current(tx, request));
     if (await deps.verifyWriterStopped(authorization) !== true) fail('previous_writer_stop_unconfirmed');
     const started = deps.atomic.transact(OP, tx => {
@@ -159,6 +157,7 @@ export function createDeterministicIntegrationService(deps: {
     });
     if (started.recorded) return started.recorded;
     const check = () => deps.atomic.transact(OP, tx => {
+      if (options?.signal?.aborted) fail('cancelled');
       current(tx, request, authorization);
       const operation = tx.getGitOperation(request.projectId, request.operationId);
       if (operation.status !== 'pending' || operation.revision !== started.operation.revision
@@ -174,6 +173,7 @@ export function createDeterministicIntegrationService(deps: {
       integrationPath: authorization.intent.worktreePath,
       owner: { ownerId: authorization.intent.ownerId, ownerVersion: authorization.ownerVersion },
       gitIdentity: authorization.intent.gitIdentity, beforeWrite: check,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
       onStep: workspace => { record({ outcome: 'merging', reason: null, workspace, steps: workspace.steps }); },
     });
     check();
