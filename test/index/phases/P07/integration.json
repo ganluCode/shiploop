@@ -438,6 +438,21 @@
           "file": "test/modules/planning/feature-dag-diamond-evidence.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-7-f004-deterministic-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }
