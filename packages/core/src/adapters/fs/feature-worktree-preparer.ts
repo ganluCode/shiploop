@@ -97,6 +97,8 @@ export function createFeatureWorktreePreparer(options: {
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; ancestor = dirname(ancestor); }
         }
         const sourceHead = (await git(['rev-parse', '--verify', 'HEAD'])).output.trim();
+        const ancestry = await git(['merge-base', '--is-ancestor', baseline.baseCommit, sourceHead], [0, 1]);
+        if (ancestry.exitCode !== 0) throw new Error('base_commit_not_ancestor');
         const sourceBranch = (await git(['symbolic-ref', '--quiet', '--short', 'HEAD'])).output.trim();
         const sourceBaseline = { ...baseline, canonicalPath: binding.canonicalPath, branch: sourceBranch, baseCommit: sourceHead };
         const sourceBefore = await options.inspector.inspect(sourceBaseline);
