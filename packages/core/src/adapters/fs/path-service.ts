@@ -342,7 +342,7 @@ function buildService(
           },
         );
       }
-      if (validResource.type === 'feature_worktree_directory' && featureLookup === undefined) {
+      if ((validResource.type === 'feature_worktree_directory' || validResource.type === 'planning_workspace_directory') && featureLookup === undefined) {
         throw new PathResolutionError(
           'invalid_input',
           op,
@@ -357,7 +357,7 @@ function buildService(
       }
       // 存在性核验：未知项目由 StateStore 抛 StorageError(kind='not_found')，原样透出。
       await projectLookup.getProject(validScope.projectId);
-      if (validResource.type === 'feature_worktree_directory') {
+      if (validResource.type === 'feature_worktree_directory' || validResource.type === 'planning_workspace_directory') {
         // Feature 归属核验：未命中 not_found；跨项目（scope A 定位项目 B 的 Feature）ownership。
         const featureId = validResource.featureId as string;
         const view = (featureLookup as FeatureOwnershipLookup).readFeaturePlanView(featureId);

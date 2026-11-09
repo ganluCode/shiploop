@@ -21,7 +21,7 @@ import type { FakeRuntimeScriptStep } from '../../../packages/core/src/ports/fak
 import type { WorkTaskResult } from '../../../packages/core/src/application/work-tool-channel.ts';
 import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
-import { deriveFeatureWorktreeRelativeDir } from '../../../packages/core/src/ports/path-service.ts';
+import { deriveFeatureWorktreeRelativeDir, derivePlanningWorkspaceRelativeDir } from '../../../packages/core/src/ports/path-service.ts';
 import { readFeatureBranch } from '../feature-branch.ts';
 import { PLANNING_START_OPERATION } from '../../../packages/core/src/ports/planning-start.ts';
 import { PLANNING_CANDIDATE_SUBMIT_OPERATION } from '../../../packages/core/src/ports/planning-candidates.ts';
@@ -61,6 +61,8 @@ export interface F007Fixture {
   readonly runtimeStarts: () => number;
   readonly query: (sql: string, ...params: unknown[]) => Record<string, unknown>;
   readonly candidateBody: (overrides?: Record<string, unknown>) => string;
+  /** DAG / F-002：受控规划快照工作区路径（<dataRoot>/projects/<pid>/planning/<fid>）。 */
+  readonly planningWorkspacePath: string;
   /** 轮询等待 Attempt executing + Run/Batch running 的真实执行事实。 */
   waitForExecutingState(): Promise<void>;
   /** P05-1 / F-009：不等待执行状态，直接按当前 Attempt 事实受限绑定提交授权。 */
@@ -315,6 +317,7 @@ export async function openF007Fixture(options: {
         runtimeStarts: () => Number(query('SELECT runtime_starts AS n FROM execution_batches').n),
         query,
         candidateBody,
+        planningWorkspacePath: join(box.dataRoot, derivePlanningWorkspaceRelativeDir(projectId, featureId)),
         waitForExecutingState,
         bindSubmitBridge,
         submitCandidate,

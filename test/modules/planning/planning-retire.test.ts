@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { openF007Fixture, F007_NOW_BASE } from '../../helpers/planning/p05-1-f007-fixture.ts';
 import { withKnowledgeHost } from '../../helpers/host/knowledge-fixture.ts';
@@ -30,7 +31,10 @@ it.each(['retained','quarantined'])('retires a pre-reservation failure with %s w
     expect(f.query('SELECT COUNT(*) AS n FROM runtime_start_reservations').n).toBe(0);
     expect(f.query('SELECT COUNT(*) AS n FROM sessions').n).toBe(0);
     expect(f.query('SELECT COUNT(*) AS n FROM workspace_leases').n).toBe(0);
-    expect(f.query('SELECT status FROM managed_workspaces').status).toBe('retained');
+    /* DAG / F-002：planning 启动失败不产生 Feature 编码工作区（零 managed 行；
+     * 启动前已就绪的 detached 规划快照工作区保留在受控 planning 目录）。 */
+    expect(f.query('SELECT COUNT(*) AS n FROM managed_workspaces').n).toBe(0);
+    expect(existsSync(f.planningWorkspacePath)).toBe(true);
     if(workspaceStatus==='quarantined') db.prepare("UPDATE managed_workspaces SET status='quarantined',revision=revision+1").run();
     const before=db.prepare('SELECT * FROM attempts WHERE run_id=?').all(f.planningRunId);
     expect((await f.core.commandService.submit(f.box.localOwner(),retirement(f))).status).toBe('completed');

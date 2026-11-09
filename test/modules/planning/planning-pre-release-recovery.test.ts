@@ -1,8 +1,11 @@
 import { expect,it } from 'vitest';
 import { mkdirSync,writeFileSync,readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash,randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { openF007Fixture,F007_NOW_BASE,seedFeatureWorkspace } from '../../helpers/planning/p05-1-f007-fixture.ts';
+import { readFeatureBranch } from '../../helpers/feature-branch.ts';
+import { deriveFeatureWorktreeRelativeDir } from '../../../packages/core/src/ports/path-service.ts';
 import { createPiRuntimeDescriptor } from '../../../packages/host/src/runtime/pi-adapter.ts';
 import { RuntimeError } from '../../../packages/core/src/ports/runtime-execution.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
@@ -12,6 +15,12 @@ import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src
 async function fixture(historicalOwner=false,ownerStopped=true) {
   let root='';
   let bootstrapPath='';
+  /* DAG / F-002：planning 现使用独立 detached 快照工作区（不再创建/占用
+   * Feature 编码工作区）；本组用例针对「遗留规划工作区」的 pre-release
+   * 恢复/收尾机制。bootstrap 见证的 cwd 按所模拟的遗留现场写入：
+   * 历史 owner=旧编码 worktree；否则=受控 planning 快照工作区（遗留行
+   * 由下方注入绑定到 planning Attempt）。 */
+  let legacyCwd='';
   const f=await openF007Fixture({prefix:'planning-pre-release-',skipSeedWorkspace:true,
     workRuntimeFactory:context=>({entries:[{
       descriptor:createPiRuntimeDescriptor({providers:[{providerId:'provider',models:['model']}],permissionGrants:[],isolationModes:['trusted_project']}),
@@ -28,20 +37,47 @@ async function fixture(historicalOwner=false,ownerStopped=true) {
         mkdirSync(dir,{recursive:true,mode:0o700});
         bootstrapPath=join(dir,'bootstrap.json');
         writeFileSync(bootstrapPath,JSON.stringify({invocationId:request.invocationId,hostTimeUtcMs:F007_NOW_BASE,
-          cwd:join(context.workspaceRoots[request.cwd.root]!,request.cwd.relativePath),bodies}),{mode:0o600});
+          cwd:legacyCwd||join(context.workspaceRoots[request.cwd.root]!,request.cwd.relativePath),bodies}),{mode:0o600});
         throw new RuntimeError('process','runner_start_failed');
       }} }],eventIdentityPrefix:()=> 'fixture.'})});
   root=f.box.dataRoot;
+  let legacyBranch='';
   if(historicalOwner){
     const row={...f.query('SELECT * FROM runs WHERE id=?',f.planningRunId),id:randomUUID(),status:'cancelled',dispatch_ordinal:2};
     f.session.database.prepare(`INSERT INTO runs (${Object.keys(row).join(',')}) VALUES (${Object.keys(row).map(()=>'?').join(',')})`)
       .run(...Object.values(row) as (string|number|null)[]);
     await seedFeatureWorkspace(f.box,f.session,f.projectId,f.featureId,row.id,F007_NOW_BASE);
+    legacyCwd=join(f.box.dataRoot,deriveFeatureWorktreeRelativeDir(f.projectId,f.featureId));
+  }else{
+    /* 遗留规划工作区现场（非历史 owner）：与旧行为同形——Feature 编码
+     * worktree（feature 分支）。bootstrap 见证按该 cwd 写入（先于 scan）。 */
+    legacyBranch=readFeatureBranch(f.session,f.projectId,f.featureId);
+    const legacyPath=join(f.box.dataRoot,deriveFeatureWorktreeRelativeDir(f.projectId,f.featureId));
+    mkdirSync(dirname(legacyPath),{recursive:true});
+    execFileSync('git',['worktree','add','-b',legacyBranch,legacyPath,'HEAD'],{cwd:f.box.repoDirA});
+    legacyCwd=legacyPath;
   }
   await f.core.workExecution.scan();
   await expect.poll(()=>f.query('SELECT status FROM runs WHERE id=?',f.planningRunId).status,{timeout:15000}).toBe('failed');
   f.core.workExecution.enterRecovery();
   await f.core.workExecution.recover();
+  if(!historicalOwner){
+    /* 注入遗留规划工作区行（测试注入；生产中新规划运行不再产生该行）：
+     * 绑定 planning Attempt，状态隔离，与旧行为（planning 创建并隔离工作区）
+     * 同形，供 pre-release 机制核验。worktree 已在 scan 前按同形态创建。 */
+    const attempt=f.query('SELECT * FROM attempts WHERE run_id=?',f.planningRunId) as Record<string,unknown>;
+    const binding=f.query('SELECT id,binding_revision,repo_identity,git_common_dir FROM repository_bindings WHERE project_id=?',f.projectId) as Record<string,unknown>;
+    f.session.database.prepare(
+      'INSERT INTO managed_workspaces (id, created_at, project_id, revision, updated_at, feature_id, ' +
+        'repository_binding_id, repository_binding_revision, repo_identity, canonical_path, git_common_dir, ' +
+        'branch, base_commit, head_commit, code_digest, status, preparation_operation_id, owner_id, ' +
+        'host_instance_id, execution_version, run_id, attempt_id) VALUES ' +
+        `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(randomUUID(),F007_NOW_BASE,f.projectId,1,F007_NOW_BASE,f.featureId,binding.id,binding.binding_revision,
+      binding.repo_identity,join(f.box.dataRoot,deriveFeatureWorktreeRelativeDir(f.projectId,f.featureId)),binding.git_common_dir,legacyBranch,
+      execFileSync('git',['rev-parse','HEAD'],{cwd:f.box.repoDirA,encoding:'utf8'}).trim(),null,null,
+      'quarantined',randomUUID(),attempt.owner_id,attempt.host_instance_id,attempt.execution_version,f.planningRunId,attempt.id);
+  }
   if(historicalOwner){
     const owner=f.query('SELECT a.* FROM attempts a JOIN managed_workspaces w ON w.attempt_id=a.id');
     const s={...f.query('SELECT * FROM sessions WHERE attempt_id IN (SELECT id FROM attempts WHERE run_id=?)',f.planningRunId),

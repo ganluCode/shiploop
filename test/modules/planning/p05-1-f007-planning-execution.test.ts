@@ -28,6 +28,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createSqliteAttemptLifecycleStore } from '../../../packages/core/src/adapters/sqlite/attempt-lifecycle-store.ts';
 import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
@@ -72,8 +73,16 @@ describe('P05-1 / F-007 生产组合根 planning 执行', () => {
       { timeout: 15_000 }).toBe('succeeded');
     expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.box.repoDirA, encoding: 'utf8' })).toBe(sourceHead);
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: f.box.repoDirA, encoding: 'utf8' })).toBe(sourceStatus);
-    await expect.poll(() => f.query('SELECT status FROM managed_workspaces WHERE feature_id=?', f.featureId).status,
-      { timeout: 15_000 }).toBe('retained');
+    /* DAG / F-002：planning 不产生 Feature 编码 worktree（零 managed 行、零
+     * 编码分支）；代码快照 = 受控 planning 目录的 detached worktree，固定在
+     * 规划输入冻结基线（此处=源 HEAD）。 */
+    await expect.poll(() => f.query('SELECT COUNT(*) AS n FROM workspace_leases').n,
+      { timeout: 15_000 }).toBe(0);
+    expect(f.query('SELECT COUNT(*) AS n FROM managed_workspaces').n).toBe(0);
+    expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.planningWorkspacePath, encoding: 'utf8' })).toBe(sourceHead);
+    expect(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: f.planningWorkspacePath, encoding: 'utf8' }).trim()).toBe('HEAD');
+    expect(execFileSync('git', ['branch', '--list', 'feat/*'], { cwd: f.box.repoDirA, encoding: 'utf8' })).toBe('');
+    expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.box.repoDirA, encoding: 'utf8' })).toBe(sourceHead);
     await f.core.workExecution.scan();
     expect(f.runtimeStarts()).toBe(1);
   }, 120_000);
@@ -107,8 +116,11 @@ describe('P05-1 / F-007 生产组合根 planning 执行', () => {
       "SELECT (SELECT COUNT(*) FROM workspace_leases) AS leases, (SELECT state FROM run_dispatch_claims WHERE run_id = ?) AS claim," +
       ' (SELECT state FROM execution_slot_claims LIMIT 1) AS slot', f.planningRunId),
     { timeout: 15_000 }).toMatchObject({ leases: 0, claim: 'released', slot: 'released' });
+    /* DAG / F-002：预置编码工作区不被 planning 触碰（保持 ready，无 retain 写入）；
+     * 规划在其独立 detached 快照工作区执行。 */
     expect(f.query('SELECT status FROM managed_workspaces WHERE feature_id = ?', f.featureId))
-      .toMatchObject({ status: 'retained' });
+      .toMatchObject({ status: 'ready' });
+    expect(existsSync(f.planningWorkspacePath)).toBe(true);
     /* 重复唤醒不再调用 Runtime：无新 Attempt、runtime_starts 不变。 */
     expect(f.runtimeStarts()).toBe(1);
     await f.core.workExecution.scan();
@@ -138,8 +150,9 @@ describe('P05-1 / F-007 生产组合根 planning 执行', () => {
      * 候选上下文保持 open（可再次人工决策路径另由后续任务承担）。 */
     await expect.poll(() => Number((f.query('SELECT COUNT(*) AS n FROM workspace_leases') as { n: number }).n),
       { timeout: 15_000 }).toBe(0);
+    /* DAG / F-002：失败同样不触碰预置编码工作区；planning 专用占用已按停止证据释放。 */
     expect(f.query('SELECT status FROM managed_workspaces WHERE feature_id = ?', f.featureId))
-      .toMatchObject({ status: 'retained' });
+      .toMatchObject({ status: 'ready' });
     expect(f.query('SELECT status FROM planning_contexts WHERE run_id = ?', f.planningRunId))
       .toMatchObject({ status: 'open' });
     expect(f.runtimeStarts()).toBe(1);

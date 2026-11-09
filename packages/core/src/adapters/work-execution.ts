@@ -13,6 +13,8 @@ import { createSqliteWorkSessionStore } from './sqlite/work-session-store.js';
 import { createSqliteAttemptLifecycleStore } from './sqlite/attempt-lifecycle-store.js';
 import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
 import { createSqliteWorkspaceAccess } from './sqlite/workspace.js';
+import { PlanningSnapshotWorkspaceError } from './fs/planning-snapshot-workspace.js';
+import type { PlanningSnapshotWorktreePreparer } from './fs/planning-snapshot-workspace.js';
 import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retention.js';
 import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createRuntimeInferencePreflight, resolveRuntimeInferencePreflightPolicy } from '../application/runtime-inference-preflight.js';
@@ -148,6 +150,13 @@ export function assembleWorkExecution(options: {
   readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
     readonly worktreeId: string; readonly headCommit: string; readonly codeDigest: string;
   } | null>;
+  /**
+   * DAG / F-002：规划快照工作区准备器（detached worktree 于受控 planning 目录；
+   * 不建编码分支/不写 managed_workspaces）。planning 消费者必需——未装配时
+   * planning 认领结构化失败（planning_workspace_preparer_not_assembled），
+   * 不回退到 Feature 编码工作区准备。
+   */
+  readonly planningWorkspacePreparer?: PlanningSnapshotWorktreePreparer;
   /** F-006：派发归属/槽位心跳续租周期（毫秒）；0 关闭周期续租（测试可显式调用）。 */
   readonly heartbeatIntervalMs?: number;
   /** Internal default composition, sharing this Host's dispatch identity. */
@@ -156,6 +165,13 @@ export function assembleWorkExecution(options: {
   const { session, application: app } = options;
   const now = options.nowUtcMs ?? Date.now;
   const owner = randomUUID(), hostInstanceId = randomUUID();
+  /* DAG / F-002：planning 专用快照工作区准备器（缺省 fail-closed 包装——
+   * 未装配时 planning 认领消费结构化失败，绝不回退 Feature 编码工作区准备）。 */
+  const planningWorkspacePreparer: PlanningSnapshotWorktreePreparer = options.planningWorkspacePreparer ?? {
+    async ensure() {
+      throw new PlanningSnapshotWorkspaceError('planning_workspace_preparer_not_assembled', '规划快照工作区准备器未装配');
+    },
+  };
   const attempts = createSqliteAttemptAccess(session);
   const verification = createSqliteVerificationStore(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs });
   const dag = createSqliteTaskDagStore(session);
@@ -434,6 +450,34 @@ export function assembleWorkExecution(options: {
         expectedHash: createHash('sha256').update(body).digest('hex'), locator: `evidence/${operationId}.json`, content: [body] })).artifact.id;
     },
   });
+  const executionWorkspaceRetainer = createExecutionWorkspaceRetainer({ workspaces: createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now }), retention });
+  /**
+   * DAG / F-002：planning 占用释放（无 managed workspace 行的专用路径）。
+   * 纪律与 Workspace.retain 相同：受信停止证据（execution.stopVerifier——同一
+   * 监督上下文的停止确认或未启动证明）核验通过才释放三组租约；证据过期/无法
+   * 核验时隔离不释放。发布 planning 专属证据制品绑定释放决策；幂等重入对已
+   * 释放（零租约）直接返回。不修改任何 Feature 编码工作区状态。
+   */
+  async function retainPlanningOccupancy(input: import('../application/execution-supervision.js').ExecutionRetentionInput): Promise<void> {
+    const snapshot = resources.read(input.identity);
+    if (snapshot.leases.length === 0) return;
+    const stopToken = await resourcesStopVerifier().verify(snapshot);
+    const digest = createHash('sha256').update(JSON.stringify([
+      'planning-occupancy-retention', input.identity.projectId, input.identity.attemptId, input.identity.executionVersion,
+    ])).digest('hex');
+    const operationId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+    const body = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: 'planning-occupancy-retention', operationId,
+      identity: input.identity, runId: input.runId, taskId: input.taskId, featureId: input.featureId,
+      reason: input.reason, evidenceRefs: [input.evidenceRef], stop: stopToken === null ? 'unknown' : 'confirmed' }));
+    await publisher.publishArtifact({ projectId: input.identity.projectId, kind: 'workspace_evidence', mediaType: 'application/json',
+      expectedHash: createHash('sha256').update(body).digest('hex'), locator: `evidence/${operationId}.json`, content: [body] });
+    session.transactWrite('WorkExecution.planningRetain', () => {
+      const fresh = resources.read(input.identity);
+      if (fresh.leases.length === 0) return;
+      if (stopToken === null) resources.quarantineInTransaction(input.identity);
+      else resources.releaseStoppedInTransaction(input.identity, stopToken);
+    });
+  }
   execution = createExecutionService({ atomic: createSqliteAtomicCommandStore(session, { nowUtcMs: now }), resources, sessions, attempts, dag,
     inputBinding: { async bind(input) { const bound = await inputBinding.bind(input); readers.set(bound.request.invocationId, bound.reader); return bound; } },
     runtime: createRuntimeExecutionService({ configuration: options.capabilityCatalog, registry }),
@@ -448,7 +492,21 @@ export function assembleWorkExecution(options: {
     ...(runtimeAssembly?.prepareRequest === undefined ? {} : { prepareRuntimeRequest: runtimeAssembly.prepareRequest }),
     nowUtcMs: now,
     supervision: { stopWaitMs: 2_000, drainWaitMs: 2_000, closeWaitMs: 5_000,
-      retain: createExecutionWorkspaceRetainer({ workspaces: createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now }), retention }),
+      /* DAG / F-002：planning Attempt 无 managed workspace 行——编码工作区保留
+       * 路径对其 fail-closed（managed_workspace_missing）。planning 走专用占用
+       * 释放：同一受信停止证据核验后原子的释放/隔离三组租约，不触碰任何
+       * Feature 编码工作区事实。 */
+      retain: async (input) => {
+        const attempt = attempts.getAttempt(input.identity.projectId, input.identity.attemptId);
+        if (attempt.runId !== input.runId || attempt.taskId !== input.taskId) {
+          throw new StorageError('conflict', 'WorkExecution.retain', 'Attempt scope mismatch');
+        }
+        if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
+          await retainPlanningOccupancy(input);
+          return;
+        }
+        await executionWorkspaceRetainer(input);
+      },
       async routeFailure(input) {
         const work = input.request.identity;
         if (work.purpose !== 'work') return false;
@@ -493,7 +551,11 @@ export function assembleWorkExecution(options: {
           const stopEvidence = await execution.stopVerifier.verify(resources.read(identity));
           if (stopEvidence === null) { pause(); return false; }
           const binding = await app.stateStore.getRepositoryBinding(identity.projectId);
-          const workspace = await app.workWorkspaceAuthority.verifyPreparation(binding, input.request.featureId);
+          /* DAG / F-002：planning 换模续跑同样定位 planning 专用工作区
+           * （不绑定 Feature 编码 worktree 资源键）。 */
+          const workspace = input.request.prompt.kind === 'planning-prompt'
+            ? await app.workWorkspaceAuthority.locatePlanningWorkspace(binding, input.request.featureId)
+            : await app.workWorkspaceAuthority.verifyPreparation(binding, input.request.featureId);
           const view = dag.readTaskDagView(identity.projectId, work.runId);
           if (quiescing) { pause(); return false; }
           const switched = fallbackSwitch.switch({ switchKey: randomUUID(), projectId: identity.projectId,
@@ -639,26 +701,39 @@ export function assembleWorkExecution(options: {
       const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool,
         fallbacks: _fallbacks, fallbackPolicy: _policy, ...strategy } = config;
 
-      /* 工作区：首次 planning Attempt 也必须走正式准备流程，不能把尚未
-       * 创建的 Feature worktree 当作 Runtime cwd。认领阶段只验证目标路径
-       * 的授权边界；这里创建/复用受管 worktree 后，再以真实 realpath 核验。 */
-      const managed = createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now })
-        .readWorkspace(attempt.projectId, attempt.featureId);
-      const preparedWorkspace = managed === null ? await app.workspacePreparation.prepare({
-        identity,
-        runId: attempt.runId,
-        taskId: attempt.taskId,
-        claimKey: receipt.claimKey,
-        operationId: randomUUID(),
-        workspaceId: randomUUID(),
-      }) : null;
-      if (preparedWorkspace !== null && (preparedWorkspace.operation.status !== 'succeeded' || preparedWorkspace.workspace.status !== 'ready')) {
-        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Planning worktree preparation did not complete', {
-          details: { reason: 'workspace_not_ready' },
+      /* 工作区（DAG / F-002）：planning 不创建、也不复用 Feature 编码 worktree。
+       * 代码快照 = 规划输入冻结基线的 detached worktree（受控 planning 目录，
+       * 无编码分支、无 managed_workspaces 行；认领租约绑定 planning 专用
+       * workspace 资源键）。已存在的旧规划工作区留给 F-003 迁移入口，不在此
+       * 复用；准备失败结构化结算 preparation_failed，不回退编码工作区。 */
+      const planningBaseline = current.inputSnapshot.codeBaseline;
+      if (planningBaseline === undefined) {
+        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Planning snapshot has no frozen code baseline', {
+          details: { reason: 'planning_code_baseline_missing' },
         });
       }
       const binding = await app.stateStore.getRepositoryBinding(attempt.projectId);
-      const workspace = await app.workWorkspaceAuthority.verify(binding, preparedWorkspace?.workspace.canonicalPath ?? managed!.canonicalPath);
+      let planningCanonicalPath: string;
+      try {
+        planningCanonicalPath = (await planningWorkspacePreparer.ensure({
+          binding, featureId: attempt.featureId, headCommit: planningBaseline.headCommit,
+          admit: () => {
+            const freshAttempt = attempts.getAttempt(attempt.projectId, attempt.id);
+            if (freshAttempt.executionVersion !== attempt.executionVersion || freshAttempt.status !== 'preparing') {
+              throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Planning attempt fenced during workspace preparation', {
+                details: { reason: 'planning_identity_mismatch' },
+              });
+            }
+          },
+        })).canonicalPath;
+      } catch (error) {
+        const reason = error instanceof PlanningSnapshotWorkspaceError ? error.reason : 'planning_workspace_unavailable';
+        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Planning snapshot workspace preparation failed', {
+          details: { reason },
+          ...(error instanceof Error ? { cause: error } : {}),
+        });
+      }
+      const workspace = await app.workWorkspaceAuthority.verify(binding, planningCanonicalPath);
       const view = dag.readTaskDagView(attempt.projectId, attempt.runId);
       const nowMs = now();
       const batchDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs);

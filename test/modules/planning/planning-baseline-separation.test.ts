@@ -16,21 +16,35 @@
  * - resolveWorkspaceBaseCommit：集成基线优先；其次已批准规划冻结快照；绑定
  *   不一致拒绝；均无时沿用预览快照 HEAD。
  *
- * 本文件不覆盖（留给 Phase 集成/后续 Task）：真实 planning Runtime 进程的
- * 工作区创建路径（work-execution 派发分支）、SQLite 重启恢复与跨层 Host 调度。
+ * DAG / F-002（attempt 2 追加）规划 Runtime 工作区分离：
+ * - PathService planning_workspace_directory 受控定位与推导；
+ * - locatePlanningWorkspace 令牌与 Feature 编码 worktree 资源键严格不同；
+ * - createPlanningSnapshotWorktreePreparer：detached worktree 固定冻结基线、
+ *   幂等复用、漂移/非祖先/脏现场 fail-closed、源仓库 refs 零写入。
+ *   （F-007 夹具级运行时行为由 p05-1-f007-planning-execution 覆盖。）
+ *
+ * 本文件不覆盖（留给 Phase 集成）：真实 planning Runtime 进程全链、SQLite
+ * 重启恢复与跨层 Host 调度场景。
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { createSqliteAtomicCommandStore } from '../../../packages/core/src/adapters/sqlite/atomic-commands.ts';
 import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
 import { createSqliteStateStore } from '../../../packages/core/src/adapters/sqlite/state-store.ts';
+import { createSqliteQueryStore } from '../../../packages/core/src/adapters/sqlite/query-store.ts';
 import { createSqlitePlanningContextStore } from '../../../packages/core/src/adapters/sqlite/planning-context-store.ts';
 import { createArtifactFileStore } from '../../../packages/core/src/adapters/fs/artifact-files.ts';
 import type { ArtifactFileStore } from '../../../packages/core/src/ports/artifact-files.ts';
 import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
+import { createPlanningSnapshotWorktreePreparer, PlanningSnapshotWorkspaceError } from '../../../packages/core/src/adapters/fs/planning-snapshot-workspace.ts';
+import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
+import { createPathService } from '../../../packages/core/src/adapters/fs/path-service.ts';
+import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
+import { derivePlanningWorkspaceRelativeDir } from '../../../packages/core/src/ports/path-service.ts';
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
 import { createPlanningStartService } from '../../../packages/core/src/application/planning-start.ts';
 import { createArtifactPublisher } from '../../../packages/core/src/application/artifact-publish.ts';
@@ -521,4 +535,180 @@ describe('DAG / F-002 编码基线解析（resolveWorkspaceBaseCommit）', () =>
       expectPublicError(error, 'conflict', 'planning_baseline_binding_mismatch');
     }
   });
+});
+
+
+/* ------------------------------------------------------------------ *
+ * DAG / F-002 attempt 2：规划快照工作区（Runtime 层分离）
+ * ------------------------------------------------------------------ */
+
+describe('DAG / F-002 planning_workspace_directory 受控定位', () => {
+  it('[case:planning-workspace-derivation] 派生路径与编码 worktree 严格分离', () => {
+    expect(derivePlanningWorkspaceRelativeDir('proj-1', 'feat-1'))
+      .toBe('projects/proj-1/planning/feat-1');
+    expect(derivePlanningWorkspaceRelativeDir('proj-1', 'feat-1'))
+      .not.toContain('worktrees');
+  });
+});
+
+describe('DAG / F-002 规划快照准备器（真实 Git）', () => {
+  it('在冻结基线创建 detached worktree：无分支、幂等复用、源仓库零写入', async () => {
+    const box = createCommandsTestFixture({ prefix: 'shiploop-dag-f002-prep-' });
+    try {
+      const harness = await box.openTransactionalHarness({ busyTimeoutMs: 10, busyRetryAttempts: 2 });
+      const session = harness.session;
+      const nowUtcMs = (): number => NOW;
+      const artifactStore = createSqliteArtifactStore(session, { nowUtcMs });
+      const stateStore = createSqliteStateStore(session);
+      const queryStore = createSqliteQueryStore(session, { nowUtcMs });
+      const files = createArtifactFileStore({ dataRoot: box.dataRoot });
+      const publisher = createArtifactPublisher({ artifacts: artifactStore, files, limits: { maxSizeBytes: 16_000_000, timeoutMs: 60_000 } });
+      const verifier = createArtifactVerifier({ artifacts: artifactStore, files, limits: { maxReadBytes: 16_000_000 } });
+      const paths = createPathService({ dataRoot: box.dataRoot, projectLookup: stateStore, featureLookup: queryStore });
+      const authority = createWorkWorkspaceAuthority({ authorizedRoots: [box.dataRoot], preparationPaths: paths });
+      const commands = createCommandService({
+        atomicStore: createSqliteAtomicCommandStore(session, { nowUtcMs }),
+        repositoryInspector: createRepositoryInspector(),
+        capabilityCatalog: createStaticRuntimeCapabilityCatalog([
+          { runtimeId: 'pi', providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }] },
+        ]),
+        planningStart: createPlanningStartService({ nowMs: nowUtcMs }),
+        nowUtcMs,
+      });
+      const owner = createLocalOwnerPrincipal();
+      const submit = async (operation: string, payload: unknown, extra: Record<string, unknown> = {}) => {
+        const receipt = await commands.submit(owner, {
+          schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(NOW).toISOString(), operation, payload, ...extra,
+        });
+        if (receipt.status !== 'completed' && receipt.status !== 'accepted') {
+          throw new Error(`fixture command failed: ${JSON.stringify(receipt)}`);
+        }
+        return receipt;
+      };
+      const registered = await submit('project.register', {
+        repositoryPath: box.repoDirA, displayName: 'F-002 prep', description: null, labels: [],
+      }, { scope: { kind: 'registration' } }) as CommandReceipt & { result: { project: { id: string } } };
+      const projectId = registered.result.project.id;
+      const scope = { kind: 'project' as const, projectId };
+      await submit('settings.global.create', {
+        schemaVersion: 2, strategies: {
+          defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
+          purposeStrategies: { planner: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } },
+        },
+      }, { scope: { kind: 'global' } });
+      await submit('phase.create', { id: 'phase-1', title: 'DAG', description: null, labels: [] }, { scope });
+      const imported = await submit('feature.plan.import', {
+        phaseId: 'phase-1', plan: {
+          schemaVersion: 1,
+          feature: { title: '快照准备目标', description: null, labels: [], sourceRefs: [] },
+          tasks: [{ id: 't-1', title: '草稿', acceptance: { criteria: ['可规划'] }, dependsOn: [] }],
+        },
+      }, { scope, expectedRevision: 1 }) as CommandReceipt & { result: { feature: { id: string } } };
+      const featureId = imported.result.feature.id;
+
+      const binding = await stateStore.getRepositoryBinding(projectId);
+      const preparer = createPlanningSnapshotWorktreePreparer({
+        inspector: createRepositoryInspector(),
+        paths,
+        commandProcess: createCommandProcessAdapter(),
+        confirmProcessIdentity: async identity => ({ launchId: identity.launchId }),
+      });
+      const baselineCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: box.repoDirA, encoding: 'utf8' }).trim();
+      const refsBefore = execFileSync('git', ['for-each-ref', '--format=%(refname) %(objectname)'], { cwd: box.repoDirA, encoding: 'utf8' });
+
+      const first = await preparer.ensure({ binding, featureId, headCommit: baselineCommit });
+      const target = join(box.dataRoot, derivePlanningWorkspaceRelativeDir(projectId, featureId));
+      expect(first.canonicalPath).toBe(target);
+      expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: target, encoding: 'utf8' }).trim()).toBe(baselineCommit);
+      expect(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, encoding: 'utf8' }).trim()).toBe('HEAD');
+      /* 源仓库零写入：无新分支/引用移动（规划不产生编码分支提交）。 */
+      expect(execFileSync('git', ['for-each-ref', '--format=%(refname) %(objectname)'], { cwd: box.repoDirA, encoding: 'utf8' })).toBe(refsBefore);
+
+      /* 幂等复用：同一冻结基线再次 ensure 返回同一路径，不重建。 */
+      const again = await preparer.ensure({ binding, featureId, headCommit: baselineCommit });
+      expect(again.canonicalPath).toBe(target);
+
+      /* 认领令牌与编码 worktree 资源键严格不同（规划不占编码资源租约）。 */
+      const planningToken = await authority.locatePlanningWorkspace(binding, featureId);
+      const codingToken = await authority.verifyPreparation(binding, featureId);
+      expect(planningToken.resourceKey).not.toBe(codingToken.resourceKey);
+      expect(planningToken.canonicalPath).toContain('/planning/');
+      session.close();
+    } finally {
+      box.cleanup();
+    }
+  }, 120_000);
+
+  it('[case:planning-snapshot-stale] 现场不在冻结基线或基线非祖先：fail-closed', async () => {
+    const box = createCommandsTestFixture({ prefix: 'shiploop-dag-f002-stale-' });
+    try {
+      const harness = await box.openTransactionalHarness({ busyTimeoutMs: 10, busyRetryAttempts: 2 });
+      const session = harness.session;
+      const stateStore = createSqliteStateStore(session);
+      const queryStore = createSqliteQueryStore(session);
+      const paths = createPathService({ dataRoot: box.dataRoot, projectLookup: stateStore, featureLookup: queryStore });
+      const commands = createCommandService({
+        atomicStore: createSqliteAtomicCommandStore(session, { nowUtcMs: () => NOW }),
+        repositoryInspector: createRepositoryInspector(),
+        capabilityCatalog: createStaticRuntimeCapabilityCatalog([
+          { runtimeId: 'pi', providers: [{ providerId: 'anthropic', models: ['m'] }] },
+        ]),
+        planningStart: createPlanningStartService({ nowMs: () => NOW }),
+        nowUtcMs: () => NOW,
+      });
+      const owner = createLocalOwnerPrincipal();
+      const submit = async (operation: string, payload: unknown, extra: Record<string, unknown> = {}) => {
+        const receipt = await commands.submit(owner, {
+          schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(NOW).toISOString(), operation, payload, ...extra,
+        });
+        if (receipt.status !== 'completed' && receipt.status !== 'accepted') throw new Error(JSON.stringify(receipt));
+        return receipt;
+      };
+      const registered = await submit('project.register', {
+        repositoryPath: box.repoDirA, displayName: 'F-002 stale', description: null, labels: [],
+      }, { scope: { kind: 'registration' } }) as CommandReceipt & { result: { project: { id: string } } };
+      const projectId = registered.result.project.id;
+      const scope = { kind: 'project' as const, projectId };
+      await submit('settings.global.create', {
+        schemaVersion: 2, strategies: {
+          defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'm' },
+          purposeStrategies: { planner: { runtime: 'pi', provider: 'anthropic', model: 'm' } },
+        },
+      }, { scope: { kind: 'global' } });
+      await submit('phase.create', { id: 'phase-1', title: 'DAG', description: null, labels: [] }, { scope });
+      const imported = await submit('feature.plan.import', {
+        phaseId: 'phase-1', plan: {
+          schemaVersion: 1,
+          feature: { title: '漂移目标', description: null, labels: [], sourceRefs: [] },
+          tasks: [{ id: 't-1', title: '草稿', acceptance: { criteria: ['可规划'] }, dependsOn: [] }],
+        },
+      }, { scope, expectedRevision: 1 }) as CommandReceipt & { result: { feature: { id: string } } };
+      const featureId = imported.result.feature.id;
+      const binding = await stateStore.getRepositoryBinding(projectId);
+      const preparer = createPlanningSnapshotWorktreePreparer({
+        inspector: createRepositoryInspector(),
+        paths,
+        commandProcess: createCommandProcessAdapter(),
+        confirmProcessIdentity: async identity => ({ launchId: identity.launchId }),
+      });
+
+      /* 基线对象不在源仓库（历史缺失）：拒绝（cat-file 非零 → git_command_failed）。 */
+      await expect(preparer.ensure({ binding, featureId, headCommit: 'e'.repeat(40) }))
+        .rejects.toMatchObject({ name: 'PlanningSnapshotWorkspaceError', reason: 'git_command_failed' });
+
+      /* 源 HEAD 前进后旧快照仍是祖先：可创建（固定旧基线）。 */
+      const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: box.repoDirA, encoding: 'utf8' }).trim();
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'advance head'], { cwd: box.repoDirA });
+      const ensured = await preparer.ensure({ binding, featureId, headCommit: base });
+      expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ensured.canonicalPath, encoding: 'utf8' }).trim()).toBe(base);
+
+      /* 现场漂移：既有目录不在（新的）冻结基线时拒绝，不自动重建。 */
+      const moved = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: box.repoDirA, encoding: 'utf8' }).trim();
+      await expect(preparer.ensure({ binding, featureId, headCommit: moved }))
+        .rejects.toMatchObject({ name: 'PlanningSnapshotWorkspaceError', reason: 'planning_workspace_not_at_baseline' });
+      session.close();
+    } finally {
+      box.cleanup();
+    }
+  }, 120_000);
 });

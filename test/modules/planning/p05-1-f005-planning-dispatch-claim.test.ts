@@ -615,7 +615,10 @@ describe('P05-1 / F-005 planning Run 派发与原子认领', () => {
         limits: { maxRequiredItems: 8 },
         nowMs: () => NOW,
       }),
-      workspaceAuthority: { verifyPreparation: (b, featureId) => f.authority.verifyPreparation(b, featureId) },
+      workspaceAuthority: {
+        verifyPreparation: (b, featureId) => f.authority.verifyPreparation(b, featureId),
+        locatePlanningWorkspace: (b, featureId) => f.authority.locatePlanningWorkspace(b, featureId),
+      },
       repositoryBindings: { getRepositoryBinding: p => stateStore.getRepositoryBinding(p) },
       batchDeadline: {
         readDeadlineUtcMs: (p, r) => f.session.database.prepare<[string, string], { deadline_at: number | null }>(

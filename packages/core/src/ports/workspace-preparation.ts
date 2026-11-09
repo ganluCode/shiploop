@@ -17,6 +17,14 @@ export function deriveManagedFeatureBranch(projectId: string, featureId: string)
 export interface PreparationWorkspaceAuthority extends WorkWorkspaceAuthority {
   /** Reserves a PathService-derived location before a Git worktree exists. */
   verifyPreparation(binding: RepositoryBindingRecord, featureId: string): Promise<VerifiedWorkWorkspace>;
+  /**
+   * DAG / F-002：定位规划快照工作区（<dataRoot>/projects/<projectId>/planning/
+   * <featureId>）。与 verifyPreparation 同一“定位 ≠ 创建”纪律：只返回受控位置
+   * 令牌，不要求目录已存在；真实 detached worktree 由规划快照准备器创建后，
+   * 再通过 verify(realpath) 复核。规划认领据此绑定 planning 专用 workspace
+   * 资源键，不再占用 Feature 编码 worktree 目标。
+   */
+  locatePlanningWorkspace(binding: RepositoryBindingRecord, featureId: string): Promise<VerifiedWorkWorkspace>;
 }
 export interface WorkspacePreparationInput {
   readonly identity: WorkResourceIdentity;

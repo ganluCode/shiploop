@@ -13,7 +13,8 @@
             "case:baseline-legacy-digest-compat",
             "case:baseline-binding-group-validation",
             "case:base-commit-precedence",
-            "case:base-commit-binding-mismatch"
+            "case:base-commit-binding-mismatch",
+            "case:planning-workspace-derivation"
           ]
         },
         {

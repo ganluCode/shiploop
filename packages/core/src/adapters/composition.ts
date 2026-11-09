@@ -145,6 +145,7 @@ import { createTestTargetResolver } from './fs/verification-target-resolver.js';
 import { createWorkWorkspaceAuthority } from './fs/work-workspace.js';
 import { createWorkspaceInspector } from './fs/workspace-inspector.js';
 import { createFeatureWorktreePreparer } from './fs/feature-worktree-preparer.js';
+import { createPlanningSnapshotWorktreePreparer } from './fs/planning-snapshot-workspace.js';
 import { createFeatureWorktreeCleaner } from './fs/feature-worktree-cleaner.js';
 import { createFeatureWorktreeDiscarder } from './fs/feature-worktree-discarder.js';
 import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
@@ -1292,6 +1293,23 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         }).prepare(input);
       },
     };
+    /* DAG / F-002：规划快照工作区准备器（detached worktree；只读 repository
+     * inspector 核对；受监督 Git；不建编码分支/不写 managed_workspaces）。 */
+    const planningSnapshotWorkspace = {
+      async ensure(raw: unknown) {
+        const input = raw as { binding?: { projectId?: unknown }; featureId?: unknown; headCommit?: unknown };
+        const projectId = validateStableId(
+          (input?.binding as { projectId?: unknown } | undefined)?.projectId,
+          { operation: 'PlanningWorkspace.ensure' },
+          'binding.projectId',
+        );
+        return createPlanningSnapshotWorktreePreparer({
+          inspector: repositoryInspector,
+          paths: pathService,
+          confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId),
+        }).ensure(raw as Parameters<ReturnType<typeof createPlanningSnapshotWorktreePreparer>['ensure']>[0]);
+      },
+    };
     const workspaceRetentionService = createWorkspaceRetentionService({
       store: workspaceRetentionStore,
       stopVerifier: workspaceStopVerifier,
@@ -1448,6 +1466,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const verificationStops = createVerificationStopControl();
     const workExecution = assembleWorkExecution({ session,
+      planningWorkspacePreparer: planningSnapshotWorkspace,
       featureCloseoutFactory: identity => assembleFeatureCloseout({ ...identity, session, resources: workResources,
         artifacts: artifactStore, files: artifactFileStore, publisher: workspacePublisher,
         processes: workspaceCommandProcess, inspectorFor: workspaceInspectorForCall,

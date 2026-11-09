@@ -116,6 +116,20 @@ export function deriveFeatureWorktreeRelativeDir(projectId: string, featureId: s
   return `${deriveProjectRelativeDir(projectId)}/${FEATURE_WORKTREES_RELATIVE_DIR}/${featureId}`;
 }
 
+/** 数据根内规划快照工作区相对根（POSIX 分隔；DAG / F-002）。 */
+export const PLANNING_WORKSPACES_RELATIVE_DIR = 'planning';
+
+/**
+ * 规划快照工作区目录在数据根内的相对位置（POSIX 分隔；DAG / F-002）：
+ * <root>/projects/<projectId>/planning/<featureId>。与 Feature 编码 worktree
+ * （worktrees/<featureId>）严格分离：Planner 在此读取冻结代码快照（detached
+ * worktree，无编码分支），不占用正式编码工作区。调用前两个 ID 须已过
+ * validateStableId。
+ */
+export function derivePlanningWorkspaceRelativeDir(projectId: string, featureId: string): string {
+  return `${deriveProjectRelativeDir(projectId)}/${PLANNING_WORKSPACES_RELATIVE_DIR}/${featureId}`;
+}
+
 /**
  * 当前已实现的受控资源类型（白名单）。Run/Session/Worktree/documents 等目录形态
  * 尚未实现，一律拒绝，不提前创建。
@@ -135,6 +149,12 @@ export const PROJECT_RESOURCE_TYPES = [
    * 定位 ≠ 创建：只返回受控位置，不创建 worktree、不修改源仓库。
    */
   'feature_worktree_directory',
+  /**
+   * 规划快照工作区目录（DAG / F-002）：
+   * <root>/projects/<projectId>/planning/<featureId>。定位 ≠ 创建：只返回受控
+   * 位置；detached worktree 的创建由规划快照准备器负责，不建编码分支。
+   */
+  'planning_workspace_directory',
 ] as const;
 
 export type ProjectResourceType = (typeof PROJECT_RESOURCE_TYPES)[number];
@@ -148,7 +168,7 @@ export interface ProjectResourceRequest {
   readonly projectId?: string;
   /** 仅 artifact_content 必填；其余类型携带即拒绝。 */
   readonly artifactId?: string;
-  /** 仅 feature_worktree_directory 必填；其余类型携带即拒绝。 */
+  /** 仅 feature_worktree_directory / planning_workspace_directory 必填；其余类型携带即拒绝。 */
   readonly featureId?: string;
 }
 
@@ -189,16 +209,16 @@ export function validateProjectResourceRequest(
       artifactId: validateStableId(object.artifactId, context, 'resource.artifactId'),
     };
   }
-  if (type === 'feature_worktree_directory') {
+  if (type === 'feature_worktree_directory' || type === 'planning_workspace_directory') {
     if (featureId === undefined) {
       throw validationError(
         context,
         'resource.featureId',
-        'feature_worktree_directory 定位必须提供 featureId',
+        `${type} 定位必须提供 featureId`,
       );
     }
     if (object.artifactId !== undefined) {
-      throw validationError(context, 'resource.artifactId', 'feature_worktree_directory 不接受 artifactId');
+      throw validationError(context, 'resource.artifactId', `${type} 不接受 artifactId`);
     }
     return { type, ...(projectId !== undefined ? { projectId } : {}), featureId };
   }
@@ -213,7 +233,7 @@ export function validateProjectResourceRequest(
     throw validationError(
       context,
       'resource.featureId',
-      `仅 feature_worktree_directory 允许携带 featureId（${type} 不接受）`,
+      `仅 feature_worktree_directory/planning_workspace_directory 允许携带 featureId（${type} 不接受）`,
     );
   }
   return { type, ...(projectId !== undefined ? { projectId } : {}) };
@@ -260,6 +280,8 @@ export function deriveResourceRelativePath(
       });
     case 'feature_worktree_directory':
       return deriveFeatureWorktreeRelativeDir(projectId, resource.featureId as string);
+    case 'planning_workspace_directory':
+      return derivePlanningWorkspaceRelativeDir(projectId, resource.featureId as string);
   }
 }
 

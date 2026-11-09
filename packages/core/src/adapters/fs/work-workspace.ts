@@ -46,6 +46,22 @@ export function createWorkWorkspaceAuthority(options: {
       // preparation 创建后，再通过 verify(realpath) 复核。
       return issue(binding, target.absolutePath, authorizedRoot);
     },
+    async locatePlanningWorkspace(binding, featureId) {
+      if (!options.preparationPaths) throw new StorageError('validation', 'WorkWorkspace.locatePlanning', 'Preparation PathService is not assembled');
+      /* 先核对源仓库身份（与 verifyPreparation 同一纪律）：登记绑定的规范源路径
+       * 本身即已授权；规划快照从该源仓库派生。 */
+      const source = await this.verify(binding, binding.canonicalPath);
+      const target = await options.preparationPaths.locateProjectResource({ projectId: binding.projectId },
+        { type: 'planning_workspace_directory', featureId });
+      const authorizedRoot = roots.find(root => inside(root, target.absolutePath));
+      if (!authorizedRoot || source.binding.projectId !== target.projectId) {
+        throw new StorageError('ownership', 'WorkWorkspace.locatePlanning', 'Planning workspace path outside authorized roots');
+      }
+      /* DAG / F-002：只定位不创建。detached 快照 worktree 由规划快照准备器创建
+       * 后经 verify(realpath + repoIdentity) 复核；此处令牌仅用于认领绑定
+       * planning 专用 workspace 资源键（与编码 worktree 键严格不同）。 */
+      return issue(binding, target.absolutePath, authorizedRoot);
+    },
     async verify(binding, input) {
       if (typeof input !== 'string' || !isAbsolute(input) || input.split(sep).includes('..') || /[\0-\x1f\x7f]/.test(input)) {
         throw new StorageError('validation', 'WorkWorkspace.verify', 'Invalid workspace path');

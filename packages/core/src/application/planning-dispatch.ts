@@ -60,9 +60,11 @@ const PLANNING_TASK_TERMINAL_OR_RUNNING = new Set(['passed', 'failed', 'skipped'
 export interface PlanningDispatchPrepareDeps {
   readonly views: PlanningInputPreparationViewStore;
   readonly planningInputs: PlanningInputPreparePort;
-  /** 可信工作区权威（与编码准备同一 verifyPreparation 语义）。 */
+  /** 可信工作区权威（DAG / F-002：planning 认领定位 planning 专用工作区，
+   * 不再绑定 Feature 编码 worktree 目标；与编码准备分离）。 */
   readonly workspaceAuthority: {
     verifyPreparation(binding: RepositoryBindingRecord, featureId: string): Promise<VerifiedWorkWorkspace>;
+    locatePlanningWorkspace(binding: RepositoryBindingRecord, featureId: string): Promise<VerifiedWorkWorkspace>;
   };
   readonly repositoryBindings: { getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord> };
   /** 同项目 Run 的 Batch 绝对 deadline 读取（只读事实；无则 null）。 */
@@ -123,9 +125,13 @@ export function createPlanningDispatchPrepareService(deps: PlanningDispatchPrepa
         throw publicError('not_found', 'planning_task_missing', { taskId: view.planningTask.id });
       }
 
-      /* 4) 可信工作区令牌 + Batch deadline 截断租约。 */
+      /* 4) 可信工作区令牌 + Batch deadline 截断租约。DAG / F-002：planning 认领
+       * 定位 planning 专用工作区（projects/<projectId>/planning/<featureId>），
+       * 其 workspace 租约键与 Feature 编码 worktree 键严格不同——规划 Run 不
+       * 产生编码资源租约；真实 detached 快照 worktree 由规划执行分支在启动前
+       * 按冻结基线创建并 verify 复核。 */
       const binding = await deps.repositoryBindings.getRepositoryBinding(ref.projectId);
-      const workspace = await deps.workspaceAuthority.verifyPreparation(binding, view.feature.id);
+      const workspace = await deps.workspaceAuthority.locatePlanningWorkspace(binding, view.feature.id);
       const now = nowMs();
       const deadline = deps.batchDeadline.readDeadlineUtcMs(ref.projectId, ref.runId);
       const leaseUntilUtcMs = deadline === null ? now + leaseMs : Math.min(now + leaseMs, deadline);
