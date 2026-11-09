@@ -129,6 +129,8 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // HostClient 入口属 F-012）。
   'planning.start',
   'planning.retire',
+  'planning.migration.preview',
+  'planning.migration.confirm',
   // P05-1 / F-008/F-012：候选人工批准/拒绝经同一通用命令路由接线（短写事务
   // 内重核候选身份/摘要与目标 revision；HostClient 入口属 F-012）。
   'planning.candidate.decide',

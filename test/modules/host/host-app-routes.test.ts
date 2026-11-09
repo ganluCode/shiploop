@@ -775,6 +775,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P05-1 / F-012：一次性规划与候选人工决策已接通通用命令面。
         'planning.start',
         'planning.retire',
+        'planning.migration.preview',
+        'planning.migration.confirm',
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
@@ -1065,6 +1067,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P05-1 / F-012：规划命令经同一通用路由接线并宣告能力。
         'planning.start',
         'planning.retire',
+        'planning.migration.preview',
+        'planning.migration.confirm',
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',

@@ -656,7 +656,27 @@ export interface RetirePlanningInput {
   readonly commandId?: string;
 }
 
-/** P05-1 / F-012 planning.candidate.decide 输入（摘要绑定的人工决策）。 */
+export interface PreviewPlanningMigrationInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly commandId?: string;
+}
+
+export interface ConfirmPlanningMigrationInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly contextId: string;
+  readonly candidateId: string;
+  readonly runId: string;
+  readonly targetRole: 'planning' | 'coding';
+  readonly workspaceId: string;
+  readonly workspaceRevision: number;
+  readonly headCommit: string;
+  readonly previewDigest: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
 export interface DecidePlanningCandidateInput {
   readonly projectId: string;
   readonly candidateId: string;
@@ -1165,6 +1185,8 @@ export interface HostClientApplication {
    */
   startPlanning(input: StartPlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   retirePlanning(input: RetirePlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  previewPlanningMigration(input: PreviewPlanningMigrationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  confirmPlanningMigration(input: ConfirmPlanningMigrationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /**
    * P05-1 / F-012 planning.candidate.decide：候选人工批准/拒绝（摘要绑定 +
    * Feature revision CAS；批准要求规划 Run 已 succeeded，由 Core 重核）。
@@ -4337,6 +4359,25 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
         payload: { featureId: object.featureId, contextId: object.contextId, candidateId: object.candidateId,
           runId: object.runId, workspaceRevision: object.workspaceRevision } }, options);
+    },
+
+    async previewPlanningMigration(input: PreviewPlanningMigrationInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'featureId', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'planning.migration.preview',
+        scope: { kind: 'project', projectId }, payload: { featureId } }, options);
+    },
+
+    async confirmPlanningMigration(input: ConfirmPlanningMigrationInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input,
+        ['projectId', 'featureId', 'contextId', 'candidateId', 'runId', 'targetRole', 'workspaceId', 'workspaceRevision', 'headCommit', 'previewDigest', 'expectedRevision', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'planning.migration.confirm',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: { featureId: object.featureId, contextId: object.contextId, candidateId: object.candidateId, runId: object.runId,
+          targetRole: object.targetRole, workspaceId: object.workspaceId, workspaceRevision: object.workspaceRevision,
+          headCommit: object.headCommit, previewDigest: object.previewDigest } }, options);
     },
 
     async decidePlanningCandidate(

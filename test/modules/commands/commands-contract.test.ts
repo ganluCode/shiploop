@@ -213,6 +213,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.budget.revise',
       'planning.start',
       'planning.retire',
+      'planning.migration.preview',
+      'planning.migration.confirm',
       'planning.candidate.decide',
       // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
       // 创建类不携带 expectedRevision；预览绑定在 payload 内由应用层重核）。
@@ -280,6 +282,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.budget.revise': { scopeKind: 'project', mutation: 'update', capability: 'execution.budget.revise' },
       'planning.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'planning.retire': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'planning.migration.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+      'planning.migration.confirm': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'planning.candidate.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'workspace.discard': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
       'workspace.discard.preview': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },

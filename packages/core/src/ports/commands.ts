@@ -50,6 +50,8 @@ import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
 import { validatePlanningRetirePayload } from './planning-retire.js';
 import type { ValidatedPlanningRetirePayload } from './planning-retire.js';
+import { validatePlanningMigrationConfirmPayload, PLANNING_MIGRATION_CONFIRM_OPERATION, PLANNING_MIGRATION_PREVIEW_OPERATION } from './planning-migration.js';
+import type { PlanningMigrationConfirmPayload } from './planning-migration.js';
 import { validateStableId, validateSha256Digest, normalizeLabels } from './validation.js';
 import {
   PROJECT_RESOURCE_COMMAND_OPERATIONS,
@@ -262,6 +264,8 @@ export const COMMAND_OPERATIONS = [
   // 不借用编码计划审批，不在命令提交中启动模型）。
   'planning.start',
   'planning.retire',
+  PLANNING_MIGRATION_PREVIEW_OPERATION,
+  PLANNING_MIGRATION_CONFIRM_OPERATION,
   // P05-1 / F-008：候选摘要绑定的人工批准/拒绝。
   'planning.candidate.decide',
   // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
@@ -456,6 +460,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       capability: 'execution.start',
     },
     'planning.retire': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    [PLANNING_MIGRATION_PREVIEW_OPERATION]: { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+    [PLANNING_MIGRATION_CONFIRM_OPERATION]: { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'planning.candidate.decide': {
       scopeKind: 'project',
       mutation: 'update',
@@ -1303,6 +1309,18 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedPlanningRetirePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: typeof PLANNING_MIGRATION_PREVIEW_OPERATION;
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: Readonly<Record<string, unknown>>;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: typeof PLANNING_MIGRATION_CONFIRM_OPERATION;
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: PlanningMigrationConfirmPayload;
     })
   // P03-3 / F-009：批次预算显式修订命令信封（更新类必须携带 expectedRevision
   // =目标 Batch 当前 budget_revision；payload 只含 batchId/budget/reason）。
@@ -2561,6 +2579,15 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: expectedRevision as number,
       payload: validatePlanningStartPayload(operation, object.payload),
     };
+  }
+  if (operation === PLANNING_MIGRATION_PREVIEW_OPERATION) {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    return { ...base, operation, scope, expectedRevision: null, payload: object.payload as Readonly<Record<string, unknown>> };
+  }
+  if (operation === PLANNING_MIGRATION_CONFIRM_OPERATION) {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+      payload: validatePlanningMigrationConfirmPayload(object.payload) };
   }
   if (operation === 'planning.retire') {
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');

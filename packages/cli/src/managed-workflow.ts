@@ -9,6 +9,8 @@ shiploop document write --project <id> --path <relative.md> --input <file.md> [-
 shiploop feature create --project <id> --phase <id> --title <title> --prd <relative.md> [--design <relative.md>] [--json]
 shiploop planning start <featureId> --project <id> [--budget <budget.json>] [--json]
 shiploop planning retire <featureId> --project <id> --context <id> --candidate <id> --run <id> --revision <n> --workspace-revision <n|none> [--command-id <id>] [--json]
+shiploop planning migration-preview <featureId> --project <id> [--command-id <id>] [--json]
+shiploop planning migration-confirm <featureId> --project <id> --context <id> --candidate <id> --run <id> --revision <n> --target-role <planning|coding> --workspace-id <id> --workspace-revision <n> --head-commit <sha> --preview-digest <sha256> [--command-id <id>] [--json]
 All paths are relative to the project managed documents directory. No model request on create.
 Planning defaults: one Run, 3 Attempts/starts, 7 days, no token/cost cap; --budget overrides.
 All commands accept --data-root; create/start accept --command-id for receipt replay.
@@ -30,7 +32,7 @@ function readFile(path: string, maximum = 262144): string {
 export function isManagedWorkflow(args: readonly string[]): boolean {
   return args[0] === 'project' && args[1] === 'documents' || args[0] === 'document'
     || args[0] === 'feature' && args[1] === 'create'
-    || args[0] === 'planning' && (args[1] === 'retire' || args[1] === 'start' && !args.includes('--input'));
+    || args[0] === 'planning' && (args[1] === 'retire' || args[1] === 'migration-preview' || args[1] === 'migration-confirm' || args[1] === 'start' && !args.includes('--input'));
 }
 
 export function parseManagedWorkflow(args: readonly string[]) {
@@ -41,6 +43,8 @@ export function parseManagedWorkflow(args: readonly string[]) {
     'feature.create': ['--project', '--phase', '--title', '--prd', '--design', '--command-id', '--data-root', '--json'],
     'planning.start': ['--project', '--phase', '--revision', '--budget', '--command-id', '--data-root', '--json'],
     'planning.retire': ['--project', '--context', '--candidate', '--run', '--revision', '--workspace-revision', '--command-id', '--data-root', '--json'],
+    'planning.migration-preview': ['--project', '--command-id', '--data-root', '--json'],
+    'planning.migration-confirm': ['--project', '--context', '--candidate', '--run', '--revision', '--target-role', '--workspace-id', '--workspace-revision', '--head-commit', '--preview-digest', '--command-id', '--data-root', '--json'],
   };
   if (!allowed[command]) throw new Error('managed_workflow_invalid_input');
   const flags = new Map<string, string | boolean>();
@@ -59,11 +63,17 @@ export function parseManagedWorkflow(args: readonly string[]) {
   const projectId = required('--project');
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(projectId)) throw new Error('managed_workflow_invalid_input');
   if (command.startsWith('planning.') && (!featureId || !ID.test(featureId))) throw new Error('managed_workflow_invalid_input');
-  if (command === 'planning.retire') {
+  if (command === 'planning.retire' || command === 'planning.migration-confirm') {
     for (const key of ['--context', '--candidate', '--run']) if (!ID.test(required(key))) throw new Error('managed_workflow_invalid_input');
     if (!/^[1-9][0-9]*$/.test(required('--revision')) || !Number.isSafeInteger(Number(value('--revision')))) throw new Error('managed_workflow_invalid_input');
-    const revision = required('--workspace-revision');
-    if (revision !== 'none' && (!/^[1-9][0-9]*$/.test(revision) || !Number.isSafeInteger(Number(revision)))) throw new Error('managed_workflow_invalid_input');
+    if (command === 'planning.retire') {
+      const revision = required('--workspace-revision');
+      if (revision !== 'none' && (!/^[1-9][0-9]*$/.test(revision) || !Number.isSafeInteger(Number(revision)))) throw new Error('managed_workflow_invalid_input');
+    } else {
+      if (value('--target-role') !== 'planning' && value('--target-role') !== 'coding') throw new Error('managed_workflow_invalid_input');
+      for (const key of ['--workspace-id', '--head-commit', '--preview-digest']) if (!value(key)) throw new Error('managed_workflow_invalid_input');
+      if (!/^[1-9][0-9]*$/.test(required('--workspace-revision')) || !Number.isSafeInteger(Number(value('--workspace-revision')))) throw new Error('managed_workflow_invalid_input');
+    }
   }
   if (command === 'feature.create') { required('--phase'); required('--title'); required('--prd'); }
   if (command === 'document.write') { required('--path'); required('--input'); }
@@ -95,7 +105,14 @@ export async function runManagedWorkflow(options: { args: readonly string[]; use
     if (command === 'project.documents') result = await client.getProjectDocuments(projectId);
     else if (command === 'document.write') result = await client.writeProjectDocument(projectId,
       { path: value('--path')!, content: text!, ...(value('--expected-hash') ? { expectedHash: value('--expected-hash')! } : {}) });
-    else if (command === 'planning.retire') {
+    else if (command === 'planning.migration-preview') {
+      result = await client.previewPlanningMigration({ projectId, featureId: parsed.featureId!, commandId: commandId! });
+    } else if (command === 'planning.migration-confirm') {
+      result = await client.confirmPlanningMigration({ projectId, featureId: parsed.featureId!, contextId: value('--context')!, candidateId: value('--candidate')!,
+        runId: value('--run')!, expectedRevision: Number(value('--revision')), targetRole: value('--target-role') as 'planning' | 'coding',
+        workspaceId: value('--workspace-id')!, workspaceRevision: Number(value('--workspace-revision')), headCommit: value('--head-commit')!,
+        previewDigest: value('--preview-digest')!, commandId: commandId! });
+    } else if (command === 'planning.retire') {
       const payload = { featureId: parsed.featureId!, contextId: value('--context')!, candidateId: value('--candidate')!,
         runId: value('--run')!, workspaceRevision: value('--workspace-revision') === 'none' ? null : Number(value('--workspace-revision')) };
       // Rebuild the original envelope on explicit replay; changed payload/revision still reaches Core's digest check.

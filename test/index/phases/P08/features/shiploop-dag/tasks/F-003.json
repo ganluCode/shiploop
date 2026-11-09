@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/commands/commands-contract.test.ts",
+          "level": "unit",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/planning-migration-port.test.ts",
+          "level": "unit",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/planning-migration-cli.test.ts",
+          "level": "unit",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

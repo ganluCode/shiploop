@@ -100,6 +100,8 @@ import type { ExecutionPreviewPort } from './execution-preview.js';
 import type { ExecutionPreviewResult } from '../ports/execution-preview.js';
 import { EXECUTION_START_OPERATION } from '../ports/execution-start.js';
 import { PLANNING_START_OPERATION } from '../ports/planning-start.js';
+import { PLANNING_MIGRATION_CONFIRM_OPERATION, PLANNING_MIGRATION_PREVIEW_OPERATION } from '../ports/planning-migration.js';
+import type { PlanningMigrationConfirmPayload, PlanningMigrationPreview } from '../ports/planning-migration.js';
 import type { PlanningStartPort, PreparedPlanningStart } from '../ports/planning-start.js';
 import { signalPlanningRunDispatchAfterCommit } from './planning-start.js';
 import {
@@ -234,6 +236,8 @@ export interface CommandServiceOptions {
    * 不传则命令 unsupported，不冒充能力）。装配者：composition 根。
    */
   readonly planningStart?: PlanningStartPort;
+  readonly preparePlanningMigrationPreview?: (principal: TrustedPrincipal, projectId: string, featureId: string) => Promise<PlanningMigrationPreview>;
+  readonly preparePlanningMigrationConfirm?: (input: PlanningMigrationConfirmPayload & { readonly projectId: string; readonly expectedFeatureRevision: number }) => Promise<object | undefined>;
   readonly preparePlanningRetirement?: (input: import('../ports/planning-retire.js').PlanningRetireInput) => Promise<object | undefined>;
   readonly afterPlanningRetirement?: () => Promise<void>;
   readonly prepareManagedPlanning?: (principal: TrustedPrincipal, projectId: string,
@@ -924,6 +928,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && taskVerificationContinue === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if ((envelope.operation === PLANNING_MIGRATION_PREVIEW_OPERATION || envelope.operation === PLANNING_MIGRATION_CONFIRM_OPERATION)
+          && options.preparePlanningMigrationPreview === undefined && options.preparePlanningMigrationConfirm === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (envelope.operation === 'project.resource.import' || envelope.operation === 'project.resource.enable'
           || envelope.operation === 'project.resource.disable' || envelope.operation === 'project.resource.revoke') {
           if (projectResources === undefined) throw new PublicError('unsupported', operation);
@@ -967,6 +975,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_START_OPERATION &&
           envelope.operation !== PLANNING_START_OPERATION &&
           envelope.operation !== 'planning.retire' &&
+          envelope.operation !== PLANNING_MIGRATION_PREVIEW_OPERATION &&
+          envelope.operation !== PLANNING_MIGRATION_CONFIRM_OPERATION &&
           envelope.operation !== 'planning.candidate.decide' &&
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
@@ -998,9 +1008,31 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
 
         let continuationStopEvidence: unknown;
-        const planningRetirementEvidence = envelope.operation === 'planning.retire' && existing === undefined
+        let planningMigrationPreviewResult: PlanningMigrationPreview | undefined;
+        if (envelope.operation === PLANNING_MIGRATION_PREVIEW_OPERATION && existing === undefined) {
+          const payload = envelope.payload as Record<string, unknown>;
+          if (Object.keys(payload).some(key => key !== 'featureId') || typeof payload.featureId !== 'string') {
+            throw new PublicError('invalid_input', operation, undefined, { details: { field: 'payload', reason: 'unknown_keys' } });
+          }
+          if (options.preparePlanningMigrationPreview === undefined) throw new PublicError('unsupported', operation);
+          planningMigrationPreviewResult = await options.preparePlanningMigrationPreview(principal, envelope.scope.projectId, payload.featureId);
+        }
+        let planningRetirementEvidence = envelope.operation === 'planning.retire' && existing === undefined
           ? await options.preparePlanningRetirement?.({...envelope.payload,projectId:envelope.scope.projectId,
             expectedFeatureRevision:envelope.expectedRevision}) : undefined;
+        if (envelope.operation === PLANNING_MIGRATION_CONFIRM_OPERATION && existing === undefined) {
+          if (options.preparePlanningMigrationConfirm === undefined) throw new PublicError('unsupported', operation);
+          await options.preparePlanningMigrationConfirm({
+            ...(envelope.payload as PlanningMigrationConfirmPayload), projectId: envelope.scope.projectId,
+            expectedFeatureRevision: envelope.expectedRevision,
+          });
+          const payload = envelope.payload as PlanningMigrationConfirmPayload;
+          planningRetirementEvidence = await options.preparePlanningRetirement?.({
+            projectId: envelope.scope.projectId, featureId: payload.featureId, contextId: payload.contextId,
+            candidateId: payload.candidateId, runId: payload.runId, workspaceRevision: payload.workspaceRevision,
+            expectedFeatureRevision: envelope.expectedRevision,
+          });
+        }
         if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && existing === undefined) {
           if (typeof taskVerificationContinue?.verifyCurrentEvidence !== 'function') {
             throw new PublicError('unsupported', operation);
@@ -1723,6 +1755,37 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               { schedulerAssembled: executionDispatchSignal !== undefined },
             );
           }
+          if (envelope.operation === PLANNING_MIGRATION_CONFIRM_OPERATION) {
+            try { transaction.getProject(envelope.scope.projectId); }
+            catch (error) { mapProjectLookupError(error, envelope.operation); }
+            const payload = envelope.payload as PlanningMigrationConfirmPayload;
+            const retired = transaction.retireFailedPlanning({ projectId: envelope.scope.projectId,
+              featureId: payload.featureId, contextId: payload.contextId, candidateId: payload.candidateId,
+              runId: payload.runId, workspaceRevision: payload.workspaceRevision,
+              expectedFeatureRevision: envelope.expectedRevision }, planningRetirementEvidence);
+            const result = {
+              schemaVersion: 1 as const, migrated: true as const, targetRole: payload.targetRole,
+              sourceRole: 'legacy_planner' as const, featureId: payload.featureId, contextId: payload.contextId,
+              runId: payload.runId, workspaceId: payload.workspaceId, identities: {
+                featureId: payload.featureId, contextId: payload.contextId, candidateId: payload.candidateId,
+                runId: payload.runId, workspaceId: payload.workspaceId,
+              }, planningRetired: retired.status === 'cancelled', featurePassed: false as const,
+              taskPassed: false as const, budgetReset: false as const, runtimeStarted: false as const,
+            };
+            const receipt = createCompletedReceipt({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)), result });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
+          if (envelope.operation === PLANNING_MIGRATION_PREVIEW_OPERATION) {
+            if (planningMigrationPreviewResult === undefined) throw new TypeError('规划迁移预览缺少事务外准备结果');
+            const receipt = createCompletedReceipt({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)), result: planningMigrationPreviewResult });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
           if (envelope.operation === 'planning.retire') {
             try { transaction.getProject(envelope.scope.projectId); }
             catch (error) { mapProjectLookupError(error, envelope.operation); }
@@ -1886,7 +1949,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             envelope.payload.request.featureId,
           );
         }
-        if (envelope.operation==='planning.retire' && receipt.status==='completed') {
+        if ((envelope.operation === 'planning.retire' || envelope.operation === PLANNING_MIGRATION_CONFIRM_OPERATION) && receipt.status==='completed') {
           await options.afterPlanningRetirement?.();
         }
         // P03-9 / F-008：显式 resume 提交后只对新回执发出调度唤醒；approval 缺失

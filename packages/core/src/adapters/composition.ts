@@ -159,6 +159,7 @@ import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retentio
 import { createSqliteWorkspaceCleanerStore } from './sqlite/workspace-cleaner.js';
 import { createSqliteWorkspaceDiscardStore } from './sqlite/workspace-discard.js';
 import { createSqliteWorkspaceDiscardPreviewStore } from './sqlite/workspace-discard.js';
+import { createSqlitePlanningMigrationService } from './sqlite/planning-migration.js';
 import { createSqliteWorkspaceAccess } from './sqlite/workspace.js';
 import { createWorkResourceStopVerifier } from '../application/work-resource-stop.js';
 import { createTaskVerificationCompletionService } from '../application/task-verification-completion.js';
@@ -1587,6 +1588,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
     const projectDeleteStore = createSqliteProjectDeleteStore(session, { nowUtcMs, maintenanceGate });
+    const planningMigration = createSqlitePlanningMigrationService({ session,
+      inspectorFor: workspaceInspectorForCall,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
     const projectDeleteExecutor = createProjectDeleteExecutor({
       store: projectDeleteStore,
       files: createProjectDeleteFiles({ dataRoot: basePathService.dataRoot() }),
@@ -1629,6 +1634,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       planningStart,
+      preparePlanningMigrationPreview: (principal, projectId, featureId) => planningMigration.preview(principal, projectId, featureId),
+      preparePlanningMigrationConfirm: input => planningMigration.confirm(input),
       preparePlanningRetirement: input => dataRestoreIsolation ? Promise.resolve(undefined) : preparePlanningPreReleaseRecovery({session,input,dataRoot:basePathService.dataRoot(),
         inspect:async(projectId,baseline)=>(await workspaceInspectorForCall(projectId)).inspect(baseline),publish:publishWorkspaceEvidence}),
       afterPlanningRetirement:async()=>{await startupRecovery.retry();workExecution.start();},
