@@ -1,9 +1,27 @@
 import { createHash } from 'node:crypto';
-import type { BatchFinalizationCandidate } from './batch-leaf-finalization.js';
+import { isDeepStrictEqual } from 'node:util';
+import type { BatchFinalizationCandidate, BatchFinalizationInputRef, BatchFinalizationLeafEvidence } from './batch-leaf-finalization.js';
 import { StorageError } from '../ports/errors.js';
 import { stableStringify } from '../ports/feature-plan.js';
-import { validateStableId } from '../ports/validation.js';
+import { validateSha256Digest, validateStableId } from '../ports/validation.js';
 
+/**
+ * P08 DAG F-012：Phase 最终交付的叶子集成汇总门禁。
+ *
+ * Phase 交付入口不信任单一 Batch 候选自身的叶子清单：它依据冻结的
+ * Phase revision、获准 Batch revision 与 Feature DAG revision 枚举整个
+ * Phase 的获准叶子（无 Phase 内后继的并行叶子），逐叶子核对 delivery
+ * commit、集成 commit/tree、验证证据与输入覆盖。缺叶子、缺集成、
+ * 证据过期、目标 baseline 或策略漂移都拒绝交付；最后完成的叶子或
+ * Feature completed 不构成整阶段成果。
+ *
+ * 复用边界：Phase 集成与后继 Feature 集成共用同一 BatchFinalization
+ * 候选管线（deterministic integration / 受监督 GitAgent 修复路径），
+ * 本模块不引入第二套 Git operation、worktree、锁、证据或恢复实现。
+ * Feature 验收完成不会自动批准 Phase，也不会自动合并 main：
+ * phases.delivery_status 只能由显式人工批准（commandId/actorId）翻转，
+ * 实战父分支与失败事实保持独立。
+ */
 const OPERATION = 'PhaseDeliveryApproval';
 
 export type PhaseDeliveryApprovalCandidateSnapshot = BatchFinalizationCandidate;
@@ -27,6 +45,41 @@ export interface PhaseDeliveryApprovalBatchSnapshot {
 export interface PhaseDeliveryApprovalSnapshot {
   readonly candidate: PhaseDeliveryApprovalCandidateSnapshot;
   readonly batch: PhaseDeliveryApprovalBatchSnapshot;
+  /** 冻结 Phase 范围事实；缺失时 Phase 交付入口拒绝而不是退回单 Batch 视图。 */
+  readonly phaseScope: PhaseDeliveryScopeSnapshot;
+}
+
+/** Phase 范围 Feature DAG 依赖边（featureId 依赖 dependsOnId）。 */
+export interface PhaseDeliveryScopeDependency {
+  readonly featureId: string;
+  readonly dependsOnId: string;
+}
+
+/** Phase 内一个获准执行 Batch 的冻结引用。 */
+export interface PhaseDeliveryScopeBatchRef {
+  readonly batchId: string;
+  readonly revision: number;
+  readonly status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled';
+  readonly approved: boolean;
+  readonly featureIds: readonly string[];
+}
+
+/**
+ * 冻结的 Phase 级交付范围事实，由可信快照源在同一读取中提供。
+ * dagDigest 必须等于 computePhaseDeliveryDagDigest(featureIds, dependencies)，
+ * 用于批准 CAS 与持久化时复核，防止批准与读取之间 DAG 被改写。
+ */
+export interface PhaseDeliveryScopeSnapshot {
+  readonly phase: { readonly projectId: string; readonly phaseId: string; readonly revision: number; readonly status: 'open' | 'closed' | 'archived' };
+  readonly dagDigest: string;
+  readonly featureIds: readonly string[];
+  readonly dependencies: readonly PhaseDeliveryScopeDependency[];
+  readonly batches: readonly PhaseDeliveryScopeBatchRef[];
+  readonly approvedInputs: readonly BatchFinalizationInputRef[];
+  readonly targetBaseline: string;
+  readonly strategySummary: Readonly<Record<string, unknown>>;
+  /** Phase DAG 每个叶子的当前交付证据；分支观察只用于比对，不替代冻结事实。 */
+  readonly leaves: readonly BatchFinalizationLeafEvidence[];
 }
 
 export type PhaseDeliveryApprovalStatus = 'approved' | 'invalidated';
@@ -59,6 +112,10 @@ export interface PhaseDeliveryApprovalRecord {
   readonly integrationEvidenceDigest: string;
   readonly verificationEvidenceId: string;
   readonly verificationEvidenceDigest: string;
+  /** 批准依据的冻结 Phase revision；历史行可能为 null。 */
+  readonly phaseRevision: number | null;
+  /** 批准依据的冻结 Feature DAG 摘要；历史行可能为 null。 */
+  readonly dagDigest: string | null;
   readonly budgetDigest: string;
   readonly budgetSummary: Readonly<Record<string, unknown>>;
   readonly codeSummary: Readonly<Record<string, unknown>>;
@@ -88,6 +145,10 @@ export interface PhaseDeliveryApprovalRequest {
   readonly actorId: string;
   readonly expectedBatchRevision: number;
   readonly expectedCandidateRevision: number;
+  /** 可选冻结 Phase revision CAS；命令通道接线后由 payload 提供。 */
+  readonly expectedPhaseRevision?: number;
+  /** 可选冻结 DAG revision 摘要 CAS。 */
+  readonly expectedDagDigest?: string;
 }
 
 export type PhaseDeliveryApprovalRejectionReason =
@@ -108,6 +169,18 @@ export type PhaseDeliveryApprovalRejectionReason =
   | 'stop_not_confirmed'
   | 'manual_block'
   | 'empty_summary'
+  | 'phase_scope_missing'
+  | 'phase_scope_invalid'
+  | 'phase_revision_stale'
+  | 'dag_revision_stale'
+  | 'phase_archived'
+  | 'phase_leaf_missing'
+  | 'phase_leaf_foreign'
+  | 'phase_leaf_not_delivered'
+  | 'phase_leaf_outside_approved_batch'
+  | 'phase_input_coverage_incomplete'
+  | 'target_baseline_drift'
+  | 'policy_drift'
   | 'already_approved'
   | 'approval_conflict';
 
@@ -124,6 +197,31 @@ function digest(domain: string, value: unknown): string {
   return createHash('sha256').update(`${domain}\n${stableStringify(value)}`, 'utf8').digest('hex');
 }
 
+/** 冻结 Phase Feature DAG revision 摘要；与输入顺序无关，只由节点与依赖边集合决定。 */
+export function computePhaseDeliveryDagDigest(
+  featureIds: readonly string[],
+  dependencies: readonly PhaseDeliveryScopeDependency[],
+): string {
+  return digest('shiploop:phase-delivery-dag:v1', {
+    featureIds: [...featureIds].sort(compare),
+    dependencies: [...dependencies].map(edge => ({ featureId: edge.featureId, dependsOnId: edge.dependsOnId })).sort((left, right) =>
+      compare(`${left.featureId}\u0000${left.dependsOnId}`, `${right.featureId}\u0000${right.dependsOnId}`)),
+  });
+}
+
+/** 枚举 Phase DAG 中无 Phase 内后继的叶子（并行叶子集），稳定排序。 */
+export function enumeratePhaseDeliveryLeaves(
+  featureIds: readonly string[],
+  dependencies: readonly PhaseDeliveryScopeDependency[],
+): string[] {
+  const hasSuccessor = new Set(dependencies.map(edge => edge.dependsOnId));
+  return featureIds.filter(featureId => !hasSuccessor.has(featureId)).sort(compare);
+}
+
+function compare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function rejection(reason: PhaseDeliveryApprovalRejectionReason, approval: PhaseDeliveryApprovalRecord | null = null): PhaseDeliveryApprovalResult {
   return { status: 'rejected', reason, approval };
 }
@@ -138,6 +236,13 @@ function validateRequest(request: PhaseDeliveryApprovalRequest): PhaseDeliveryAp
   if (!Number.isSafeInteger(request.expectedBatchRevision) || request.expectedBatchRevision < 1
     || !Number.isSafeInteger(request.expectedCandidateRevision) || request.expectedCandidateRevision < 1) {
     throw new StorageError('validation', OPERATION, '批准请求 revision 非法');
+  }
+  if (request.expectedPhaseRevision !== undefined
+    && (!Number.isSafeInteger(request.expectedPhaseRevision) || request.expectedPhaseRevision < 1)) {
+    throw new StorageError('validation', OPERATION, '批准请求 Phase revision 非法');
+  }
+  if (request.expectedDagDigest !== undefined) {
+    validateSha256Digest(request.expectedDagDigest, { operation: `${OPERATION}.validate` }, 'expectedDagDigest');
   }
   return request;
 }
@@ -161,6 +266,24 @@ function buildSummaryDigest(snapshot: PhaseDeliveryApprovalSnapshot): string {
     stopSummary: snapshot.batch.stopSummary,
     codeSummary: snapshot.batch.codeSummary,
     planSummary: snapshot.batch.planSummary,
+    phaseScope: snapshot.phaseScope === undefined ? null : {
+      phaseRevision: snapshot.phaseScope.phase.revision,
+      dagDigest: snapshot.phaseScope.dagDigest,
+      batches: snapshot.phaseScope.batches.map(batch => ({
+        batchId: batch.batchId, revision: batch.revision, status: batch.status,
+        approved: batch.approved, featureIds: [...batch.featureIds].sort(compare),
+      })),
+      approvedInputs: snapshot.phaseScope.approvedInputs,
+      targetBaseline: snapshot.phaseScope.targetBaseline,
+      strategySummary: snapshot.phaseScope.strategySummary,
+      leaves: snapshot.phaseScope.leaves.map(leaf => ({
+        featureId: leaf.featureId, revision: leaf.revision, commitSha: leaf.commitSha,
+        deliveryStatus: leaf.deliveryStatus, evidenceId: leaf.evidenceId,
+        evidenceDigest: leaf.evidenceDigest, evidenceFresh: leaf.evidenceFresh,
+        commitExists: leaf.commitExists, branchHead: leaf.branchHead,
+        repoIdentity: leaf.repoIdentity, coveredInputs: leaf.coveredInputs,
+      })),
+    },
   });
 }
 
@@ -184,6 +307,69 @@ function validateSnapshot(request: PhaseDeliveryApprovalRequest, snapshot: Phase
   if (batch.manualBlock) return 'manual_block';
   if (batch.stopSummary.status !== 'confirmed' && batch.stopSummary.status !== 'not_required') return 'stop_not_confirmed';
   if (Object.keys(batch.budgetSummary).length === 0) return 'budget_not_consistent';
+  return validatePhaseScope(request, snapshot);
+}
+
+/**
+ * Phase 级叶子汇总门禁：依据冻结 Phase/DAG revision 枚举全部获准叶子，
+ * 逐叶子核对交付 commit、集成证据与输入覆盖；任何缺失、过期或漂移都拒绝。
+ */
+function validatePhaseScope(request: PhaseDeliveryApprovalRequest, snapshot: PhaseDeliveryApprovalSnapshot): PhaseDeliveryApprovalRejectionReason | null {
+  const scopeValue = snapshot.phaseScope;
+  if (scopeValue === undefined || scopeValue === null || typeof scopeValue !== 'object') return 'phase_scope_missing';
+  const { candidate } = snapshot;
+  if (scopeValue.phase?.projectId !== request.projectId) return 'cross_project';
+  if (scopeValue.phase?.phaseId !== request.phaseId) return 'cross_phase';
+  if (request.expectedPhaseRevision !== undefined && scopeValue.phase.revision !== request.expectedPhaseRevision) return 'phase_revision_stale';
+  if (request.expectedDagDigest !== undefined && scopeValue.dagDigest !== request.expectedDagDigest) return 'dag_revision_stale';
+  if (scopeValue.phase.status === 'archived') return 'phase_archived';
+  if (!Array.isArray(scopeValue.featureIds) || scopeValue.featureIds.length === 0
+    || !Array.isArray(scopeValue.dependencies) || !Array.isArray(scopeValue.batches)
+    || !Array.isArray(scopeValue.approvedInputs) || !Array.isArray(scopeValue.leaves)
+    || !scopeValue.phase.revision || !Number.isSafeInteger(scopeValue.phase.revision)) return 'phase_scope_invalid';
+  const members = new Set(scopeValue.featureIds);
+  if (members.size !== scopeValue.featureIds.length) return 'phase_scope_invalid';
+  for (const edge of scopeValue.dependencies) {
+    if (!members.has(edge.featureId) || !members.has(edge.dependsOnId) || edge.featureId === edge.dependsOnId) return 'phase_scope_invalid';
+  }
+  if (scopeValue.dagDigest !== computePhaseDeliveryDagDigest(scopeValue.featureIds, scopeValue.dependencies)) return 'phase_scope_invalid';
+  for (const batchRef of scopeValue.batches) {
+    if (!Array.isArray(batchRef?.featureIds) || batchRef.featureIds.some((id: string) => !members.has(id))) return 'phase_scope_invalid';
+  }
+  const phaseLeaves = enumeratePhaseDeliveryLeaves(scopeValue.featureIds, scopeValue.dependencies);
+  const candidateLeafIds = new Set(candidate.leafFeatureIds);
+  const phaseLeafSet = new Set(phaseLeaves);
+  for (const leafId of phaseLeaves) if (!candidateLeafIds.has(leafId)) return 'phase_leaf_missing';
+  for (const leafId of candidate.leafFeatureIds) if (!phaseLeafSet.has(leafId)) return 'phase_leaf_foreign';
+  const evidenceByFeature = new Map(scopeValue.leaves.map(leaf => [leaf.featureId, leaf] as const));
+  const frozenByFeature = new Map(candidate.leaves.map(leaf => [leaf.featureId, leaf] as const));
+  for (const leafId of phaseLeaves) {
+    const evidence = evidenceByFeature.get(leafId);
+    if (evidence === undefined) return 'phase_leaf_missing';
+    if (!scopeValue.batches.some(batchRef => batchRef.approved === true && batchRef.status === 'succeeded' && batchRef.featureIds.includes(leafId))) {
+      return 'phase_leaf_outside_approved_batch';
+    }
+    if (evidence.featureStatus !== 'completed' || evidence.deliveryStatus !== 'succeeded'
+      || evidence.commitSha === null || !evidence.commitExists
+      || evidence.evidenceId === null || evidence.evidenceDigest === null || !evidence.evidenceFresh
+      || (evidence.branchHead !== null && evidence.branchHead !== evidence.commitSha)
+      || (evidence.conflictReason ?? null) !== null) return 'phase_leaf_not_delivered';
+    const frozen = frozenByFeature.get(leafId);
+    if (frozen === undefined || frozen.commitSha !== evidence.commitSha
+      || frozen.evidenceId !== evidence.evidenceId || frozen.evidenceDigest !== evidence.evidenceDigest
+      || frozen.repoIdentity !== evidence.repoIdentity) return 'phase_leaf_not_delivered';
+  }
+  const approvedDigestById = new Map(scopeValue.approvedInputs.map(input => [input.inputId, input.digest] as const));
+  const coveredInputs = new Set<string>();
+  for (const leaf of candidate.leaves) {
+    for (const input of leaf.coveredInputs) {
+      if (approvedDigestById.get(input.inputId) !== input.digest) return 'phase_input_coverage_incomplete';
+      coveredInputs.add(input.inputId);
+    }
+  }
+  for (const inputId of approvedDigestById.keys()) if (!coveredInputs.has(inputId)) return 'phase_input_coverage_incomplete';
+  if (candidate.targetBaseline !== scopeValue.targetBaseline) return 'target_baseline_drift';
+  if (!isDeepStrictEqual(candidate.strategySummary, scopeValue.strategySummary)) return 'policy_drift';
   return null;
 }
 
@@ -220,6 +406,8 @@ function buildRecord(request: PhaseDeliveryApprovalRequest, snapshot: PhaseDeliv
     integrationEvidenceDigest: integration.evidenceDigest!,
     verificationEvidenceId: verification.evidenceId!,
     verificationEvidenceDigest: verification.evidenceDigest!,
+    phaseRevision: snapshot.phaseScope.phase.revision,
+    dagDigest: snapshot.phaseScope.dagDigest,
     budgetDigest,
     budgetSummary: structuredClone(batch.budgetSummary),
     codeSummary: structuredClone(batch.codeSummary),

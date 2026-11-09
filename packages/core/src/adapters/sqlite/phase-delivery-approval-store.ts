@@ -3,6 +3,7 @@ import { createResultRef } from '../../ports/command-receipts.js';
 import { validateBatchDeliveryCommandResult } from '../../ports/batch-delivery-commands.js';
 import type { SqliteStorageSession } from './session.js';
 import { StorageError } from '../../ports/errors.js';
+import { computePhaseDeliveryDagDigest } from '../../application/phase-delivery-approval.js';
 import type {
   PhaseDeliveryApprovalRecord,
   PhaseDeliveryApprovalStore,
@@ -16,7 +17,7 @@ type ApprovalRow = {
   candidate_revision: number; batch_revision: number; scope_digest: string; input_digest: string;
   target_baseline: string; integration_commit_sha: string; integration_tree_sha: string; leaf_commit_shas: string;
   integration_evidence_id: string; integration_evidence_digest: string; verification_evidence_id: string;
-  verification_evidence_digest: string; budget_digest: string; budget_summary: string; code_summary: string;
+  verification_evidence_digest: string; phase_revision: number | null; dag_digest: string | null; budget_digest: string; budget_summary: string; code_summary: string;
   plan_summary: string; summary_digest: string; status: PhaseDeliveryApprovalRecord['status']; invalidation_reason: string | null;
 };
 
@@ -36,7 +37,7 @@ function fromRow(row: ApprovalRow): PhaseDeliveryApprovalRecord {
     integrationCommitSha: row.integration_commit_sha, integrationTreeSha: row.integration_tree_sha, treeSha: row.integration_tree_sha,
     leafCommitShas: parse(row.leaf_commit_shas, 'leafCommitShas'), integrationEvidenceId: row.integration_evidence_id,
     integrationEvidenceDigest: row.integration_evidence_digest, verificationEvidenceId: row.verification_evidence_id,
-    verificationEvidenceDigest: row.verification_evidence_digest, budgetDigest: row.budget_digest,
+    verificationEvidenceDigest: row.verification_evidence_digest, phaseRevision: row.phase_revision, dagDigest: row.dag_digest, budgetDigest: row.budget_digest,
     budgetSummary: parse(row.budget_summary, 'budgetSummary'), codeSummary: parse(row.code_summary, 'codeSummary'),
     planSummary: parse(row.plan_summary, 'planSummary'), summaryDigest: row.summary_digest, status: row.status,
     invalidationReason: row.invalidation_reason,
@@ -101,6 +102,26 @@ export function createSqlitePhaseDeliveryApprovalStore(
             || candidate.input_digest !== record.inputDigest || candidate.scope_digest !== record.scopeDigest) {
             throw new StorageError('conflict', OPERATION, '批准依据已过期', { details: { reason: 'stale_revision' } });
           }
+          // F-012：同一事务内复核冻结 Phase revision 与 Feature DAG 摘要，
+          // 防止快照读取与批准落盘之间 Phase 或 DAG 被改写。
+          const phaseRow = session.database.prepare<[string, string], { revision: number }>(
+            'SELECT revision FROM phases WHERE project_id = ? AND id = ?',
+          ).get(record.projectId, record.phaseId);
+          if (phaseRow === undefined) throw new StorageError('not_found', OPERATION, 'Phase 不存在');
+          if (record.phaseRevision !== null && phaseRow.revision !== record.phaseRevision) {
+            throw new StorageError('conflict', OPERATION, '批准依据的 Phase revision 已漂移', { details: { reason: 'stale_revision' } });
+          }
+          if (record.dagDigest !== null) {
+            const dagFeatureIds = session.database.prepare<[string, string], { id: string }>(
+              'SELECT id FROM features WHERE project_id = ? AND phase_id = ?',
+            ).all(record.projectId, record.phaseId).map(row => row.id);
+            const dagEdges = session.database.prepare<[string, string], { feature_id: string; depends_on_id: string }>(
+              'SELECT feature_id, depends_on_id FROM feature_dependencies WHERE project_id = ? AND phase_id = ?',
+            ).all(record.projectId, record.phaseId).map(row => ({ featureId: row.feature_id, dependsOnId: row.depends_on_id }));
+            if (computePhaseDeliveryDagDigest(dagFeatureIds, dagEdges) !== record.dagDigest) {
+              throw new StorageError('conflict', OPERATION, '批准依据的 Feature DAG 已漂移', { details: { reason: 'stale_revision' } });
+            }
+          }
           publicResult = validateBatchDeliveryCommandResult({ schemaVersion: 1, projectId: record.projectId, phaseId: record.phaseId,
             batchId: record.batchId, batchRevision: record.batchRevision, candidateId: record.candidateId, candidateRevision: record.candidateRevision,
             status: 'approved', featureIds: record.deliveryFeatureIds ?? [], scopeDigest: record.scopeDigest, inputDigest: record.inputDigest,
@@ -109,20 +130,27 @@ export function createSqlitePhaseDeliveryApprovalStore(
             verificationEvidenceId: record.verificationEvidenceId, verificationEvidenceDigest: record.verificationEvidenceDigest,
             approvalId: record.approvalId, summaryDigest: record.summaryDigest });
         }
+        if (record.phaseRevision !== null && (!Number.isSafeInteger(record.phaseRevision) || record.phaseRevision < 1)) {
+          throw new StorageError('validation', OPERATION, 'Phase 交付批准 revision 非法', { details: { reason: 'invalid_phase_revision' } });
+        }
+        if (record.dagDigest !== null && !/^[0-9a-f]{64}$/.test(record.dagDigest)) {
+          throw new StorageError('validation', OPERATION, 'Phase 交付批准 DAG 摘要非法', { details: { reason: 'invalid_dag_digest' } });
+        }
         session.database.prepare(
           `INSERT INTO phase_delivery_approvals
            (id, created_at, project_id, revision, updated_at, command_id, actor_id, phase_id, batch_id, candidate_id,
             candidate_revision, batch_revision, scope_digest, input_digest, target_baseline, integration_commit_sha,
             integration_tree_sha, leaf_commit_shas, integration_evidence_id, integration_evidence_digest,
-            verification_evidence_id, verification_evidence_digest, budget_digest, budget_summary, code_summary,
+            verification_evidence_id, verification_evidence_digest, phase_revision, dag_digest, budget_digest, budget_summary, code_summary,
             plan_summary, summary_digest, status, invalidation_reason)
-           VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', NULL)`,
+           VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', NULL)`,
         ).run(
           record.approvalId, timestamp, record.projectId, timestamp, record.commandId, record.actorId, record.phaseId,
           record.batchId, record.candidateId, record.candidateRevision, record.batchRevision, record.scopeDigest,
           record.inputDigest, record.targetBaseline, record.integrationCommitSha, record.integrationTreeSha,
           json(record.leafCommitShas), record.integrationEvidenceId, record.integrationEvidenceDigest,
-          record.verificationEvidenceId, record.verificationEvidenceDigest, record.budgetDigest, json(record.budgetSummary),
+          record.verificationEvidenceId, record.verificationEvidenceDigest, record.phaseRevision, record.dagDigest,
+          record.budgetDigest, json(record.budgetSummary),
           json(record.codeSummary), json(record.planSummary), record.summaryDigest,
         );
         session.database.prepare(

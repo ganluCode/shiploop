@@ -5,6 +5,7 @@ import {
   type PhaseDeliveryApprovalRecord,
   type PhaseDeliveryApprovalStore,
 } from '../../../packages/core/src/application/phase-delivery-approval.ts';
+import { buildPhaseDeliveryScope, phaseScopeLeaf } from '../../helpers/p05-9/phase-delivery-scope.ts';
 
 const SHA = (letter: string) => letter.repeat(40);
 const DIGEST = (letter: string) => letter.repeat(64);
@@ -52,6 +53,17 @@ function snapshot(candidateValue = candidate()) {
       planSummary: { planDigest: DIGEST('p'), featureIds: ['feature-a', 'feature-b'] },
       manualBlock: false,
     },
+    phaseScope: buildPhaseDeliveryScope({
+      projectId: 'project-1', phaseId: 'phase-1', phaseRevision: 1,
+      featureIds: ['feature-a', 'feature-b'],
+      batches: [{ batchId: 'batch-1', revision: 4, featureIds: ['feature-a', 'feature-b'] }],
+      approvedInputs: candidateValue.approvedInputs,
+      targetBaseline: SHA('b'),
+      leaves: [
+        phaseScopeLeaf('feature-a', { commitSha: SHA('c'), evidenceId: 'evidence-a', evidenceDigest: DIGEST('e'), coveredInputs: [{ inputId: 'input-1', digest: DIGEST('a') }] }),
+        phaseScopeLeaf('feature-b', { commitSha: SHA('d'), evidenceId: 'evidence-b', evidenceDigest: DIGEST('f'), coveredInputs: [{ inputId: 'input-1', digest: DIGEST('a') }] }),
+      ],
+    }),
   };
 }
 

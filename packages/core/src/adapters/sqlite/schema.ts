@@ -2792,6 +2792,10 @@ export const phaseDeliveryApprovals = sqliteTable('phase_delivery_approvals', {
   integrationEvidenceDigest: text('integration_evidence_digest').notNull(),
   verificationEvidenceId: text('verification_evidence_id').notNull(),
   verificationEvidenceDigest: text('verification_evidence_digest').notNull(),
+  /** F-012：批准依据的冻结 Phase revision；历史行为 null。 */
+  phaseRevision: integer('phase_revision'),
+  /** F-012：批准依据的冻结 Feature DAG 摘要；历史行为 null。 */
+  dagDigest: text('dag_digest'),
   budgetDigest: text('budget_digest').notNull(),
   budgetSummary: text('budget_summary').notNull(),
   codeSummary: text('code_summary').notNull(),

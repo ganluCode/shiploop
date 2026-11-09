@@ -4432,6 +4432,13 @@ UPDATE global_settings SET payload = json_set(payload, '$.locale', 'en-US'), rev
 WHERE json_type(payload, '$.locale') IS NULL;
 `;
 
+// P08 DAG / F-012：v71 为 Phase 交付批准追加冻结 Phase revision 与 Feature DAG 摘要列；
+// 历史行保持 NULL，新批准必须写入；列级约束由写入路径校验，不重建表。
+const MIGRATION_071_SQL = `
+ALTER TABLE phase_delivery_approvals ADD COLUMN phase_revision INTEGER;
+ALTER TABLE phase_delivery_approvals ADD COLUMN dag_digest TEXT;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4567,4 +4574,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 68, sql: MANAGED_DOCUMENTS_MIGRATION_SQL, checksum: sha256Hex(MANAGED_DOCUMENTS_MIGRATION_SQL) },
   { version: 69, sql: ENTITY_DISPLAY_CODES_MIGRATION_SQL, checksum: sha256Hex(ENTITY_DISPLAY_CODES_MIGRATION_SQL) },
   { version: 70, sql: GIT_NAMING_MIGRATION_SQL, checksum: sha256Hex(GIT_NAMING_MIGRATION_SQL) },
+  { version: 71, sql: MIGRATION_071_SQL, checksum: sha256Hex(MIGRATION_071_SQL) },
 ];

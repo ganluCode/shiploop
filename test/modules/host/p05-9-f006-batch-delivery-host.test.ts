@@ -10,6 +10,7 @@ import { createPhaseDeliveryApprovalService } from '../../../packages/core/src/a
 import { createSqliteBatchFinalizationCandidateStore } from '../../../packages/core/src/adapters/sqlite/batch-finalization-candidate-store.ts';
 import { createSqlitePhaseDeliveryApprovalStore } from '../../../packages/core/src/adapters/sqlite/phase-delivery-approval-store.ts';
 import type { BatchDeliveryDependencies } from '../../../packages/core/src/application/batch-delivery-commands.ts';
+import { buildPhaseDeliveryScope, phaseScopeLeaf } from '../../helpers/p05-9/phase-delivery-scope.ts';
 import { openBudgetFixture, NOW } from '../../helpers/p03-3/budget-fixture.ts';
 import { createHostClientApplication } from '../../../packages/host/src/client/app-client.ts';
 import { createHostLifecycleServer, createHostStopController, createIdleActivityGate } from '../../../packages/host/src/index.ts';
@@ -43,9 +44,22 @@ function deliveryServices(fixture: Awaited<ReturnType<typeof openBudgetFixture>>
       snapshots: { read(projectId, phaseId, batchId) {
         const candidate = candidates.read(projectId, batchId, lastCommand); if (!candidate) return null;
         const batch = fixture.atomic.transact('test.batch', tx => tx.getExecutionBatch(projectId, batchId));
+        const phaseRevision = (fixture.session.database.prepare('SELECT revision FROM phases WHERE project_id = ? AND id = ?').get(projectId, phaseId) as { revision: number }).revision;
+        const scopeFeatureIds = fixture.session.database.prepare<[string, string], { id: string }>('SELECT id FROM features WHERE project_id = ? AND phase_id = ? ORDER BY id').all(projectId, phaseId).map(row => row.id);
+        const scopeDependencies = fixture.session.database.prepare<[string, string], { feature_id: string; depends_on_id: string }>('SELECT feature_id, depends_on_id FROM feature_dependencies WHERE project_id = ? AND phase_id = ?').all(projectId, phaseId).map(row => ({ featureId: row.feature_id, dependsOnId: row.depends_on_id }));
         return { candidate, batch: { projectId, phaseId, batchId, revision: batch.revision, status: batch.status as 'succeeded', approved: true,
           scopeDigest: candidate.scopeDigest, inputDigest: candidate.inputDigest, budgetSummary: { maxRuns: 2 }, stopSummary: { status: 'not_required' },
-          codeSummary: { commit: candidate.integration?.commitSha }, planSummary: { approved: true }, manualBlock: controls.manualBlock ?? false } };
+          codeSummary: { commit: candidate.integration?.commitSha }, planSummary: { approved: true }, manualBlock: controls.manualBlock ?? false },
+          phaseScope: buildPhaseDeliveryScope({
+            projectId, phaseId, phaseRevision, featureIds: scopeFeatureIds, dependencies: scopeDependencies,
+            batches: [{ batchId, revision: batch.revision, featureIds: batch.scopeSnapshot.featureIds as string[] }],
+            approvedInputs: [{ inputId: 'input-1', digest: 'a'.repeat(64) }],
+            targetBaseline: 'b'.repeat(40),
+            leaves: candidate.leaves.map(leaf => phaseScopeLeaf(leaf.featureId, {
+              commitSha: leaf.commitSha, evidenceId: leaf.evidenceId, evidenceDigest: leaf.evidenceDigest,
+              coveredInputs: leaf.coveredInputs, repoIdentity: leaf.repoIdentity, revision: leaf.revision,
+            })),
+          }) };
       } },
     }),
   };

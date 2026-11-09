@@ -13,6 +13,7 @@ import {
   type BatchFinalizationLeafEvidence,
 } from '../../../packages/core/src/application/batch-leaf-finalization.ts';
 import { createPhaseDeliveryApprovalService } from '../../../packages/core/src/application/phase-delivery-approval.ts';
+import { buildPhaseDeliveryScope, phaseScopeLeaf } from '../../helpers/p05-9/phase-delivery-scope.ts';
 import {
   createRealInputs,
   digest,
@@ -172,6 +173,19 @@ describe('P05-9 F-008 Batch delivery vertical acceptance', { timeout: 120_000 },
             planSummary: { planDigest: DIGEST('p'), featureIds: candidate.leafFeatureIds },
             manualBlock: false,
           },
+          phaseScope: buildPhaseDeliveryScope({
+            projectId: f.box.projectId,
+            phaseId: 'phase-1',
+            phaseRevision: (f.box.session.database.prepare('SELECT revision FROM phases WHERE id = ?').get('phase-1') as { revision: number }).revision,
+            featureIds: ['predecessor-a', 'predecessor-b'],
+            batches: [{ batchId: f.plan.batchId, revision: 3, featureIds: ['predecessor-a', 'predecessor-b'] }],
+            approvedInputs: candidate.approvedInputs,
+            targetBaseline: base,
+            leaves: candidate.leaves.map(leaf => phaseScopeLeaf(leaf.featureId, {
+              commitSha: leaf.commitSha, evidenceId: leaf.evidenceId, evidenceDigest: leaf.evidenceDigest,
+              coveredInputs: leaf.coveredInputs, repoIdentity: leaf.repoIdentity, revision: leaf.revision,
+            })),
+          }),
         }) },
       });
       const approved = await approvalService.approve({
