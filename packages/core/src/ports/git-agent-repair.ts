@@ -414,11 +414,11 @@ export function validateGitAgentRepairRuntimeOutput(
   rejectUnknownKeys(usageObject, USAGE_KEYS, ctx, 'usage');
   const consumedTokens = validateNonNegativeInteger(usageObject.consumedTokens, ctx, 'usage.consumedTokens');
   const runtimeMs = validateNonNegativeInteger(usageObject.runtimeMs, ctx, 'usage.runtimeMs');
-  if (consumedTokens > request.budget.remainingTokens || runtimeMs > request.budget.remainingRuntimeMs) {
-    fail(ctx, 'usage', 'budget_exhausted');
-  }
   const failureCode = object.failureCode === null ? null : boundedText(object.failureCode, ctx, 'failureCode', 64);
   if (failureCode !== null && !REASON_CODE_PATTERN.test(failureCode)) fail(ctx, 'failureCode', 'invalid_failure_code');
+  // Preserve actual consumption only as an explicit failed budget settlement, never a candidate.
+  if ((consumedTokens > request.budget.remainingTokens || runtimeMs > request.budget.remainingRuntimeMs)
+    && !(object.status === 'failed' && failureCode === 'budget_exhausted')) fail(ctx, 'usage', 'budget_exhausted');
   return deepFreeze({
     schemaVersion: GIT_AGENT_REPAIR_SCHEMA_VERSION,
     repairId,

@@ -12,6 +12,10 @@
     {
       "task_id": "F-009",
       "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-009.json"
+    },
+    {
+      "task_id": "F-010",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-010.json"
     }
   ]
 }

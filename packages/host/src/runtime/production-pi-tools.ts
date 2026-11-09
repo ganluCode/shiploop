@@ -56,7 +56,12 @@ export async function loadProductionInstructions(cwd: string, target = '.') {
   return records;
 }
 
-export function createProductionFileTools(options: { cwd: string; deadline: number; signal?: AbortSignal; promptTemplates?: import('shiploop-core').PromptTemplateCatalog }): PiSubmissionToolDefinition[] {
+/** GitAgent gets file operations only, with no live instruction discovery or command capability. */
+export function createProductionGitAgentTools(options: Parameters<typeof createProductionFileTools>[0] & { writablePaths: readonly string[] }): PiSubmissionToolDefinition[] {
+  return createProductionFileTools(options).filter(tool => tool.name !== 'read_project_instructions');
+}
+
+export function createProductionFileTools(options: { cwd: string; deadline: number; signal?: AbortSignal; promptTemplates?: import('shiploop-core').PromptTemplateCatalog; writablePaths?: readonly string[] }): PiSubmissionToolDefinition[] {
   const templates = options.promptTemplates ?? getRuntimePromptTemplates();
   return ['list_files', 'read_file', 'write_file', 'edit_file', 'read_project_instructions'].map(name => ({
     name, label: name, executionMode: 'sequential',
@@ -78,6 +83,7 @@ export function createProductionFileTools(options: { cwd: string; deadline: numb
           .slice(0, 200).map(e => e.name + (e.isDirectory() ? '/' : '')).join('\n') }], details: {} };
       }
       const writing = name === 'write_file' || name === 'edit_file';
+      if (writing && options.writablePaths && !options.writablePaths.includes(p.path)) throw new Error('git_agent_path_not_authorized');
       const target = await productionFilePath(options.cwd, p.path, name === 'write_file');
       const file = await open(target, (writing ? constants.O_RDWR : constants.O_RDONLY)
         | (name === 'write_file' ? constants.O_CREAT : 0) | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o644);

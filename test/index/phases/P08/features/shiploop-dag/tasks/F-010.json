@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/production-pi-git-agent.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-controls.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f002-git-agent-repair-run.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f003-git-agent-runtime.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f004-git-agent-candidate-finalization.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f007-git-agent-composition.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-runner.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-file-tools.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-auth.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/production-pi-startup.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p04-3-failure-routing-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}

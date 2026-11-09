@@ -12,11 +12,12 @@ import { runPiWorkRunner } from './pi-runner.js';
 import { parseProductionPiConfig, productionPiModel } from './production-pi-config.js';
 import { createProductionCredentialStore } from './production-pi-auth.js';
 import type { ProductionPiBootstrap } from './production-pi.js';
-import { createProductionFileTools, loadProductionInstructions } from './production-pi-tools.js';
+import { createProductionFileTools, createProductionGitAgentTools, loadProductionInstructions } from './production-pi-tools.js';
 import { createProductionCommandTools } from './production-command-tools.js';
 import { createPlanningCandidateSubmitTool } from './work-submission-tools.js';
 import { createWorkToolClient } from '../client/work-tool-client.js';
 import { getRuntimePromptTemplates } from './prompt-templates.js';
+import { productionGitAgentRequest } from './pi-git-agent-adapter.js';
 import { createProjectDocumentTool, parseProjectDocumentSnapshot } from './production-project-documents.js';
 
 export { productionFilePath } from './production-pi-tools.js';
@@ -92,8 +93,10 @@ export async function runProductionPiRunner(path: string): Promise<void> {
         || documentContext.featureId !== request.featureId || documentContext.invocationId !== request.invocationId
         || !isDeepStrictEqual(documentContext.identity, request.identity))) throw new Error('production_document_context_unbound');
       const documents = documentContext ? parseProjectDocumentSnapshot(JSON.stringify(documentContext.documents), request.featureId) : undefined;
+      const gitAgent = productionGitAgentRequest(manifest, request);
+      const codemode = !gitAgent && bootstrap.config.execution?.codemode !== false;
       const locale = manifest.locale ?? manifest.promptTemplates?.locale ?? 'zh-CN';
-      const repairLimits = request.prompt.kind === 'feature-repair-prompt'
+      const repairLimits = request.prompt.kind === 'feature-repair-prompt' || gitAgent
         ? manifest.productionLimits as { maxRequests: number; tokenLimit: number }
         : undefined;
       if (repairLimits && (!Number.isSafeInteger(repairLimits.maxRequests) || repairLimits.maxRequests < 1
@@ -119,7 +122,10 @@ export async function runProductionPiRunner(path: string): Promise<void> {
       };
       let requests = 0;
       let chargedTokens = 0;
-      const deadline = Date.now() + request.limits.timeoutMs;
+      const deadline = Math.min(Date.now() + request.limits.timeoutMs, gitAgent
+        ? runnerStartedAt + gitAgent.authorization.budget.deadlineUtcMs - (bootstrap.hostTimeUtcMs ?? runnerStartedAt)
+        : Infinity);
+      if (deadline <= Date.now()) throw new Error('production_repair_budget_invalid');
       const budgetFailure = (reason: string, facts: Record<string, number>): never => {
         process.stderr.write(`shiploop: ${JSON.stringify({ kind: 'production_budget', reason, ...facts })}\n`);
         throw new Error(reason);
@@ -167,9 +173,9 @@ export async function runProductionPiRunner(path: string): Promise<void> {
       await mkdir(agentDir, { recursive: true, mode: 0o700 });
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, cacheWarming: 'off',
         retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } });
-      const instructions = await loadProductionInstructions(cwd);
+      const instructions = gitAgent ? [] : await loadProductionInstructions(cwd);
       const templates = getRuntimePromptTemplates(locale);
-      const systemModules = ['runtime/system.md', 'runtime/reply-language.md', ...(bootstrap.config.execution?.codemode === false ? [] : ['runtime/codemode.md'])];
+      const systemModules = ['runtime/system.md', 'runtime/reply-language.md', ...(codemode ? ['runtime/codemode.md'] : [])];
       const projectContext = [templates.render('runtime/project-context.md', {
         instructions: instructions.map(item => templates.render('runtime/project-instruction.md', { ...item })).join('\n'),
         skills: (bootstrap.projectSkills?.skills ?? []).map(skill => templates.render('runtime/project-skill.md', { name: skill.name, digest: skill.digest, content: skill.content })).join('\n'),
@@ -200,20 +206,21 @@ export async function runProductionPiRunner(path: string): Promise<void> {
       }));
       const resourceLoader = new sdk.DefaultResourceLoader({ cwd, agentDir, settingsManager,
         noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-        extensionFactories: bootstrap.config.execution?.codemode === false ? [] : [sdk.createCodemodeExtension({ models: false })],
+        extensionFactories: codemode ? [sdk.createCodemodeExtension({ models: false })] : [],
         systemPrompt: systemModules.map(id => templates.render(id)).join('\n\n'),
         appendSystemPrompt: projectContext });
       await resourceLoader.reload();
       const customTools: PiSubmissionToolDefinition[] = [
         ...(documents ? [createProjectDocumentTool(documents, templates)] : []),
-        ...createProductionFileTools({ cwd, deadline, signal, promptTemplates: templates }),
-        ...createProductionCommandTools({ cwd, deadline, signal, promptTemplates: templates, rgPath: bootstrap.rgPath,
+        ...(gitAgent ? createProductionGitAgentTools({ cwd, deadline, signal, promptTemplates: templates, writablePaths: gitAgent.authorization.writablePaths })
+          : createProductionFileTools({ cwd, deadline, signal, promptTemplates: templates })),
+        ...(gitAgent ? [] : createProductionCommandTools({ cwd, deadline, signal, promptTemplates: templates, rgPath: bootstrap.rgPath,
           commandTimeoutMs: Math.min(bootstrap.config.execution?.commandTimeoutMs ?? 600000, request.limits.toolTimeoutMs ?? 600000),
           terminateInvocation(reason) {
             process.stderr.write(`shiploop: ${reason}\n`);
             // The trusted supervisor is this Runner's parent and owns its process group.
             process.kill(-bootstrap.supervisorGroupId!, 'SIGTERM');
-          } }),
+          } })),
       ];
       if (request.prompt.kind === 'planning-prompt') {
         if (!bootstrap.planningBridge || request.identity.purpose !== 'work') throw new Error('production_planning_bridge_not_assembled');
@@ -226,12 +233,12 @@ export async function runProductionPiRunner(path: string): Promise<void> {
       }
       const pi = createPiRuntimeAdapter({ providers: bootstrap.config.providers.map(p => ({ providerId: p.id, models: p.models })),
         permissionGrants: [], isolationModes: ['trusted_project'],
-        requestRetryPolicy: { maxRetries: bootstrap.config.pi_agent?.transient_retry_attempts ?? 10,
-          maxTotalRetries: bootstrap.config.pi_agent?.transient_retry_attempts ?? 10,
+        requestRetryPolicy: { maxRetries: gitAgent ? 0 : bootstrap.config.pi_agent?.transient_retry_attempts ?? 10,
+          maxTotalRetries: gitAgent ? 0 : bootstrap.config.pi_agent?.transient_retry_attempts ?? 10,
           baseBackoffMs: (bootstrap.config.pi_agent?.transient_retry_backoff_base_seconds ?? 1) * 1000,
           maxBackoffMs: 60000, budgetScope: 'consecutive', backoffMode: 'linear' },
         assembly: { agentDir, resolveWorkingDirectory: () => cwd, inputReader,
-          extensionTools: bootstrap.config.execution?.codemode === false ? [] : ['codemode'],
+          extensionTools: codemode ? ['codemode'] : [],
           credentialRef: { kind: 'trusted-resolution', id: `pi:${provider.id}` }, resourceLoader,
           settingsManager, modelRuntime, resolveModel: () => model,
           resolveThinkingLevel: () => clampThinkingLevel(model, bootstrap.config.execution?.thinkingLevel ?? 'off'), resolveSubmissionTools: () => customTools } });

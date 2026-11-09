@@ -102,6 +102,8 @@ export type { PiInferenceSource } from './pi-inference-preflight.js';
 
 
 export { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
+export { productionPiGitAgentRuntime, createProductionPiGitAgentDriver } from './production-pi-git-agent.js';
+export type { ProductionGitAgentAuthority, ProductionGitAgentBinding, ProductionGitAgentRecord } from './production-pi-git-agent.js';
 export type { PiGitAgentRuntimeDriver, PiGitAgentRuntimeOptions } from './pi-git-agent-adapter.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
 export {

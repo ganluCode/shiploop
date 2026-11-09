@@ -29,12 +29,15 @@ export interface GitAgentRepairAttemptRunResult {
 
 function mappedOutput(completion: Awaited<ReturnType<typeof superviseGitAgentRuntime>>): GitAgentRepairRuntimeOutput {
   const output = toGitAgentRepairRuntimeOutput(completion.result);
-  const failureCode = completion.control === 'timed_out' ? 'deadline_exceeded'
+  const failureCode = completion.control === 'cancelled' ? 'cancelled'
+    : completion.control === 'timed_out' ? 'deadline_exceeded'
     : !completion.stop.confirmed || !completion.result.stop.confirmed ? 'stop_unconfirmed'
       : completion.result.failure?.code === 'budget_exhausted' ? 'budget_exhausted'
         : completion.result.failure?.code === 'cancelled' || completion.result.terminal === 'cancelled' ? 'cancelled'
           : output.failureCode;
-  return Object.freeze({ ...output, failureCode });
+  const status = completion.control === 'cancelled' ? 'cancelled'
+    : completion.control === 'timed_out' ? 'failed' : output.status;
+  return Object.freeze({ ...output, status, failureCode });
 }
 
 /**

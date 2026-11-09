@@ -5,11 +5,31 @@
  * commit, push, or approval operation to the driver.
  */
 import {
-  validateGitAgentRuntimeRequest,
+  validateGitAgentRuntimeRequest, RuntimeError,
 } from 'shiploop-core';
 import type {
-  GitAgentRuntimeAdapter, GitAgentRuntimeHandle, GitAgentRuntimeRequest,
+  GitAgentRuntimeAdapter, GitAgentRuntimeHandle, GitAgentRuntimeRequest, RuntimeExecutionRequest,
 } from 'shiploop-core';
+
+/** Recheck the frozen repair envelope at both sides of the production process boundary. */
+export function productionGitAgentRequest(manifest: unknown, request: RuntimeExecutionRequest): GitAgentRuntimeRequest | undefined {
+  if (request.prompt.kind !== 'git-agent-repair-prompt') return undefined;
+  const value = manifest as { gitAgent?: unknown; productionLimits?: { maxRequests?: number; tokenLimit?: number } };
+  const repair = validateGitAgentRuntimeRequest(value?.gitAgent);
+  const execution = repair.execution, authorization = repair.authorization;
+  if (request.invocationId !== execution.invocationId || request.executionVersion !== execution.executionVersion
+    || request.owner.principalId !== execution.ownerId || request.owner.hostInstanceId !== execution.hostInstanceId
+    || request.projectId !== authorization.projectId || request.featureId !== authorization.featureId
+    || request.identity.purpose !== 'work' || request.identity.runId !== authorization.runId
+    || request.identity.attemptId !== execution.attemptId || request.identity.taskId !== authorization.repairId
+    || request.recovery.mode !== 'new' || request.limits.timeoutMs > authorization.budget.remainingRuntimeMs
+    || value.productionLimits?.tokenLimit !== authorization.budget.remainingTokens
+    || !Number.isSafeInteger(value.productionLimits?.maxRequests) || value.productionLimits!.maxRequests! < 1
+    || value.productionLimits!.maxRequests! > 10000) {
+    throw new RuntimeError('permission', 'git_agent_execution_identity_mismatch');
+  }
+  return repair;
+}
 
 export interface PiGitAgentRuntimeDriver {
   start(request: GitAgentRuntimeRequest): Promise<GitAgentRuntimeHandle>;

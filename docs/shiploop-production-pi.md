@@ -16,6 +16,12 @@
 
 未提供 runtime.json 时保持空目录，不偷偷启用模型；文件畸形、未知字段、不安全权限或未知内置模型会拒绝 Host 启动，而非悄悄退回其他模型。修改 runtime.json 后需要重启 Host；auth.json 在新 Invocation 启动时读取。
 
+## GitAgent 修复 driver
+
+受信装配可调用 `productionPiGitAgentRuntime(dataRoot, authority)`，复用标准 Pi 的模型能力、私有凭据解析、进程监督和 SDK Runner。`authority` 必须核对冻结授权、owner/version、工作区、批准策略和上下文摘要，持久确认进程身份，并在确认停止后检查候选与保存记录。没有可用生产配置时明确返回 `git_agent_driver_unavailable`，不回退其他模型。
+
+GitAgent 使用冻结的中英文 `repair/git-agent.md`，只提供工作区内文件读取及精确获准路径的写入/编辑工具；模型请求次数、Token 和 deadline 受父授权约束。验证、正式提交和后继派发仍由 Core 控制。标准 Host 的冲突修复消费者接线由 DAG F-011 负责；本 driver 的单元测试不证明真实认证、付费模型或 Git/进程纵向已验收。接口与待验范围见 [F-010 交接](phases/p08/shiploop-dag-f010-production-git-agent.md)。
+
 ## 项目文档上下文
 
 默认使用统一项目文档目录：`<data-root>/projects/<projectId>/documents/working/`。`feature create --prd ... [--design ...]` 绑定相对路径；`planning start <featureId> --project <projectId>` 自动固定文档版本、发布上下文制品并保存 SQLite 元数据，无需手填映射 JSON 或制品 ID。批准候选后编码及 Feature 修复继续读取同一份固定输入。完整命令见 [统一文档操作说明](shiploop-managed-documents.md)。

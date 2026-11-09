@@ -15,6 +15,8 @@ import { createProductionPiFallback } from './production-pi-fallback.js';
 import { resolveProductionRg } from './production-command-tools.js';
 import { productionFeishuChannels } from './production-feishu.js';
 import { startProductionPlanningBridge } from './production-planning-bridge.js';
+import { createProductionCredentialStore } from './production-pi-auth.js';
+import { productionGitAgentRequest } from './pi-git-agent-adapter.js';
 import { captureProjectDocuments, parseProjectDocumentSnapshot } from './production-project-documents.js';
 
 export interface ProductionPiBootstrap {
@@ -84,9 +86,21 @@ export async function productionPiOptions(dataRoot: string): Promise<Pick<HostSt
             const body = await reader.read(bound.purpose);
             bodies.push({ ref, base64: Buffer.from(body.content).toString('base64') });
           }
+          const gitAgent = request.prompt.kind === 'git-agent-repair-prompt'
+            ? productionGitAgentRequest(JSON.parse(Buffer.from(bodies[1]!.base64, 'base64').toString('utf8')), request) : undefined;
+          if (gitAgent) {
+            try {
+              if (!await createProductionCredentialStore(dataRoot).read(request.strategy.provider)) {
+                throw new RuntimeError('authentication', 'production_pi_auth_missing');
+              }
+            } catch (error) {
+              if (error instanceof RuntimeError) throw error;
+              throw new RuntimeError('authentication', 'production_pi_auth_invalid');
+            }
+          }
           const managed = reader.list().filter(ref => ref.locator.startsWith('managed-documents/contexts/'));
           if (managed.length > 1) throw new Error('managed_document_context_ambiguous');
-          const documents = managed.length ? parseProjectDocumentSnapshot(
+          const documents = gitAgent ? { documents: [], mapping: null } : managed.length ? parseProjectDocumentSnapshot(
             new TextDecoder('utf-8', { fatal: true }).decode((await reader.read(managed[0]!.purpose)).content), request.featureId)
             : await captureProjectDocuments(cwd, request.featureId);
           let projectDocuments: RuntimeExecutionRequest['inputManifest'] | undefined;
@@ -116,18 +130,18 @@ export async function productionPiOptions(dataRoot: string): Promise<Pick<HostSt
                 ? `planning_grant_${reason}` : 'planning_grant_failed');
             }
           }
-          const projectSkills = await context.loadSelectedSkills?.(request.projectId);
+          const projectSkills = gitAgent ? undefined : await context.loadSelectedSkills?.(request.projectId);
           const projectPolicies = context.effectiveSettings?.(request.projectId).policies;
           const execution = { ...config.execution, ...projectPolicies?.piExecution?.value };
           for (const key of ['maxRequests', 'maxInputBytes', 'maxOutputTokens', 'commandTimeoutMs'] as const) {
             if (config.execution?.[key] !== undefined && execution[key] !== undefined) execution[key] = Math.min(config.execution[key]!, execution[key]!);
           }
           const invocationConfig = parseProductionPiConfig({ ...config,
-            pi_agent: { ...config.pi_agent, ...projectPolicies?.piAgent?.value }, execution });
+            pi_agent: { ...config.pi_agent, ...projectPolicies?.piAgent?.value }, execution: { ...execution, ...(gitAgent ? { codemode: false } : {}) } });
           const bootstrap: ProductionPiBootstrap = { config: invocationConfig, dataRoot, cwd, invocationId: request.invocationId, bodies, projectSkills,
             ...(projectDocuments ? { projectDocuments } : {}),
             hostTimeUtcMs: context.nowUtcMs?.() ?? Date.now(),
-            rgPath: resolveProductionRg(), ...(planningBridge ? { planningBridge: { port: planningBridge.port, token: planningBridge.token } } : {}) };
+            rgPath: gitAgent ? undefined : resolveProductionRg(), ...(planningBridge ? { planningBridge: { port: planningBridge.port, token: planningBridge.token } } : {}) };
           writeFileSync(join(dir, 'bootstrap.json'), JSON.stringify(bootstrap), { mode: 0o600, flag: 'wx' });
           try {
             const handle = await processPort.start({ ...input,

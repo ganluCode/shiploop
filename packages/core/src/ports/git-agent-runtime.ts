@@ -204,7 +204,6 @@ export function validateGitAgentRuntimeResult(value: unknown, request: GitAgentR
     consumedTokens: validateNonNegativeInteger(usageRaw.consumedTokens, CONTEXT, 'result.usage.consumedTokens'),
     runtimeMs: validateNonNegativeInteger(usageRaw.runtimeMs, CONTEXT, 'result.usage.runtimeMs'),
   });
-  if (usage.consumedTokens > request.authorization.budget.remainingTokens || usage.runtimeMs > request.authorization.budget.remainingRuntimeMs) fail('result.usage', 'budget_exhausted');
   let failure: GitAgentRuntimeFailure | null = null;
   if (raw.failure !== null) {
     const failureRaw = requirePlainObject(raw.failure, CONTEXT, 'result.failure');
@@ -212,6 +211,10 @@ export function validateGitAgentRuntimeResult(value: unknown, request: GitAgentR
     if (!FAILURE_CLASSES.includes(failureRaw.classification as Exclude<GitAgentRuntimeFailureClass, null>)) fail('result.failure.classification', 'invalid_failure_class');
     if (typeof failureRaw.code !== 'string' || !CODE_TOKEN.test(failureRaw.code)) fail('result.failure.code', 'invalid_failure_code');
     failure = Object.freeze({ classification: failureRaw.classification as Exclude<GitAgentRuntimeFailureClass, null>, code: failureRaw.code });
+  }
+  if ((usage.consumedTokens > request.authorization.budget.remainingTokens || usage.runtimeMs > request.authorization.budget.remainingRuntimeMs)
+    && !(raw.terminal === 'failed' && failure?.classification === 'runtime' && failure.code === 'budget_exhausted')) {
+    fail('result.usage', 'budget_exhausted');
   }
   const stopRaw = requirePlainObject(raw.stop, CONTEXT, 'result.stop');
   rejectUnknownKeys(stopRaw, ['confirmed', 'detail'], CONTEXT, 'result.stop');
