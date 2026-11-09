@@ -6,16 +6,9 @@
       "id": "shiploop",
       "tests": [
         {
-          "file": "test/modules/planning/planning-baseline-separation.test.ts",
+          "file": "test/modules/planning/planning-baseline-rules.test.ts",
           "level": "unit",
-          "cases": [
-            "case:baseline-digest-covers-binding",
-            "case:baseline-legacy-digest-compat",
-            "case:baseline-binding-group-validation",
-            "case:base-commit-precedence",
-            "case:base-commit-binding-mismatch",
-            "case:planning-workspace-derivation"
-          ]
+          "all": true
         },
         {
           "file": "test/modules/planning/planning-baseline-separation.test.ts",

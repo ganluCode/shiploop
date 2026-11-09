@@ -2,9 +2,9 @@
  * DAG / F-002 规划基线身份传播与编码准备分离（真实临时 SQLite/Git；无模型调用）。
  *
  * 覆盖：
- * - 纯规则：computePlanningCodeBaselineDigest 覆盖仓库绑定身份（id/revision/
- *   repoIdentity）；历史（无绑定字段）基线摘要公式保持不变；绑定字段必须成组
- *   出现且形态合法（fail-closed）。
+ * - 纯规则（见 planning-baseline-rules.test.ts）：computePlanningCodeBaselineDigest
+ *   覆盖仓库绑定身份、历史摘要公式兼容、成组校验、resolveWorkspaceBaseCommit
+ *   优先级与绑定不一致拒绝、planning 目录派生。
  * - 服务级（生产形态读取器=项目绑定源仓库只读快照）：planning.start → 输入
  *   准备 → 启动前重核全链成功，快照/manifest 携带绑定身份；绑定 revision 漂移
  *   或仓库身份变化 fail-closed；快照缺失结构化拒绝。
@@ -13,11 +13,9 @@
  * - 已批准规划基线读取（readApprovedPlanningCodeBaseline）：规划批准应用的
  *   当前计划返回冻结 headCommit（源仓库 HEAD 后来移动不跟随）；计划非规划
  *   应用（无同事务审批行）返回 null；Attempt 缺失或基线摘要漂移结构化拒绝。
- * - resolveWorkspaceBaseCommit：集成基线优先；其次已批准规划冻结快照；绑定
- *   不一致拒绝；均无时沿用预览快照 HEAD。
  *
  * DAG / F-002（attempt 2 追加）规划 Runtime 工作区分离：
- * - PathService planning_workspace_directory 受控定位与推导；
+ * - locatePlanningWorkspace 令牌与 Feature 编码 worktree 资源键严格不同；
  * - locatePlanningWorkspace 令牌与 Feature 编码 worktree 资源键严格不同；
  * - createPlanningSnapshotWorktreePreparer：detached worktree 固定冻结基线、
  *   幂等复用、漂移/非祖先/脏现场 fail-closed、源仓库 refs 零写入。
@@ -40,7 +38,7 @@ import { createSqlitePlanningContextStore } from '../../../packages/core/src/ada
 import { createArtifactFileStore } from '../../../packages/core/src/adapters/fs/artifact-files.ts';
 import type { ArtifactFileStore } from '../../../packages/core/src/ports/artifact-files.ts';
 import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
-import { createPlanningSnapshotWorktreePreparer, PlanningSnapshotWorkspaceError } from '../../../packages/core/src/adapters/fs/planning-snapshot-workspace.ts';
+import { createPlanningSnapshotWorktreePreparer } from '../../../packages/core/src/adapters/fs/planning-snapshot-workspace.ts';
 import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
 import { createPathService } from '../../../packages/core/src/adapters/fs/path-service.ts';
 import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
@@ -52,16 +50,9 @@ import { createArtifactVerifier } from '../../../packages/core/src/application/a
 import { createExecutionInputService } from '../../../packages/core/src/application/execution-input.ts';
 import { createPlanningInputPrepareService } from '../../../packages/core/src/application/planning-input-prepare.ts';
 import type { PlanningInputPreparePort } from '../../../packages/core/src/application/planning-input-prepare.ts';
-import {
-  computePlanningCodeBaselineDigest,
-  PLANNING_SNAPSHOT_DIGEST_DOMAIN,
-  validatePlanningCodeBaseline,
-} from '../../../packages/core/src/ports/planning-input-prepare.ts';
+import { computePlanningCodeBaselineDigest } from '../../../packages/core/src/ports/planning-input-prepare.ts';
 import type { PlanningCodeBaseline } from '../../../packages/core/src/ports/planning-input-prepare.ts';
-import { stableStringify } from '../../../packages/core/src/ports/feature-plan.ts';
 import { readApprovedPlanningCodeBaseline } from '../../../packages/core/src/adapters/sqlite/planning-baseline.ts';
-import { resolveWorkspaceBaseCommit } from '../../../packages/core/src/application/execution-start.ts';
-import type { ExecutionStartServiceDeps } from '../../../packages/core/src/application/execution-start.ts';
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../../../packages/core/src/ports/execution-input-prepare.ts';
 import { PLANNING_START_OPERATION } from '../../../packages/core/src/ports/planning-start.ts';
 import { PublicError } from '../../../packages/core/src/ports/commands.ts';
@@ -74,25 +65,11 @@ import { testPromptTemplates } from '../../helpers/prompt-templates.ts';
 
 const NOW = 1_901_400_000_000;
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
-const domainDigest = (domain: string, canonical: string): string =>
-  createHash('sha256').update(`${domain}\n${canonical}`, 'utf8').digest('hex');
 
 const PLANNING_BUDGET = {
   batch: { maxRuns: 1, maxTotalAttempts: 1, maxRuntimeStarts: 1, maxNoProgressRuns: 1, deadlineUtcMs: NOW + 3_600_000 },
   run: { maxAttemptsPerRun: 1, runTimeLimitMs: 3_600_000 },
 };
-
-function baseline(overrides: Partial<PlanningCodeBaseline> = {}): PlanningCodeBaseline {
-  return {
-    worktreeId: 'binding-0001',
-    headCommit: 'a'.repeat(40),
-    codeDigest: 'b'.repeat(64),
-    repositoryBindingId: 'binding-0001',
-    repositoryBindingRevision: 3,
-    repoIdentity: 'gitdir-sha256:' + 'c'.repeat(64),
-    ...overrides,
-  };
-}
 
 function expectPublicError(error: unknown, code: string, reason?: string): void {
   expect(error).toBeInstanceOf(PublicError);
@@ -102,42 +79,6 @@ function expectPublicError(error: unknown, code: string, reason?: string): void 
     expect((publicError.details as Record<string, unknown> | undefined)?.reason).toBe(reason);
   }
 }
-
-describe('DAG / F-002 规划基线纯规则（无 I/O）', () => {
-  it('[case:baseline-digest-covers-binding] 摘要覆盖仓库绑定身份：仅绑定 revision 或 repoIdentity 不同即摘要不同', () => {
-    const base = baseline();
-    expect(computePlanningCodeBaselineDigest({ ...base, repositoryBindingRevision: 4 }))
-      .not.toBe(computePlanningCodeBaselineDigest(base));
-    expect(computePlanningCodeBaselineDigest({ ...base, repoIdentity: 'gitdir-sha256:' + 'd'.repeat(64) }))
-      .not.toBe(computePlanningCodeBaselineDigest(base));
-    expect(computePlanningCodeBaselineDigest({ ...base, repositoryBindingId: 'binding-0002' }))
-      .not.toBe(computePlanningCodeBaselineDigest(base));
-  });
-
-  it('[case:baseline-legacy-digest-compat] 历史基线（无绑定字段）摘要公式保持不变（已持久化快照重核兼容）', () => {
-    const legacy: PlanningCodeBaseline = {
-      worktreeId: 'binding-0001', headCommit: 'a'.repeat(40), codeDigest: 'b'.repeat(64),
-    };
-    const legacyFormula = domainDigest(PLANNING_SNAPSHOT_DIGEST_DOMAIN,
-      stableStringify({ worktreeId: legacy.worktreeId, headCommit: legacy.headCommit, codeDigest: legacy.codeDigest }));
-    expect(computePlanningCodeBaselineDigest(legacy)).toBe(legacyFormula);
-  });
-
-  it('[case:baseline-binding-group-validation] 绑定身份字段必须成组出现且形态合法（fail-closed）', () => {
-    const context = { operation: 'test' };
-    expect(() => validatePlanningCodeBaseline({
-      worktreeId: 'binding-0001', headCommit: 'a'.repeat(40), codeDigest: 'b'.repeat(64),
-      repositoryBindingId: 'binding-0001',
-    }, context, 'baseline')).toThrow();
-    expect(() => validatePlanningCodeBaseline({
-      worktreeId: 'binding-0001', headCommit: 'a'.repeat(40), codeDigest: 'b'.repeat(64),
-      repositoryBindingId: 'binding-0001', repositoryBindingRevision: 0, repoIdentity: 'gitdir-sha256:' + 'c'.repeat(64),
-    }, context, 'baseline')).toThrow();
-    const valid = validatePlanningCodeBaseline(baseline(), context, 'baseline');
-    expect(valid.repositoryBindingId).toBe('binding-0001');
-    expect(valid.repositoryBindingRevision).toBe(3);
-  });
-});
 
 /* ------------------------------------------------------------------ *
  * 真实夹具（生产形态读取器：项目绑定源仓库只读快照）
@@ -498,57 +439,6 @@ describe('DAG / F-002 已批准规划基线读取（readApprovedPlanningCodeBase
     expect(() => readApprovedPlanningCodeBaseline(fB.session, fB.projectId, fB.featureId))
       .toThrowError(/planning_code_baseline_digest_mismatch/);
   }, 120_000);
-});
-
-describe('DAG / F-002 编码基线解析（resolveWorkspaceBaseCommit）', () => {
-  const binding = { id: 'binding-0001', bindingRevision: 3 };
-  const depsOf = (overrides: Partial<ExecutionStartServiceDeps>) => overrides as ExecutionStartServiceDeps;
-
-  it('[case:base-commit-precedence] 优先级：集成基线 > 已批准规划冻结快照 > 预览捕获 HEAD', () => {
-    const frozen = 'f'.repeat(40);
-    const fresh = 'e'.repeat(40);
-    const deps = depsOf({
-      integrationBaseline: () => ({ baseCommit: 'd'.repeat(40) }),
-      approvedPlanningBaseline: () => ({ headCommit: frozen, repositoryBindingId: binding.id,
-        repositoryBindingRevision: 3, runId: 'run-1', candidateId: 'candidate-1' }),
-    });
-    expect(resolveWorkspaceBaseCommit(deps, 'p1', 'feat-1', binding, fresh)).toBe('d'.repeat(40));
-
-    const planningDeps = depsOf({
-      approvedPlanningBaseline: () => ({ headCommit: frozen, repositoryBindingId: binding.id,
-        repositoryBindingRevision: 3, runId: 'run-1', candidateId: 'candidate-1' }),
-    });
-    expect(resolveWorkspaceBaseCommit(planningDeps, 'p1', 'feat-1', binding, fresh)).toBe(frozen);
-
-    expect(resolveWorkspaceBaseCommit(depsOf({}), 'p1', 'feat-1', binding, fresh)).toBe(fresh);
-  });
-
-  it('[case:base-commit-binding-mismatch] 规划快照仓库绑定与当前绑定不一致：结构化拒绝（planning_baseline_binding_mismatch）', () => {
-    const deps = depsOf({
-      approvedPlanningBaseline: () => ({ headCommit: 'f'.repeat(40), repositoryBindingId: 'binding-other',
-        repositoryBindingRevision: 9, runId: 'run-1', candidateId: 'candidate-1' }),
-    });
-    try {
-      resolveWorkspaceBaseCommit(deps, 'p1', 'feat-1', binding, 'e'.repeat(40));
-      expect.unreachable('expected planning_baseline_binding_mismatch');
-    } catch (error) {
-      expectPublicError(error, 'conflict', 'planning_baseline_binding_mismatch');
-    }
-  });
-});
-
-
-/* ------------------------------------------------------------------ *
- * DAG / F-002 attempt 2：规划快照工作区（Runtime 层分离）
- * ------------------------------------------------------------------ */
-
-describe('DAG / F-002 planning_workspace_directory 受控定位', () => {
-  it('[case:planning-workspace-derivation] 派生路径与编码 worktree 严格分离', () => {
-    expect(derivePlanningWorkspaceRelativeDir('proj-1', 'feat-1'))
-      .toBe('projects/proj-1/planning/feat-1');
-    expect(derivePlanningWorkspaceRelativeDir('proj-1', 'feat-1'))
-      .not.toContain('worktrees');
-  });
 });
 
 describe('DAG / F-002 规划快照准备器（真实 Git）', () => {
