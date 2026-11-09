@@ -42,7 +42,7 @@ export interface IntegrationWorkspaceStep {
   readonly parents: readonly string[];
   readonly commitSha: string;
   readonly treeSha: string;
-  readonly status: 'succeeded';
+  readonly status: 'succeeded' | 'already_included';
 }
 
 export interface IntegrationWorkspaceFacts {

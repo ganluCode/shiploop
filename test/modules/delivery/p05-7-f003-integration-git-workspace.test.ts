@@ -120,6 +120,29 @@ describe('P05-7 F-003 deterministic integration Git workspace', () => {
     expect(existsSync(missing.integrationPath)).toBe(true);
   });
 
+  it('[case:integration-already-included-is-deterministic] records an already included predecessor without inventing a merge commit', async () => {
+    const f = fixture();
+    git(f.repo, ['checkout', '-q', 'feature-a']);
+    const source = createIntegrationExecutionPlan({
+      projectId: f.plan.projectId, phaseId: f.plan.phaseId, batchId: f.plan.batchId, runId: f.plan.runId,
+      successorFeatureId: f.plan.successorFeatureId, target: { ...f.plan.target, baseCommit: f.a },
+      predecessors: f.plan.predecessors, approvedInputs: f.plan.approvedInputs,
+      mergeOrder: f.plan.mergeOrder, verificationScope: f.plan.verificationScope, integrationResult: null,
+    });
+    const prepared = await f.workspace.prepare({ plan: source, integrationPath: f.integrationPath,
+      owner: { ownerId: 'owner-1', ownerVersion: 1 }, gitIdentity: { name: 'ShipLoop', email: 'shiploop@example.test', confirmed: true } });
+    expect(prepared.status).toBe('ready');
+    expect(prepared.workspace?.workspaceId).toBe(source.integrationId);
+    const merged = await f.workspace.merge(prepared.workspace!);
+    expect(merged.status).toBe('succeeded');
+    expect(merged.steps[0]).toMatchObject({ featureId: 'feature-a', inputSha: f.a, commitSha: f.a, status: 'already_included' });
+    expect(merged.steps[1]).toMatchObject({ featureId: 'feature-b', inputSha: f.b, status: 'succeeded' });
+    expect(merged.steps[0]?.parents).toEqual([git(f.integrationPath, ['rev-parse', `${f.a}^`])]);
+    expect(git(f.integrationPath, ['rev-parse', 'HEAD'])).toBe(merged.workspace?.currentHead);
+    expect(git(f.repo, ['rev-parse', 'HEAD'])).toBe(f.a);
+    const cleaned = await f.workspace.cleanup(merged.workspace!);
+    expect(cleaned.status).toBe('cleaned');
+  });
   it('[case:integration-rejects-dirty-source-and-head-drift] blocks before creating an integration worktree', async () => {
     const dirty = fixture();
     writeFileSync(join(dirty.repo, 'untracked.txt'), 'dirty\n');

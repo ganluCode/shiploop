@@ -22,8 +22,11 @@ export function validateIntegrationObservation(raw: unknown, intent: GitOperatio
     const source = plan.predecessors.find(item => item.featureId === featureId)?.delivery?.commitSha;
     if (!step || Object.keys(step).some(key => !['ordinal', 'featureId', 'inputSha', 'parentBefore', 'parents', 'commitSha', 'treeSha', 'status'].includes(key))
       || step.ordinal !== index + 1 || step.featureId !== featureId || step.inputSha !== source
-      || step.parentBefore !== head || !oid(step.commitSha) || !oid(step.treeSha) || step.status !== 'succeeded'
-      || !Array.isArray(step.parents) || step.parents.length !== 2 || step.parents[0] !== head || step.parents[1] !== source) fail();
+      || step.parentBefore !== head || !oid(step.commitSha) || !oid(step.treeSha)
+      || !Array.isArray(step.parents) || step.parents.some(parent => !oid(parent))
+      || step.status !== 'succeeded' && step.status !== 'already_included'
+      || step.status === 'succeeded' && (step.parents.length !== 2 || step.parents[0] !== head || step.parents[1] !== source)
+      || step.status === 'already_included' && (step.commitSha !== head || step.parents.length > 2)) fail();
     head = step.commitSha;
   }
   if (value.workspace !== null) {

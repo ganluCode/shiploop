@@ -262,7 +262,7 @@ export function createIntegrationGitWorkspace(options: {
       const parent = await safeRealpath(dirname(path));
       if (parent !== dirname(path)) throw new IntegrationGitError('path_changed');
       const source = await verifyTarget(input);
-      const workspaceId = randomUUID();
+      const workspaceId = input.plan.integrationId;
       state = { input: { ...input, integrationPath: path }, source, privateGitDir: '', workspaceId };
       const added = await withLock(input, input.plan.target.canonicalPath, () => {
         input.beforeWrite?.();
@@ -314,6 +314,24 @@ export function createIntegrationGitWorkspace(options: {
       if (!inputSha) throw new IntegrationGitError('input_not_approved');
       const object = await run(state.input.integrationPath, ['cat-file', '-e', `${inputSha}^{commit}`], state.input, [0, 1]);
       if (object.exitCode !== 0) throw new IntegrationGitError('input_missing');
+      const included = await run(state.input.integrationPath, ['merge-base', '--is-ancestor', inputSha, actualFacts.head], state.input, [0, 1]);
+      if (included.exitCode === 0) {
+        const step: IntegrationWorkspaceStep = { ordinal: current.steps.length + 1, featureId: next, inputSha,
+          parentBefore: actualFacts.head, parents: actualFacts.parents, commitSha: actualFacts.head,
+          treeSha: actualFacts.tree, status: 'already_included' };
+        const steps = [...current.steps, step];
+        await writeFile(join(state.privateGitDir, OWNER_FILE), JSON.stringify({ workspaceId: state.workspaceId,
+          ownerId: state.input.owner.ownerId, ownerVersion: state.input.owner.ownerVersion,
+          planId: state.input.plan.integrationId, targetBase: state.input.plan.target.baseCommit, steps }) + '\\n', { mode: 0o600 });
+        if (!(await sourceUnchanged(state, state.input))) throw new IntegrationGitError('source_changed');
+        current = makeHandle(state, 'ready', actualFacts.head, steps, actualFacts);
+        state.input.onStep?.(current);
+        if (steps.length === state.input.plan.mergeOrder.length) {
+          const completed = makeHandle(state, 'succeeded', actualFacts.head, steps, actualFacts);
+          return { ...outcome('succeeded', null, completed, { complete: true }), steps };
+        }
+        continue;
+      }
       const parentBefore = actualFacts.head;
       const merged = await withLock(state.input, state.input.integrationPath, () => {
         state.input.beforeWrite?.();
