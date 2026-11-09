@@ -1,5 +1,7 @@
 import type { GitCommitFacts } from '../ports/controlled-git-commit.js';
 import { gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
+import { controlledGitCommitParents } from '../ports/git-agent-integration-commit.js';
+import { isDeepStrictEqual } from 'node:util';
 import type { GitOperationIntent } from '../ports/git-operations.js';
 import type { WorkRecoveryGitOperationFacts } from '../ports/work-recovery-reconciliation.js';
 
@@ -15,7 +17,7 @@ export function observeGitCommit(intent: GitOperationIntent, facts: GitCommitFac
     operationId: intent.operationId, outcome: 'not_executed', actualCommit: null, actualTree: null,
     reasonCode: 'commit_not_observed',
   };
-  if (facts.parents.length !== 1 || facts.parents[0] !== intent.expectedHead) return unknown('unexplained_head_drift');
+  if (!isDeepStrictEqual(facts.parents, controlledGitCommitParents(intent))) return unknown('unexplained_head_drift');
   if (facts.tree !== intent.candidateTree) return unknown('candidate_tree_mismatch');
   const sameIdentity = (identity: { name: string; email: string }) =>
     identity.name === intent.gitIdentity.name && identity.email === intent.gitIdentity.email;

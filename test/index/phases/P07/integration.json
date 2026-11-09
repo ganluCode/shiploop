@@ -515,6 +515,21 @@
           "level": "integration"
         },
         {
+          "file": "test/modules/delivery/git-agent-integration-commit.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f005-git-agent-recovery-sqlite.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/workspace/p03-5-workspace-inspector.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
           "file": "test/modules/runtime/p04-3-failure-routing-integration.test.ts",
           "all": true,
           "level": "integration"

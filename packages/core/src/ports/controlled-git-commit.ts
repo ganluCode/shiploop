@@ -42,6 +42,8 @@ export interface GitCommitDriverSession {
   remoteIdentity?(remote: string): Promise<string>;
   remoteHead?(remote: string, branch: string): Promise<string | null>;
   pushCommit?(remote: string, branch: string, commit: string): Promise<void>;
+  /** Read-only pending merge parent census. Missing capability cannot authorize a merge repair. */
+  mergeHeads?(): Promise<readonly string[]>;
   facts(): Promise<GitCommitFacts>;
   /** P03-9 / F-006 read-only ancestry check; no ref, index or working-tree mutation. */
   isAncestor(ancestor: string, descendant: string): Promise<boolean>;

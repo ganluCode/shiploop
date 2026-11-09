@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { controlledGitCommitLockId, controlledGitCommitParents, gitAgentIntegrationCommitResult, readGitAgentIntegrationCommitBinding } from '../ports/git-agent-integration-commit.js';
 import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { validateStableId } from '../ports/validation.js';
@@ -55,7 +56,7 @@ export function createControlledGitCommitService(deps: {
   return { async commit(request) {
     if (!request || Object.keys(request).some(key => !['projectId', 'operationId'].includes(key))) fail('invalid_request');
     validateStableId(request.projectId, { operation: OP }, 'projectId');
-    if (!isUuidV4(request.operationId)) fail('invalid_operation_id');
+    if (!isUuidV4(request.operationId) && !/^[a-f0-9]{64}$/.test(request.operationId)) fail('invalid_operation_id');
     // A pending operation is never an authorization to repeat an uncertain commit.
     try {
       const previous = deps.operations.getGitOperation(request.projectId, request.operationId);
@@ -79,6 +80,10 @@ export function createControlledGitCommitService(deps: {
     }
     const authorization = structuredClone(deps.readAuthorization(request));
     const { intent, baseline, resourceIdentity, allowedPaths } = authorization;
+    const repairBinding = readGitAgentIntegrationCommitBinding(intent);
+    const expectedParents = controlledGitCommitParents(intent);
+    if (!isUuidV4(request.operationId) && (intent.operationType !== 'integration_commit' || repairBinding === null)) fail('invalid_operation_id');
+    if (intent.operationType === 'integration_commit' && repairBinding === null) fail('repair_commit_binding_mismatch');
     // Validate confirmed user identity and immutable input before even staging.
     validateGitOperationRegisterInput({ ...intent, candidateTree: intent.expectedHead });
     if (intent.projectId !== request.projectId || intent.operationId !== request.operationId
@@ -126,7 +131,7 @@ export function createControlledGitCommitService(deps: {
     current();
     await stopped();
     const lease = await deps.lock.acquire({ repoIdentity: intent.repoIdentity, workspacePath: intent.worktreePath,
-      gitCommonDir: baseline.gitCommonDir, operationId: intent.operationId });
+      gitCommonDir: baseline.gitCommonDir, operationId: controlledGitCommitLockId(intent.operationId) });
     let retainClaim = false;
     let registered: GitOperationRecord | null = null;
     try {
@@ -148,6 +153,11 @@ export function createControlledGitCommitService(deps: {
       let admissionRequired = true;
       const driver = deps.driver.open(baseline, () => { if (admissionRequired) current(); });
       const initial = await driver.facts();
+      async function checkMergeHeads() {
+        if (repairBinding !== null && (typeof driver.mergeHeads !== 'function'
+          || !isDeepStrictEqual(await driver.mergeHeads(), expectedParents.slice(1)))) fail('merge_parent_changed');
+      }
+      await checkMergeHeads();
       if (initial.head !== intent.expectedHead) fail('head_drift');
       if ((await driver.stagedPaths()).some(path => !allowedPaths.includes(path))) fail('unapproved_staged_files');
       await stopped();
@@ -185,7 +195,8 @@ export function createControlledGitCommitService(deps: {
       await driver.verifyIndex(deliveredEntries);
       const finalPreflight = await driver.facts();
       if (finalPreflight.head !== intent.expectedHead) fail('head_drift');
-      const noChange = candidateTree === initial.tree;
+      const noChange = candidateTree === initial.tree && expectedParents.length === 1;
+      await checkMergeHeads();
       const message = gitOperationCommitMessage(intent.message, intent.operationId);
       // A crash/unknown stop or a lost receipt after this point retains the claim for F-004.
       retainClaim = true;
@@ -198,7 +209,7 @@ export function createControlledGitCommitService(deps: {
       let reason: string | null = null;
       if (command.reason !== null || (!noChange && command.exitCode !== 0)) reason = command.reason ?? 'git_commit_failed';
       else if (noChange ? actual.head !== intent.expectedHead
-        : actual.head === intent.expectedHead || actual.parents.length !== 1 || actual.parents[0] !== intent.expectedHead) reason = 'parent_or_head_mismatch';
+        : actual.head === intent.expectedHead || !isDeepStrictEqual(actual.parents, expectedParents)) reason = 'parent_or_head_mismatch';
       else if (actual.tree !== candidateTree || actualIndex !== candidateTree) reason = 'candidate_tree_mismatch';
       else if (!noChange && (actual.message !== message || !isDeepStrictEqual(actual.author, { name: intent.gitIdentity.name, email: intent.gitIdentity.email })
         || !isDeepStrictEqual(actual.committer, actual.author))) reason = 'commit_intent_mismatch';
@@ -210,7 +221,9 @@ export function createControlledGitCommitService(deps: {
           expectedRevision: registered!.revision, status: reason ? 'failed' : noChange ? 'no_change' : 'succeeded',
           actualCommit: actual.head, actualTree: actual.tree, exitCode: command.exitCode,
           durationMs: command.durationMs, reasonCode: reason,
-          deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
+          deliveryStatus: intent.operationType === 'task_commit' || intent.operationType === 'integration_commit' ? 'not_requested' : reason ? 'failed' : 'succeeded',
+          integrationResult: reason || noChange ? undefined : gitAgentIntegrationCommitResult(durable.intent, actual.head, actual.tree),
+          settledAtUtcMs: now() }).operation;
       });
       retainClaim = false;
       return operation;

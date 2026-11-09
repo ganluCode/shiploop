@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { controlledGitCommitLockId, gitAgentIntegrationCommitResult, readGitAgentIntegrationCommitBinding } from '../ports/git-agent-integration-commit.js';
 import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { validateStableId } from '../ports/validation.js';
@@ -48,11 +49,12 @@ export function createGitCommitReconciliationService(deps: any): any {
   return { async reconcile(request: GitCommitRequest) {
     if (!request || Object.keys(request).some(key => !['projectId', 'operationId'].includes(key))) fail('invalid_request');
     validateStableId(request.projectId, { operation: OP }, 'projectId');
-    if (!isUuidV4(request.operationId)) fail('invalid_operation_id');
+    if (!isUuidV4(request.operationId) && !/^[a-f0-9]{64}$/.test(request.operationId)) fail('invalid_operation_id');
     const original = deps.operations.getGitOperation(request.projectId, request.operationId);
     // A recorded terminal result is historical evidence, never a fresh delivery grant.
     if (original.status !== 'pending') return recorded(original);
     const intent = original.intent;
+    if (!isUuidV4(request.operationId) && readGitAgentIntegrationCommitBinding(intent) === null) fail('invalid_operation_id');
     const authorization = structuredClone(deps.readAuthorization(request));
     const { baseline, resourceIdentity } = authorization;
     function sameIntent(auth: GitCommitAuthorization) {
@@ -94,7 +96,7 @@ export function createGitCommitReconciliationService(deps: any): any {
     if (token === null || !isDeepStrictEqual(deps.stopVerifier.inspect(token), snapshot)) fail('previous_writer_stop_unconfirmed');
     current();
     const lockInput = { repoIdentity: intent.repoIdentity, workspacePath: intent.worktreePath,
-      gitCommonDir: baseline.gitCommonDir, operationId: intent.operationId };
+      gitCommonDir: baseline.gitCommonDir, operationId: controlledGitCommitLockId(intent.operationId) };
     // Keep a retained claim throughout inspection. Read-only reconciliation readers
     // may share an exact-owner stopped claim; SQL CAS chooses the sole settlement.
     try { await deps.lock.acquire(lockInput); }
@@ -117,7 +119,7 @@ export function createGitCommitReconciliationService(deps: any): any {
           return deps.operations.finalizeGitOperation({ projectId: intent.projectId, operationId: intent.operationId,
             expectedRevision: original.revision, status: 'unknown', actualCommit: null, actualTree: null,
             exitCode: null, durationMs: null, reasonCode: 'git_facts_unavailable',
-            deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : 'pending', settledAtUtcMs: now() }).operation;
+            deliveryStatus: intent.operationType === 'task_commit' || intent.operationType === 'integration_commit' ? 'not_requested' : 'pending', settledAtUtcMs: now() }).operation;
         });
         return recorded(operation);
       }
@@ -163,7 +165,8 @@ export function createGitCommitReconciliationService(deps: any): any {
           expectedRevision: original.revision, status: unknownReason ? 'unknown' : reason ? 'failed' : 'succeeded',
           actualCommit: unknownReason ? null : actual.head, actualTree: unknownReason ? null : actual.tree,
           exitCode: null, durationMs: null, reasonCode: reason,
-          deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : unknownReason ? 'pending' : reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
+          deliveryStatus: intent.operationType === 'task_commit' || intent.operationType === 'integration_commit' ? 'not_requested' : unknownReason ? 'pending' : reason ? 'failed' : 'succeeded',
+          integrationResult: reason ? undefined : gitAgentIntegrationCommitResult(intent, actual.head, actual.tree), settledAtUtcMs: now() }).operation;
       });
       releaseClaim = operation.status !== 'unknown';
       return recorded(operation);

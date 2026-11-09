@@ -105,6 +105,8 @@ export * from './application/runtime-execution.js';
 export * from './application/git-agent-runtime-supervision.js';
 export * from './application/git-agent-repair-recovery.js';
 export * from './application/git-agent-repair-attempt-runner.js';
+export * from './application/git-agent-integration-repair.js';
+export * from './ports/git-agent-integration-commit.js';
 export * from './application/git-agent-candidate-finalization.js';
 export * from './ports/task-claim.js';
 export * from './ports/work-session.js';

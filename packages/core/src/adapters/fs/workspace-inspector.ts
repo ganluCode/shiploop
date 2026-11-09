@@ -23,6 +23,8 @@ export interface WorkspaceInspectorOptions {
   readonly processes?: CommandProcessPort;
   readonly confirmProcessIdentity: ConfirmCommandProcessIdentity;
   readonly limits?: Partial<WorkspaceInspectionLimits>;
+  /** Trusted integration-only reader: detached HEAD and unmerged regular blobs remain observable. */
+  readonly integrationRepair?: boolean;
 }
 export interface WorkspaceInspectionLimits {
   readonly maxFiles: number;
@@ -88,7 +90,7 @@ function existingCanonical(path: string): string {
 }
 function configure(options: WorkspaceInspectorOptions): WorkspaceInspectionLimits {
   if (!options || typeof options !== 'object' || Array.isArray(options)
-    || Object.keys(options).some(k => !['authorizedRoots', 'processes', 'confirmProcessIdentity', 'limits'].includes(k))
+    || Object.keys(options).some(k => !['authorizedRoots', 'processes', 'confirmProcessIdentity', 'limits', 'integrationRepair'].includes(k))
     || !Array.isArray(options.authorizedRoots) || !options.authorizedRoots.length
     || typeof options.confirmProcessIdentity !== 'function'
     || (options.processes !== undefined && typeof options.processes?.start !== 'function')) fail('invalid_input');
@@ -127,7 +129,7 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
   return { async inspect(input) {
     let baseline: WorkspaceBaseline;
     try { baseline = validateWorkspaceBaseline(input); } catch { return fail('invalid_input'); }
-    if (baseline.branch === 'HEAD') fail('invalid_input');
+    if (baseline.branch === 'HEAD' && options.integrationRepair !== true) fail('invalid_input');
     if (!roots.some(root => inside(root, baseline.canonicalPath))) fail('outside_authorized_root');
     /* P07-1 / F-002 恢复入口实体身份核验：现代（P06）身份以 Git common dir
      * 的文件系统对象标识（dev/ino）核对真实实体；旧路径派生身份保持已支持
@@ -177,7 +179,10 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         if (overflow || result.reason === 'output_overflow' || result.droppedOutputBytes !== 0) fail('output_limit');
         if (result.reason === 'timed_out') fail('git_timeout');
         if (result.reason === 'permission_denied') fail('permission_denied');
-        if (detachedAllowed && result.exitCode === 1 && result.reason === null) fail('detached_head');
+        if (detachedAllowed && result.exitCode === 1 && result.reason === null) {
+          if (options.integrationRepair === true && baseline.branch === 'HEAD') return Buffer.from('HEAD\n');
+          fail('detached_head');
+        }
         if (result.reason !== null || result.exitCode !== 0 || result.signal !== null) {
           throw new WorkspaceInspectionError(args[0] === 'cat-file' ? 'commit_missing' : 'git_failed', result.exitCode, result.signal);
         }
@@ -257,7 +262,8 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         const headCommit = text(headBytes!).trim();
         if (!oid(headCommit)) fail('invalid_git_output');
         const branch = text(branchBytes!).trim();
-        if (branch !== `refs/heads/${baseline.branch}`) fail('branch_mismatch');
+        const detached = options.integrationRepair === true && baseline.branch === 'HEAD';
+        if (branch !== (detached ? 'HEAD' : `refs/heads/${baseline.branch}`)) fail('branch_mismatch');
         const records = nulRecords(registrationBytes!);
         const registrations: Record<string, string>[] = [];
         let row: Record<string, string> = {};
@@ -270,8 +276,9 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         }
         if (Object.keys(row).length) fail('invalid_git_output');
         const matches = registrations.filter(r => r.worktree === baseline.canonicalPath);
-        if (matches.length !== 1 || matches[0].HEAD !== headCommit || matches[0].branch !== branch
-          || 'prunable' in matches[0] || 'bare' in matches[0] || 'detached' in matches[0]) fail('registration_damaged');
+        if (matches.length !== 1 || matches[0].HEAD !== headCommit
+          || (detached ? !('detached' in matches[0]) || 'branch' in matches[0] : matches[0].branch !== branch || 'detached' in matches[0])
+          || 'prunable' in matches[0] || 'bare' in matches[0]) fail('registration_damaged');
         const [refsBytes, indexBytes, treeBytes] = await readBatch([
           ['show-ref', '--head'], ['ls-files', '--stage', '-z'], ['ls-tree', '-r', '-z', 'HEAD'],
         ]);
@@ -281,9 +288,10 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
           const match = record.match(/^(\d{6}) ([0-9a-f]+) (\d)\t([\s\S]+)$/);
           if (!match || !oid(match[2])) fail('invalid_git_output');
           if (match[1] !== '100644' && match[1] !== '100755') fail('special_file');
-          if (match[3] !== '0') fail('registration_damaged');
+          if (match[3] !== '0' && (options.integrationRepair !== true || !['1', '2', '3'].includes(match[3]))) fail('registration_damaged');
           const path = safeRelative(match[4]);
-          if (tracked.has(path)) fail('invalid_git_output');
+          if (tracked.has(path) && (options.integrationRepair !== true || match[3] === '0')) fail('invalid_git_output');
+          // Preserve raw index bytes in identity below; this entry only locates the working file.
           tracked.set(path, { indexObject: match[2], indexMode: match[1] });
         }
         // HEAD-only paths retain staged deletion evidence, with no fabricated index object.
@@ -308,7 +316,7 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         // Reject gitlinks before status could recurse into a nested repository.
         const status = statusBytes!.toString('base64');
         const registration = { path: baseline.canonicalPath, headCommit, branch };
-        const identity = JSON.stringify({ meta, registrations, refs, status, tracked: [...tracked], untracked: [...untracked], ignored: [...ignored] });
+        const identity = JSON.stringify({ meta, registrations, refs, status, ...(options.integrationRepair === true ? { index: indexBytes!.toString('base64') } : {}), tracked: [...tracked], untracked: [...untracked], ignored: [...ignored] });
         return { headCommit, branch, registration, refs, status, tracked, untracked, ignored, identity };
       }
       async function scan(snapshot: GitSnapshot) {
@@ -316,6 +324,7 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
         const entries = new Map<string, WorkspaceContentEntry>();
         const directories: string[] = [];
         const stamps = new Map<string, string>();
+        const conflictMarkerPaths = new Set<string>();
         async function walk(directory: string, prefix: string, depth: number): Promise<void> {
           budget();
           if (depth > 64) fail('file_limit');
@@ -342,6 +351,7 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
               const fd = await open(absolute, READ_FLAGS);
               const hash = createHash('sha256');
               let size = 0;
+              let markerTail = '';
               try {
                 if (fingerprint(await fd.stat({ bigint: true })) !== fingerprint(before)) fail('content_changed');
                 const buffer = Buffer.alloc(65_536);
@@ -352,6 +362,11 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
                   size += bytesRead; bytes += bytesRead;
                   if (bytes > limits.maxBytes) fail('byte_limit');
                   hash.update(buffer.subarray(0, bytesRead));
+                  if (options.integrationRepair === true) {
+                    const part = markerTail + buffer.subarray(0, bytesRead).toString('utf8');
+                    if (/(?:^|\n)(?:<{7,}|={7,}|>{7,}|\|{7,})(?:[ \r\n]|$)/.test(part)) conflictMarkerPaths.add(path);
+                    markerTail = part.slice(-256);
+                  }
                 }
                 if (BigInt(size) !== before.size || fingerprint(await fd.stat({ bigint: true })) !== fingerprint(before)
                   || fingerprint(await lstat(absolute, { bigint: true })) !== fingerprint(before)) fail('content_changed');
@@ -388,7 +403,7 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
             : e),
           untracked: ordered.filter(e => snapshot.untracked.has(e.path)), ignored: ordered.filter(e => snapshot.ignored.has(e.path)),
           directories: directories.sort() };
-        return { contents, count, bytes, identity: JSON.stringify([contents, [...stamps].sort()]) };
+        return { contents, count, bytes, conflictMarkerPaths: [...conflictMarkerPaths].sort(), identity: JSON.stringify([contents, [...stamps].sort()]) };
       }
       const firstGit = await gitSnapshot();
       if (firstGit.tracked.size + firstGit.untracked.size + firstGit.ignored.size > limits.maxFiles) fail('file_limit');
@@ -406,6 +421,7 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
       const repository = { ...baseline, headCommit: firstGit.headCommit };
       const facts = { schemaVersion: 1 as const, complete: true as const, repository, registration: firstGit.registration,
         statusPorcelainBase64: firstGit.status, refsDigest: sha(firstGit.refs), codeDigest, ignoredDigest, contents: first.contents,
+        ...(options.integrationRepair === true ? { conflictMarkerPaths: first.conflictMarkerPaths } : {}),
         ignoredProtection: first.contents.ignored.length ? 'preserve' as const : 'none_present' as const,
         directoryProtection: first.contents.directories.length ? 'preserve' as const : 'none_present' as const,
         observedFileCount: first.count, observedBytes: first.bytes, boundary: 'trusted_project_not_os_sandbox' as const };

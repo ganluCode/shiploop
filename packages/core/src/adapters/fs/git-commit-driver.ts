@@ -200,6 +200,14 @@ export function createGitCommitDriver(options: {
           }
         }
       },
+      async mergeHeads() {
+        const result = await run(['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'], undefined, undefined, true);
+        if (result.reason !== null || ![0, 1].includes(result.exitCode ?? -1)) invalid();
+        if (result.exitCode === 1) return [];
+        const head = decode(result.output).trim();
+        if (!oid(head)) invalid();
+        return [head];
+      },
       async facts(): Promise<GitCommitFacts> {
         const head = (await output(['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
         if (!oid(head)) invalid();

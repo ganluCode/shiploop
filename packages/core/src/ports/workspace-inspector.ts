@@ -48,6 +48,8 @@ export interface WorkspaceInspection {
     /** Empty/untracked directories are retained evidence too, not scan exclusions. */
     readonly directories: readonly string[];
   };
+  /** Set only by the trusted integration inspector; it scans actual file bytes. */
+  readonly conflictMarkerPaths?: readonly string[];
   readonly ignoredProtection: 'preserve' | 'none_present';
   readonly directoryProtection: 'preserve' | 'none_present';
   readonly observedFileCount: number;
