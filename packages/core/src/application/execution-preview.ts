@@ -104,6 +104,21 @@ export interface ExecutionPreviewServiceDeps {
   readonly views: ExecutionPreviewViewStore;
   readonly inspector: RepositoryInspector;
   readonly workspace: BaselineWorkspaceReader;
+  /** Shared Core authority for selecting a frozen coding baseline. */
+  readonly baseline?: (input: {
+    readonly projectId: string;
+    readonly phaseId: string;
+    readonly featureId: string;
+    readonly dependencyFeatureIds: readonly string[];
+    readonly currentHeadCommit: string | null;
+  }) => {
+    readonly baseCommit: string;
+    readonly treeSha: string | null;
+    readonly integrationId: string | null;
+    readonly inputDigest: string | null;
+    readonly planRevision: number | null;
+    readonly source: string;
+  };
   readonly permissions: ExecutionPermissionsReader;
   /** 时间源（默认 Date.now；测试注入以获得确定性）。 */
   readonly nowMs?: () => number;
@@ -517,8 +532,45 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       } catch (cause) {
         throw mapToPublicError(cause, { operation });
       }
+      const baselineByMember = new Map<string, {
+        readonly featureId: string;
+        readonly baseCommit: string;
+        readonly treeSha: string | null;
+        readonly integrationId: string | null;
+        readonly inputDigest: string | null;
+        readonly planRevision: number | null;
+        readonly source: string;
+      }>();
+      for (const member of members) {
+        const dependencyFeatureIds = (scopeView?.featureDependencies ?? [])
+          .filter((edge) => edge.featureId === member.feature.id)
+          .map((edge) => edge.dependsOnId)
+          .sort();
+        const baseline = deps.baseline?.({
+          projectId: projectKey,
+          phaseId: phase.id,
+          featureId: member.feature.id,
+          dependencyFeatureIds,
+          currentHeadCommit: inspection.headCommit,
+        }) ?? {
+          baseCommit: inspection.headCommit ?? '',
+          treeSha: null,
+          integrationId: null,
+          inputDigest: null,
+          planRevision: null,
+          source: 'execution_snapshot',
+        };
+        if (baseline.baseCommit === null || baseline.baseCommit.length === 0) {
+          throw publicError('conflict', 'baseline_missing', { featureId: member.feature.id });
+        }
+        baselineByMember.set(member.feature.id, { featureId: member.feature.id, ...baseline });
+      }
+      const targetBaseline = baselineByMember.get(payload.featureIds[0] ?? finalFeatureIds[0]!);
+      if (targetBaseline === undefined) {
+        throw publicError('conflict', 'baseline_missing', { featureId: payload.featureIds[0] ?? finalFeatureIds[0] });
+      }
       const code: ExecutionPreviewCodeIdentity = {
-        headCommit: inspection.headCommit,
+        headCommit: targetBaseline.baseCommit,
         workingTreeDigest: workspaceSummary.digest,
         hasUncommittedChanges: inspection.hasUncommittedChanges,
       };
@@ -626,6 +678,9 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       const aggregateDecisionId = members.length === 1
         ? (validityByMember.get(members[0]!.feature.id)?.currentDecisionId ?? null)
         : null;
+      const digestBaselines = [...baselineByMember.values()]
+        .filter((baseline) => baseline.source !== 'execution_snapshot')
+        .sort((left, right) => left.featureId < right.featureId ? -1 : 1);
       const summary: ExecutionPreviewSummary = {
         members: memberSummaries,
         approval: {
@@ -640,6 +695,7 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
             .sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
         },
         code,
+        baselines: [...baselineByMember.values()].sort((left, right) => left.featureId < right.featureId ? -1 : 1),
         checkPolicyDigest,
         tasks,
         permissions: { tasks: permissionsEntries },
@@ -656,6 +712,7 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         featureIds: finalFeatureIds,
         planDigest: members.length === 1 ? members[0]!.feature.planDigest : aggregatePlanDigest,
         code,
+        ...(digestBaselines.length === 0 ? {} : { baselines: digestBaselines }),
         tasks: tasks.map((task) => ({
           taskId: task.taskId,
           strategyCopyDigest: task.strategyCopyDigest,

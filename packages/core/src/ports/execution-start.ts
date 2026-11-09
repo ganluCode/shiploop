@@ -196,6 +196,15 @@ export interface PreparedExecutionStartFresh {
   /** P05-4：批准 Batch 冻结的 Feature 并发策略；派发消费不回读可变配置。 */
   readonly concurrency: { readonly maxConcurrentWorks: number; readonly source: string };
   readonly code: ExecutionPreviewCodeIdentity;
+  readonly baselines: readonly {
+    readonly featureId: string;
+    readonly baseCommit: string;
+    readonly treeSha: string | null;
+    readonly integrationId: string | null;
+    readonly inputDigest: string | null;
+    readonly planRevision: number | null;
+    readonly source: string;
+  }[];
   readonly inputs: readonly ExecutionPreviewInputRefSummary[];
   readonly planDigest: string;
   readonly checkPolicyDigest: string;

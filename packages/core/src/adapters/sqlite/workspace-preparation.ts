@@ -22,13 +22,21 @@ import { createSqliteStateAccess, transactSqliteConsistentRead } from './state-s
 import { createSqliteAtomicCommandStore } from './atomic-commands.js';
 import { createSqliteAttemptLifecycleStore } from './attempt-lifecycle-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
+import { listIntegrationPlansByPhaseInTransaction } from './integration-plan-store.js';
 import type { SqliteStorageSession } from './session.js';
 
 export function createSqliteWorkspacePreparationStore(session: SqliteStorageSession, options: {
   readonly resources: WorkResourceAccess;
   readonly workspaceAuthority: WorkWorkspaceAuthority;
   /** F-004：校验 Run 快照中的基线来自已通过集成计划；不得回退到 branch HEAD。 */
-  readonly integrationBaselineGate?: (input: { readonly projectId: string; readonly featureId: string; readonly baseCommit: string }) => void;
+  readonly integrationBaselineGate?: (input: {
+    readonly projectId: string;
+    readonly featureId: string;
+    readonly phaseId: string;
+    readonly dependencyFeatureIds: readonly string[];
+    readonly baseCommit: string;
+    readonly integrationPlans: readonly import('../../ports/integration-plan-store.js').PersistedIntegrationPlan[];
+  }) => void;
   readonly nowUtcMs?: () => number;
 }): WorkspacePreparationStore {
   const db = session.database, now = options.nowUtcMs ?? Date.now;
@@ -73,12 +81,25 @@ export function createSqliteWorkspacePreparationStore(session: SqliteStorageSess
     }) as { repositoryBindingId?: unknown; repositoryBindingRevision?: unknown; baseCommit?: unknown } | undefined;
     if (!baseline || baseline.repositoryBindingId !== binding.id || baseline.repositoryBindingRevision !== binding.bindingRevision) fail('confirmed_baseline_or_current_binding_required');
     const baseCommit = validateWorkspaceCommit(baseline!.baseCommit);
-    options.integrationBaselineGate?.({ projectId: identity.projectId, featureId: attempt.featureId, baseCommit });
     if (binding.gitCommonDir === null) fail('git_common_dir_required');
-    const feature = db.prepare<[string, string], { branch_name: string | null }>(
-      'SELECT branch_name FROM features WHERE project_id = ? AND id = ?').get(identity.projectId, attempt.featureId);
-    if (!feature?.branch_name) fail('feature_branch_name_required');
-    return { binding, featureId: attempt.featureId, baseCommit, branchName: feature!.branch_name! };
+    const feature = db.prepare<[string, string], { branch_name: string | null; phase_id: string }>(
+      'SELECT branch_name, phase_id FROM features WHERE project_id = ? AND id = ?').get(identity.projectId, attempt.featureId);
+    if (feature === undefined) fail('feature_branch_name_required');
+    if (feature!.branch_name === null) fail('feature_branch_name_required');
+    const verifiedFeature: { readonly branch_name: string; readonly phase_id: string } = {
+      branch_name: feature!.branch_name!, phase_id: feature!.phase_id,
+    };
+    options.integrationBaselineGate?.({
+      projectId: identity.projectId,
+      featureId: attempt.featureId,
+      phaseId: verifiedFeature.phase_id,
+      dependencyFeatureIds: (db.prepare<[string, string], { depends_on_id: string }>(
+        'SELECT depends_on_id FROM feature_dependencies WHERE project_id = ? AND feature_id = ? ORDER BY depends_on_id',
+      ).all(identity.projectId, attempt.featureId) as { depends_on_id: string }[]).map((row) => row.depends_on_id),
+      baseCommit,
+      integrationPlans: listIntegrationPlansByPhaseInTransaction(db, identity.projectId, verifiedFeature.phase_id, 'Workspace.prepare.integrationBaseline'),
+    });
+    return { binding, featureId: attempt.featureId, baseCommit, branchName: verifiedFeature.branch_name! };
   }
   function command(input: WorkspacePreparationInput, step: string, result: Record<string, unknown>, commandId = input.operationId) {
     const timestamp = new Date(now()).toISOString();

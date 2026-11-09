@@ -198,7 +198,9 @@ export function resolveWorkspaceBaseCommit(
   featureId: string,
   binding: { readonly id: string; readonly bindingRevision: number },
   fallback: string,
+  fixedBaseline?: string,
 ): string {
+  if (fixedBaseline !== undefined) return fixedBaseline;
   const fixed = deps.integrationBaseline?.(projectId, featureId);
   if (fixed !== null && fixed !== undefined) return fixed.baseCommit;
   const planning = deps.approvedPlanningBaseline?.(projectId, featureId) ?? null;
@@ -310,7 +312,7 @@ function submitMultiExecutionStart(
   for (const fact of facts) {
     const workKey = computeExecutionWorkKey({ featureId: fact.snapshot.feature.id, purpose: EXECUTION_RUN_PURPOSE, planDigest: fact.snapshot.feature.planDigest!, inputs: fact.inputs });
     const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE, labels: envelope.payload.retryBatchId === null ? envelope.payload.labels : [],
-      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, binding, prepared.code.headCommit ?? '') } },
+      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, binding, prepared.code.headCommit ?? '', prepared.baselines.find((baseline) => baseline.featureId === fact.snapshot.feature.id)?.baseCommit) } },
       configSnapshot: { schemaVersion: 1, runLimits: prepared.budget.run }, status: 'queued', scopeDigest: prepared.previewDigest, workKey, dispatchOrdinal: 1,
       maxAttemptsPerRun: prepared.budget.run.maxAttemptsPerRun, runTimeLimitMs: prepared.budget.run.runTimeLimitMs, reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON });
     transaction.appendExecutionEvent({ projectId: prepared.projectId, eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE, aggregateType: 'run', aggregateId: run.id, aggregateRevision: run.revision, payload: { dispatched: true } });
@@ -617,6 +619,15 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         budget,
         concurrency: summary.concurrency,
         code: summary.code,
+        baselines: summary.baselines ?? [{
+          featureId: payload.featureIds[0]!,
+          baseCommit: summary.code.headCommit!,
+          treeSha: null,
+          integrationId: null,
+          inputDigest: null,
+          planRevision: null,
+          source: 'execution_snapshot',
+        }],
         inputs: summary.inputs.refs,
         planDigest: summary.approval.planDigest,
         checkPolicyDigest: summary.checkPolicyDigest,
@@ -799,6 +810,8 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           featureIds: [feature.id],
           planDigest: feature.planDigest,
           code: fresh.code,
+          ...(fresh.baselines.some((baseline) => baseline.source !== 'execution_snapshot')
+            ? { baselines: fresh.baselines.filter((baseline) => baseline.source !== 'execution_snapshot') } : {}),
           tasks: taskStrategyDigests.map((entry) => ({
             taskId: entry.taskId,
             strategyCopyDigest: entry.digest,
@@ -930,7 +943,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         const binding = transaction.getRepositoryBinding(projectId);
         runInputSnapshot = { schemaVersion: 1, previewDigest: fresh.previewDigest, ...baseInputSnapshot,
           workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
-            baseCommit: resolveWorkspaceBaseCommit(deps, projectId, feature.id, binding, fresh.code.headCommit ?? '') } };
+            baseCommit: resolveWorkspaceBaseCommit(deps, projectId, feature.id, binding, fresh.code.headCommit ?? '', fresh.baselines.find((baseline) => baseline.featureId === feature.id)?.baseCommit) } };
       } else {
         /* 11b. 显式失败重试：同一父 Batch，共享父预算（不携带新预算/新授权依据）；
          * 终态 Batch 不接受新派发；重试工作身份必须与父 Batch 既有 Run 的

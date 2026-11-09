@@ -294,6 +294,8 @@ import { createIntegrationPlanControlService } from '../application/integration-
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
 import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
+import { createExecutionBaselineAuthority } from '../application/execution-baseline-authority.js';
+import type { ExecutionBaselineAuthority } from '../application/execution-baseline-authority.js';
 
 // F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
 export { createCommandProcessAdapter } from './process/command-process.js';
@@ -1008,6 +1010,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // （构造环：execution 依赖 commandService.submit 做授权提交；闭包只在命令执行
     // 时解引用，装配完成后才可达）。
     let baselineExecutionServiceRef: BaselineExecutionService | undefined;
+    const integrationPlanStore = createSqliteIntegrationPlanStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const approvedPlanningBaselineForFeature = (projectId: string, featureId: string) => {
+      try {
+        return readApprovedPlanningCodeBaseline(session, projectId, featureId);
+      } catch (error) {
+        if (error instanceof StorageError && error.kind === 'not_found') return null;
+        throw error;
+      }
+    };
+    const executionBaselineAuthority: ExecutionBaselineAuthority = createExecutionBaselineAuthority({
+      approvedPlanningBaseline: approvedPlanningBaselineForFeature,
+    });
     // P03-3 / F-004：单 Feature 执行 prepare 预览服务（只读预览：一致读视图 +
     // 受控仓库检查；授权与纯校验先于仓库/制品 I/O；不创建执行实体、不扣预算；
     // 权限面沿用 P03-2 生产缺省空集边界宣告，运行时授权面随后续阶段引入时
@@ -1016,6 +1030,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inspector: repositoryInspector,
       workspace: createBaselineWorkspaceReader(),
+      baseline(input) {
+        return executionBaselineAuthority.resolve({
+          ...input,
+          integrationPlans: integrationPlanStore.listIntegrationPlansByPhase(input.projectId, input.phaseId),
+        });
+      },
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
@@ -1203,6 +1223,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const workspacePreparationStore = createSqliteWorkspacePreparationStore(session, {
       resources: workResources,
       workspaceAuthority: workWorkspaceAuthority,
+      integrationBaselineGate(input) {
+        executionBaselineAuthority.assertPreparation(input);
+      },
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
     const workspaceRetentionStore = createSqliteWorkspaceRetentionStore(session, {
@@ -1548,7 +1571,6 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     if (object.featureDeliveryFactory !== undefined && featureDelivery === undefined) {
       throw validationError(context, 'featureDeliveryFactory', 'delivery_adapters_required');
     }
-    const integrationPlanStore = createSqliteIntegrationPlanStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
     const integrationPlanFacts = (object.integrationPlanFactory as CoreApplicationOptions['integrationPlanFactory'] | undefined)?.({
       atomicStore,
       planStore: integrationPlanStore,

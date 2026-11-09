@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p07-5-f005-execution-baseline.test.ts",
+          "level": "unit",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

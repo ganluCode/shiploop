@@ -43,7 +43,7 @@ export interface FixedIntegrationBaseline {
   readonly successorFeatureId: string;
   /** 后继 worktree 的唯一允许 base commit。 */
   readonly baseCommit: string;
-  readonly treeSha: string;
+  readonly treeSha: string | null;
   readonly targetBaseline: string;
   readonly inputDigest: string;
   readonly planRevision: number;
@@ -210,17 +210,29 @@ export function createIntegrationPlanControlService(deps: IntegrationPlanControl
     const plan = readPlan(deps, projectId, integrationId);
     if (plan.successorFeatureId !== successorFeatureId) fail('successor_identity_mismatch');
     const derived = deriveIntegrationPlanStatus(plan, observation(raw));
-    if (derived.status !== 'integration_passed' || plan.status !== 'integration_passed') {
-      fail(derived.status === 'stale' || plan.status === 'stale' ? 'integration_stale' : 'integration_not_passed', {
+    if (derived.status === 'stale' || plan.status === 'stale') {
+      fail('integration_stale', { status: derived.status, blockReasons: derived.blockReasons, staleReasons: derived.staleReasons });
+    }
+    const singlePredecessor = plan.predecessors.length === 1;
+    if ((!singlePredecessor && (derived.status !== 'integration_passed' || plan.status !== 'integration_passed'))
+      || (singlePredecessor && !['dependency_passed', 'integration_passed'].includes(derived.status))
+      || (singlePredecessor && !['dependency_passed', 'integration_passed'].includes(plan.status))) {
+      fail('integration_not_passed', {
         status: derived.status, blockReasons: derived.blockReasons, staleReasons: derived.staleReasons,
       });
     }
+    if (!plan.coverage.complete) fail('integration_evidence_incomplete');
     const result = plan.integrationResult;
-    if (result === null || result.commitSha === null || result.treeSha === null || result.verificationEvidence === null
-      || (result.operationStatus !== undefined && result.operationStatus !== null && result.operationStatus !== 'succeeded')) {
-      fail('integration_evidence_incomplete');
+    if (result !== null && result.commitSha !== null && result.treeSha !== null && result.verificationEvidence !== null
+      && (result.operationStatus === undefined || result.operationStatus === null || result.operationStatus === 'succeeded')) {
+      return { integrationId, successorFeatureId, baseCommit: result.commitSha, treeSha: result.treeSha,
+        targetBaseline: plan.targetBaseline, inputDigest: plan.inputDigest, planRevision: plan.revision };
     }
-    return { integrationId, successorFeatureId, baseCommit: result.commitSha, treeSha: result.treeSha,
+    if (!singlePredecessor) fail('integration_evidence_incomplete');
+    const predecessor = plan.predecessors[0]!;
+    if (!predecessor.dependencyPassed || !predecessor.ancestorVerified || predecessor.delivery === null
+      || predecessor.coveredInputIds.length === 0) fail('integration_evidence_incomplete');
+    return { integrationId, successorFeatureId, baseCommit: predecessor.delivery.commitSha, treeSha: null,
       targetBaseline: plan.targetBaseline, inputDigest: plan.inputDigest, planRevision: plan.revision };
   }
 

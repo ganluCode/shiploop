@@ -308,6 +308,7 @@ export interface ExecutionPreviewViewStore {
 
 /** 代码身份摘要成分（真实 HEAD/工作区摘要/脏标记；来自受控仓库检查端口）。 */
 export interface ExecutionPreviewCodeIdentity {
+  /** The frozen coding baseline, which may differ from the source checkout HEAD. */
   readonly headCommit: string | null;
   readonly workingTreeDigest: string;
   readonly hasUncommittedChanges: boolean;
@@ -365,6 +366,16 @@ export interface ExecutionPreviewSummary {
     readonly pendingTaskIds: readonly string[];
   };
   readonly code: ExecutionPreviewCodeIdentity;
+  /** Per-member frozen baseline identities used by execution start/workspace preparation. */
+  readonly baselines?: readonly {
+    readonly featureId: string;
+    readonly baseCommit: string;
+    readonly treeSha: string | null;
+    readonly integrationId: string | null;
+    readonly inputDigest: string | null;
+    readonly planRevision: number | null;
+    readonly source: string;
+  }[];
   readonly checkPolicyDigest: string;
   readonly tasks: readonly ExecutionPreviewTaskSummary[];
   readonly permissions: {
@@ -420,6 +431,15 @@ export interface ExecutionPreviewDigestInput {
   readonly featureIds: readonly string[];
   readonly planDigest: string | null;
   readonly code: ExecutionPreviewCodeIdentity;
+  readonly baselines?: readonly {
+    readonly featureId: string;
+    readonly baseCommit: string;
+    readonly treeSha: string | null;
+    readonly integrationId: string | null;
+    readonly inputDigest: string | null;
+    readonly planRevision: number | null;
+    readonly source: string;
+  }[];
   readonly tasks: readonly { readonly taskId: string; readonly strategyCopyDigest: string; readonly featureId?: string }[];
   readonly checkPolicyDigest: string;
   readonly permissions: readonly { readonly taskId: string; readonly digest: string; readonly featureId?: string }[];
@@ -456,6 +476,11 @@ export function computeExecutionPreviewDigest(input: ExecutionPreviewDigestInput
       workingTreeDigest: input.code.workingTreeDigest,
       hasUncommittedChanges: input.code.hasUncommittedChanges,
     },
+    ...(input.baselines === undefined ? {} : {
+      baselines: [...input.baselines]
+        .sort((left, right) => left.featureId < right.featureId ? -1 : left.featureId > right.featureId ? 1 : 0)
+        .map((baseline) => ({ ...baseline })),
+    }),
     tasks: [...input.tasks]
       .sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0))
       .map((task) => ({ taskId: task.taskId, strategyCopyDigest: task.strategyCopyDigest })),
