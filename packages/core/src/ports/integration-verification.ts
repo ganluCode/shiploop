@@ -15,10 +15,13 @@ export interface IntegrationVerificationEvidenceRef {
 export interface IntegrationVerificationExecutionResult {
   readonly status: IntegrationVerificationStatus;
   readonly stopped: boolean;
+  /** Optional executor echo; Core always derives and persists these identities from the frozen candidate. */
+  readonly integrationId?: string;
   readonly commitSha: string;
   readonly treeSha: string;
   readonly inputDigest: string;
   readonly targetBase: string;
+  readonly targetBaseline?: string;
   readonly verificationPlan: IntegrationVerificationEvidenceRef;
   readonly verificationResult: IntegrationVerificationEvidenceRef;
 }

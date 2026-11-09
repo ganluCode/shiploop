@@ -28,6 +28,7 @@ function fixture() {
   const sourcePlan = {
     integrationId: 'source-plan-1', revision: 4, frozenAtUtcMs: 10, targetBaseline: SHA('b'), inputDigest: 'c'.repeat(64),
     integrationResult: { operationId: 'operation-1', ownerId: 'owner-1', ownerVersion: 1, operationStatus: 'pending', commitSha: null, treeSha: null, verificationEvidence: null, llmNoConflictText: null },
+    verificationScope: ['combined'],
     blockReasons: [], staleReasons: [], status: 'blocked',
   } as any;
   const state = { operation, sourcePlan, sourceResult: null as any, finalized: null as any, statuses: [] as unknown[] };
@@ -87,10 +88,46 @@ describe('P05-7 F-005 integration verification', () => {
     const executor = { start: async () => ({ status: 'failed' as const, stopped: true,
       commitSha: SHA('c'), treeSha: SHA('d'), inputDigest: 'c'.repeat(64), targetBase: SHA('b'),
       verificationPlan: { id: 'plan-ref', digest: 'a'.repeat(64) }, verificationResult: { id: 'result-ref', digest: 'b'.repeat(64) } }) };
-    const result = await createIntegrationVerificationService({ atomic: f.atomic, journal: f.journal, executor, readAuthorization: () => true }).run(request());
+    await createIntegrationVerificationService({ atomic: f.atomic, journal: f.journal, executor, readAuthorization: () => true }).run(request());
     expect(f.state.finalized.status).toBe('failed');
     expect(f.state.finalized.workspacePreserved).toBe(true);
     expect(f.tx.updateIntegrationPlanStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'blocked', blockReasons: ['verification_failed'] }));
+  });
+
+  it('[case:integration-verification-binds-frozen-identities-and-evidence-references] publishes the Core-bound integration identity and both immutable evidence references', async () => {
+    const f = fixture();
+    const executor = { start: async () => ({ status: 'passed' as const, stopped: true,
+      integrationId: 'execution-plan-1', targetBaseline: SHA('b'), commitSha: SHA('c'), treeSha: SHA('d'), inputDigest: 'c'.repeat(64), targetBase: SHA('b'),
+      verificationPlan: { id: 'plan-ref', digest: 'a'.repeat(64) }, verificationResult: { id: 'result-ref', digest: 'b'.repeat(64) } }) };
+    const result = await createIntegrationVerificationService({ atomic: f.atomic, journal: f.journal, executor, readAuthorization: () => true }).run(request());
+    expect(result.outcome).toBe('passed');
+    expect(f.state.sourceResult).toMatchObject({ integrationId: 'execution-plan-1', inputDigest: 'c'.repeat(64), targetBaseline: SHA('b'),
+      verificationEvidence: { planRef: { id: 'plan-ref', digest: 'a'.repeat(64) }, resultRef: { id: 'result-ref', digest: 'b'.repeat(64) } } });
+    expect(f.state.finalized.integrationResult).toMatchObject({ integrationId: 'execution-plan-1', inputDigest: DIGEST('e'), targetBaseline: SHA('b'),
+      verificationEvidence: { planRef: { id: 'plan-ref', digest: 'a'.repeat(64) }, resultRef: { id: 'result-ref', digest: 'b'.repeat(64) } } });
+  });
+
+  it('[case:integration-verification-rejects-frozen-check-scope-drift] keeps the operation pending when the requested checks differ from the frozen plan', async () => {
+    const f = fixture();
+    const executor = { start: vi.fn(async () => ({ status: 'passed' as const, stopped: true,
+      commitSha: SHA('c'), treeSha: SHA('d'), inputDigest: 'c'.repeat(64), targetBase: SHA('b'),
+      verificationPlan: { id: 'plan-ref', digest: 'a'.repeat(64) }, verificationResult: { id: 'result-ref', digest: 'b'.repeat(64) } })) };
+    const service = createIntegrationVerificationService({ atomic: f.atomic, journal: f.journal, executor, readAuthorization: () => true });
+    const result = await service.run({ ...request(), targets: ['other-check'] });
+    expect(result).toMatchObject({ outcome: 'blocked', reason: 'verification_plan_unavailable' });
+    expect(executor.start).not.toHaveBeenCalled();
+    expect(f.tx.finalizeGitOperation).not.toHaveBeenCalled();
+  });
+
+  it('[case:integration-verification-rejects-result-identity-drift] blocks a verifier result whose explicit integration identity differs', async () => {
+    const f = fixture();
+    const executor = { start: async () => ({ status: 'passed' as const, stopped: true,
+      integrationId: 'wrong-integration', commitSha: SHA('c'), treeSha: SHA('d'), inputDigest: 'c'.repeat(64), targetBase: SHA('b'),
+      verificationPlan: { id: 'plan-ref', digest: 'a'.repeat(64) }, verificationResult: { id: 'result-ref', digest: 'b'.repeat(64) } }) };
+    const result = await createIntegrationVerificationService({ atomic: f.atomic, journal: f.journal, executor, readAuthorization: () => true }).run(request());
+    expect(result).toMatchObject({ outcome: 'blocked', reason: 'verification_evidence_incomplete' });
+    expect(f.tx.finalizeGitOperation).not.toHaveBeenCalled();
+    expect(f.tx.updateIntegrationPlanStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'blocked', blockReasons: ['integration_evidence_incomplete'] }));
   });
 
   it('[case:integration-verification-stop-unconfirmed-keeps-pending-facts] blocks without settling the Git operation', async () => {

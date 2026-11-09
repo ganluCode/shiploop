@@ -521,14 +521,24 @@ function normalizeIntegrationResult(
 ): IntegrationExecutionResult | null {
   if (value === undefined || value === null) return null;
   const object = requirePlainObject(value, context, 'integrationResult');
-  rejectUnknownKeys(object, ['commitSha', 'treeSha', 'inputDigest', 'verificationEvidence'], context, 'integrationResult');
+  rejectUnknownKeys(object, ['commitSha', 'treeSha', 'inputDigest', 'verificationEvidence', 'integrationId', 'targetBaseline'], context, 'integrationResult');
   let verificationEvidence: IntegrationExecutionResult['verificationEvidence'] = null;
   if (object.verificationEvidence !== undefined && object.verificationEvidence !== null) {
     const evidence = requirePlainObject(object.verificationEvidence, context, 'integrationResult.verificationEvidence');
-    rejectUnknownKeys(evidence, ['evidenceId', 'evidenceDigest'], context, 'integrationResult.verificationEvidence');
+    rejectUnknownKeys(evidence, ['evidenceId', 'evidenceDigest', 'planRef', 'resultRef'], context, 'integrationResult.verificationEvidence');
+    const evidenceRef = (raw: unknown, field: string) => {
+      if (raw === undefined || raw === null) return undefined;
+      const ref = requirePlainObject(raw, context, field);
+      rejectUnknownKeys(ref, ['id', 'digest'], context, field);
+      return { id: validateStableId(ref.id, context, `${field}.id`), digest: validateSha256Digest(ref.digest, context, `${field}.digest`) };
+    };
+    const planRef = evidenceRef(evidence.planRef, 'integrationResult.verificationEvidence.planRef');
+    const resultRef = evidenceRef(evidence.resultRef, 'integrationResult.verificationEvidence.resultRef');
     verificationEvidence = {
       evidenceId: validateStableId(evidence.evidenceId, context, 'integrationResult.verificationEvidence.evidenceId'),
       evidenceDigest: validateSha256Digest(evidence.evidenceDigest, context, 'integrationResult.verificationEvidence.evidenceDigest'),
+      ...(planRef === undefined ? {} : { planRef }),
+      ...(resultRef === undefined ? {} : { resultRef }),
     };
   }
   return {
@@ -536,6 +546,8 @@ function normalizeIntegrationResult(
     treeSha: object.treeSha === undefined || object.treeSha === null ? null : validateGitOid(object.treeSha, context, 'integrationResult.treeSha'),
     inputDigest: validateSha256Digest(object.inputDigest, context, 'integrationResult.inputDigest'),
     verificationEvidence,
+    ...(object.integrationId === undefined ? {} : { integrationId: validateStableId(object.integrationId, context, 'integrationResult.integrationId') }),
+    ...(object.targetBaseline === undefined ? {} : { targetBaseline: validateGitOid(object.targetBaseline, context, 'integrationResult.targetBaseline') }),
   };
 }
 

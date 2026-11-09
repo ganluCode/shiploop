@@ -108,6 +108,10 @@ export interface IntegrationResult {
   /** 受测 tree 身份；只有 commit/tree/验证证据齐全才可通过。 */
   readonly treeSha: string | null;
   readonly verificationEvidence: IntegrationVerificationEvidence | null;
+  /** F-008：通过 Core 验证绑定的执行集成身份、输入摘要和目标基线。 */
+  readonly integrationId?: string | null;
+  readonly inputDigest?: string | null;
+  readonly targetBaseline?: string | null;
   /** 仅作审计文字，不能单独使状态变为 integration_passed。 */
   readonly llmNoConflictText: string | null;
   /** F-004：外部集成操作的持久身份；缺省表示旧版无操作元数据。 */
@@ -167,7 +171,7 @@ const PREDECESSOR_KEYS = ['projectId', 'phaseId', 'featureId', 'dependencyPassed
 const DELIVERY_KEYS = ['commitSha', 'evidenceId', 'evidenceDigest'] as const;
 const INPUT_REF_KEYS = ['inputId', 'digest'] as const;
 const RESULT_KEYS = ['commitSha', 'treeSha', 'verificationEvidence', 'llmNoConflictText',
-  'operationId', 'ownerId', 'ownerVersion', 'operationStatus'] as const;
+  'integrationId', 'inputDigest', 'targetBaseline', 'operationId', 'ownerId', 'ownerVersion', 'operationStatus'] as const;
 const VERIFICATION_EVIDENCE_KEYS = ['evidenceId', 'evidenceDigest', 'planRef', 'resultRef'] as const;
 const VERIFICATION_REF_KEYS = ['id', 'digest'] as const;
 
@@ -358,6 +362,9 @@ function validateResult(value: unknown, ctx: ValidationContext): IntegrationResu
     commitSha: validateOptionalGitSha(object.commitSha, ctx, `${field}.commitSha`),
     treeSha: validateOptionalGitSha(object.treeSha, ctx, `${field}.treeSha`),
     verificationEvidence: validateVerificationEvidence(object.verificationEvidence, ctx, `${field}.verificationEvidence`),
+    ...(object.integrationId === undefined ? {} : { integrationId: object.integrationId === null ? null : validateStableId(object.integrationId, ctx, `${field}.integrationId`) }),
+    ...(object.inputDigest === undefined ? {} : { inputDigest: object.inputDigest === null ? null : validateSha256Digest(object.inputDigest, ctx, `${field}.inputDigest`) }),
+    ...(object.targetBaseline === undefined ? {} : { targetBaseline: object.targetBaseline === null ? null : validateGitSha(object.targetBaseline, ctx, `${field}.targetBaseline`) }),
     llmNoConflictText,
     operationId, ownerId, ownerVersion, operationStatus,
   };

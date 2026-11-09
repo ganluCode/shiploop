@@ -63,6 +63,27 @@ function sourcePlanRevisionOf(operation: GitOperationRecord): number {
     { operation: `${OPERATION}.sourcePlan` }, 'sourcePlanRevision');
 }
 
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && new Set(left).size === left.length && new Set(right).size === right.length
+    && left.every(value => right.includes(value));
+}
+
+function assertVerificationPlan(
+  request: IntegrationVerificationRequest,
+  sourcePlan: PersistedIntegrationPlan,
+  executionPlan: NonNullable<GitOperationRecord['intent']['integrationPlan']>,
+): void {
+  const checkKeys = request.verificationPlan.selectedChecks.map(check => check.checkKey);
+  if (!sameStringSet(checkKeys, request.verificationPlan.selectedCheckKeys)
+    || request.verificationPlan.selectedChecks.some(check => check.required && !request.verificationPlan.selectedCheckKeys.includes(check.checkKey))
+    || !sameStringSet(request.targets, request.verificationPlan.selectedCheckKeys)) {
+    fail('verification_plan_unavailable');
+  }
+  const frozenScopes = [sourcePlan.verificationScope, executionPlan.verificationScope]
+    .filter((scope): scope is readonly string[] => Array.isArray(scope));
+  if (frozenScopes.some(scope => !sameStringSet(request.targets, scope))) fail('verification_plan_unavailable');
+}
+
 function assertCandidate(
   transaction: CommandTransaction,
   request: IntegrationVerificationRequest,
@@ -91,6 +112,7 @@ function assertCandidate(
   const sourcePlanId = sourcePlanIdOf(operation);
   const sourcePlanRevision = sourcePlanRevisionOf(operation);
   const sourcePlan = transaction.getIntegrationPlan(request.projectId, sourcePlanId);
+  assertVerificationPlan(request, sourcePlan, executionPlan);
   const sourceResult = sourcePlan.integrationResult;
   if (sourcePlan.frozenAtUtcMs === null || sourcePlanRevision + 1 !== sourcePlan.revision
     || sourcePlan.targetBaseline !== executionPlan.target.baseCommit
@@ -101,12 +123,18 @@ function assertCandidate(
   return { operation, sourcePlan, sourcePlanId, observation };
 }
 
-function validateExecutionResult(value: IntegrationVerificationExecutionResult): void {
+function validateExecutionResult(value: IntegrationVerificationExecutionResult, candidate: Candidate): void {
   const oid = (candidate: unknown): candidate is string => typeof candidate === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(candidate);
   if (!value || !(INTEGRATION_VERIFICATION_STATUSES as readonly string[]).includes(value.status)
     || value.stopped !== true || !oid(value.commitSha) || !oid(value.treeSha)
     || !oid(value.targetBase) || typeof value.inputDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.inputDigest)) {
     fail(value?.stopped === false ? 'verification_stop_unconfirmed' : 'verification_evidence_incomplete');
+  }
+  if (value.integrationId !== undefined && value.integrationId !== candidate.operation.intent.integrationPlan!.integrationId) {
+    fail('verification_evidence_incomplete', { field: 'integrationId' });
+  }
+  if (value.targetBaseline !== undefined && value.targetBaseline !== candidate.sourcePlan.targetBaseline) {
+    fail('input_digest_mismatch', { field: 'targetBaseline' });
   }
   for (const [field, ref] of [['verificationPlan', value.verificationPlan], ['verificationResult', value.verificationResult]] as const) {
     if (!ref || typeof ref !== 'object') fail('verification_evidence_incomplete', { field });
@@ -128,6 +156,9 @@ function oldIntegrationResult(
       planRef: { ...result.verificationPlan },
       resultRef: { ...result.verificationResult },
     },
+    integrationId: candidate.operation.intent.integrationPlan!.integrationId,
+    inputDigest: candidate.sourcePlan.inputDigest,
+    targetBaseline: candidate.sourcePlan.targetBaseline,
     llmNoConflictText: null,
     operationId: candidate.operation.intent.operationId,
     ownerId: candidate.operation.intent.ownerId,
@@ -141,9 +172,13 @@ function executionResult(candidate: Candidate, result: IntegrationVerificationEx
     commitSha: result.commitSha,
     treeSha: result.treeSha,
     inputDigest: candidate.operation.intent.integrationPlan!.inputDigest,
+    integrationId: candidate.operation.intent.integrationPlan!.integrationId,
+    targetBaseline: candidate.sourcePlan.targetBaseline,
     verificationEvidence: {
       evidenceId: result.verificationResult.id,
       evidenceDigest: result.verificationResult.digest,
+      planRef: { ...result.verificationPlan },
+      resultRef: { ...result.verificationResult },
     },
   };
 }
@@ -188,6 +223,7 @@ export function createIntegrationVerificationService(deps: {
       }
       if (error instanceof StorageError && error.details?.reason === 'candidate_missing') return blocked('candidate_missing');
       if (error instanceof StorageError && error.details?.reason === 'candidate_not_ready') return blocked('candidate_not_ready');
+      if (error instanceof StorageError && error.details?.reason === 'verification_plan_unavailable') return blocked('verification_plan_unavailable');
       throw error;
     }
 
@@ -227,7 +263,7 @@ export function createIntegrationVerificationService(deps: {
       return persistBlocked('verification_evidence_incomplete', 'integration_evidence_incomplete');
     }
     try {
-      validateExecutionResult(execution);
+      validateExecutionResult(execution, candidate);
       const workspace = candidate.observation.workspace!;
       if (execution.commitSha !== workspace.currentHead || execution.treeSha !== workspace.facts.tree
         || execution.targetBase !== candidate.sourcePlan.targetBaseline

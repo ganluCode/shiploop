@@ -68,6 +68,8 @@ export interface IntegrationExecutionPredecessor {
 export interface IntegrationCombinedVerificationEvidence {
   readonly evidenceId: string;
   readonly evidenceDigest: string;
+  readonly planRef?: { readonly id: string; readonly digest: string };
+  readonly resultRef?: { readonly id: string; readonly digest: string };
 }
 
 export interface IntegrationExecutionResult {
@@ -75,6 +77,9 @@ export interface IntegrationExecutionResult {
   readonly treeSha: string | null;
   readonly inputDigest: string;
   readonly verificationEvidence: IntegrationCombinedVerificationEvidence | null;
+  /** F-008：由 Core 绑定的集成执行身份和冻结目标基线。 */
+  readonly integrationId?: string;
+  readonly targetBaseline?: string;
 }
 
 export interface IntegrationExecutionPlanInput {
@@ -110,8 +115,8 @@ const PREDECESSOR_KEYS = [
   'projectId', 'phaseId', 'batchId', 'runId', 'featureId', 'dependencyPassed', 'delivery', 'coveredInputIds',
 ] as const;
 const DELIVERY_KEYS = ['commitSha', 'repoIdentity', 'inputDigest', 'evidenceId', 'evidenceDigest'] as const;
-const RESULT_KEYS = ['commitSha', 'treeSha', 'inputDigest', 'verificationEvidence'] as const;
-const EVIDENCE_KEYS = ['evidenceId', 'evidenceDigest'] as const;
+const RESULT_KEYS = ['commitSha', 'treeSha', 'inputDigest', 'verificationEvidence', 'integrationId', 'targetBaseline'] as const;
+const EVIDENCE_KEYS = ['evidenceId', 'evidenceDigest', 'planRef', 'resultRef'] as const;
 
 function context(operation = 'IntegrationExecutionPlan.validate'): ValidationContext {
   return { operation, entity: { type: 'feature' } };
@@ -213,9 +218,19 @@ function evidence(value: unknown, ctx: ValidationContext, field: string): Integr
   if (value === null || value === undefined) return null;
   const object = requirePlainObject(value, ctx, field);
   rejectUnknownKeys(object, EVIDENCE_KEYS, ctx, field);
+  const ref = (raw: unknown, refField: string) => {
+    if (raw === undefined || raw === null) return undefined;
+    const refObject = requirePlainObject(raw, ctx, refField);
+    rejectUnknownKeys(refObject, ['id', 'digest'], ctx, refField);
+    return { id: validateStableId(refObject.id, ctx, `${refField}.id`), digest: validateSha256Digest(refObject.digest, ctx, `${refField}.digest`) };
+  };
+  const planRef = ref(object.planRef, `${field}.planRef`);
+  const resultRef = ref(object.resultRef, `${field}.resultRef`);
   return {
     evidenceId: validateStableId(object.evidenceId, ctx, `${field}.evidenceId`),
     evidenceDigest: validateSha256Digest(object.evidenceDigest, ctx, `${field}.evidenceDigest`),
+    ...(planRef === undefined ? {} : { planRef }),
+    ...(resultRef === undefined ? {} : { resultRef }),
   };
 }
 
@@ -341,6 +356,8 @@ function normalize(value: unknown, operation: string): IntegrationExecutionPlanI
       treeSha: optionalGitSha(result.treeSha, ctx, 'integrationResult.treeSha'),
       inputDigest: validateSha256Digest(result.inputDigest, ctx, 'integrationResult.inputDigest'),
       verificationEvidence: evidence(result.verificationEvidence, ctx, 'integrationResult.verificationEvidence'),
+      ...(result.integrationId === undefined ? {} : { integrationId: validateStableId(result.integrationId, ctx, 'integrationResult.integrationId') }),
+      ...(result.targetBaseline === undefined ? {} : { targetBaseline: gitSha(result.targetBaseline, ctx, 'integrationResult.targetBaseline') }),
     };
   }
   return {
