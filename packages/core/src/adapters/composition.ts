@@ -196,6 +196,7 @@ import { createPlanningInputPrepareService } from '../application/planning-input
 import type { PlanningInputPreparePort } from '../application/planning-input-prepare.js';
 import { DEFAULT_PLANNING_INPUT_PREPARE_LIMITS } from '../application/planning-input-prepare.js';
 import { createSqlitePlanningContextStore } from './sqlite/planning-context-store.js';
+import { readApprovedPlanningCodeBaseline } from './sqlite/planning-baseline.js';
 import { createExecutionResumeService } from '../application/execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { createFinalizationRetryPlanner } from '../application/finalization-retry.js';
@@ -1027,6 +1028,22 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       },
       preview: executionPreview,
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      /* DAG / F-002：当前获准计划由规划批准应用时，编码基线固定为该次规划
+       * 冻结的代码快照（不跟随源仓库后来移动的 HEAD）；存在但不可核验时
+       * 结构化阻塞，不静默回退。 */
+      approvedPlanningBaseline(projectId, featureId) {
+        try {
+          return readApprovedPlanningCodeBaseline(session, projectId, featureId);
+        } catch (error) {
+          if (error instanceof StorageError) {
+            throw new PublicError(error.kind === 'not_found' ? 'not_found' : 'conflict', 'execution.start', undefined, {
+              details: { reason: 'planning_baseline_unverifiable', ...(error.details?.reason ? { baselineReason: error.details.reason } : {}) },
+              ...(error.details === undefined ? {} : { cause: error }),
+            });
+          }
+          throw error;
+        }
+      },
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
     // P05-1 / F-003：一次性规划启动服务（ExecutionController 同一纪律：事务外
@@ -1407,6 +1424,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       readCodeBaseline: async input => {
         // Planner 的代码基线固定取项目绑定源仓库的只读快照。首次规划时
         // worktree 尚不存在；调度前后 worktree 的创建不应改变规划输入摘要。
+        // DAG / F-002：快照身份携带仓库绑定（id/revision/repoIdentity）并纳入
+        // codeBaselineDigest——绑定重登记/并发计数漂移在启动前重核 fail-closed。
         const binding = await stateStore.getRepositoryBinding(input.projectId);
         const inspection = await repositoryInspector.inspect(binding.canonicalPath);
         if (inspection.repoIdentity !== binding.repoIdentity || inspection.gitCommonDir !== binding.gitCommonDir) {
@@ -1414,7 +1433,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
             { details: { reason: 'repository_binding_changed' } });
         }
         if (inspection.headCommit === null || inspection.workingTreeDigest === undefined) return null;
-        return { worktreeId: binding.id, headCommit: inspection.headCommit, codeDigest: inspection.workingTreeDigest };
+        return { worktreeId: binding.id, headCommit: inspection.headCommit, codeDigest: inspection.workingTreeDigest,
+          repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, repoIdentity: binding.repoIdentity };
       },
       limits: DEFAULT_PLANNING_INPUT_PREPARE_LIMITS,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),

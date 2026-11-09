@@ -697,6 +697,9 @@ export function createPlanningInputPrepareService(
     try {
       raw = await readCodeBaseline({ projectId, featureId });
     } catch (cause) {
+      /* DAG / F-002：读取器自身的结构化拒绝（如 repository_binding_changed）
+       * 原样传播，不被改写为 internal（fail-closed 且原因可诊断）。 */
+      if (cause instanceof PublicError) throw cause;
       if (isStorageError(cause)) {
         throw mapStorageError(cause, { operation: OPERATION });
       }

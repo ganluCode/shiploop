@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/planning-baseline-separation.test.ts",
+          "level": "unit",
+          "cases": [
+            "case:baseline-digest-covers-binding",
+            "case:baseline-legacy-digest-compat",
+            "case:baseline-binding-group-validation",
+            "case:base-commit-precedence",
+            "case:base-commit-binding-mismatch"
+          ]
+        },
+        {
+          "file": "test/modules/planning/planning-baseline-separation.test.ts",
+          "level": "integration",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

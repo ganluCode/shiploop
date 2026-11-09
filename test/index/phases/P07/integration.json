@@ -423,6 +423,11 @@
           "file": "test/modules/acceptance/p08-4-f009-phase-integration.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/planning/planning-baseline-separation.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }

@@ -204,22 +204,49 @@ export interface PlanningCodeBaseline {
   readonly headCommit: string;
   /** 已核对的代码现场摘要（tracked/untracked 组合 codeDigest，64hex）。 */
   readonly codeDigest: string;
+  /** DAG / F-002：快照来源仓库绑定 ID（生产读取器=项目绑定源仓库；可选以兼容历史快照）。 */
+  readonly repositoryBindingId?: string;
+  /** DAG / F-002：快照来源仓库绑定的 CAS 并发计数（≥1；漂移即拒绝）。 */
+  readonly repositoryBindingRevision?: number;
+  /** DAG / F-002：快照来源仓库的稳定本地身份（opaque 前缀哈希；不含路径）。 */
+  readonly repoIdentity?: string;
 }
 
-/** 代码基线形态校验（fail-closed：未知键/非法摘要/非法哈希一律拒绝）。 */
+/** 代码基线形态校验（fail-closed：未知键/非法摘要/非法哈希一律拒绝；
+ * 绑定身份字段可选以兼容历史快照，一旦出现必须成组且形态合法）。 */
 export function validatePlanningCodeBaseline(value: unknown, context: ValidationContext, field: string): PlanningCodeBaseline {
   const object = requirePlainObject(value, context, field);
-  rejectUnknownKeys(object, ['worktreeId', 'headCommit', 'codeDigest'], context, field);
+  rejectUnknownKeys(object, ['worktreeId', 'headCommit', 'codeDigest',
+    'repositoryBindingId', 'repositoryBindingRevision', 'repoIdentity'], context, field);
   const headCommit = requireNonEmptyBoundedHash(object.headCommit, context, `${field}.headCommit`);
   if (!PLANNING_BASELINE_HEAD_COMMIT_PATTERN.test(headCommit)) {
     throw validationError(context, `${field}.headCommit`, '必须是 40 位 sha1 或 64 位 sha256 小写十六进制', headCommit);
   }
   validateSha256Digest(object.codeDigest, context, `${field}.codeDigest`);
+  const bindingKeys = ['repositoryBindingId', 'repositoryBindingRevision', 'repoIdentity'] as const;
+  const presentBindingKeys = bindingKeys.filter(key => object[key] !== undefined);
+  if (presentBindingKeys.length !== 0 && presentBindingKeys.length !== bindingKeys.length) {
+    throw validationError(context, field, '仓库绑定身份字段必须成组出现（repositoryBindingId/repositoryBindingRevision/repoIdentity）',
+      presentBindingKeys);
+  }
   return {
     worktreeId: validateStableId(object.worktreeId, context, `${field}.worktreeId`),
     headCommit,
     codeDigest: String(object.codeDigest),
+    ...(presentBindingKeys.length === 0 ? {} : {
+      repositoryBindingId: validateStableId(object.repositoryBindingId, context, `${field}.repositoryBindingId`),
+      repositoryBindingRevision: validatePositiveInteger(object.repositoryBindingRevision, context, `${field}.repositoryBindingRevision`),
+      repoIdentity: validateBoundedOpaqueIdentity(object.repoIdentity, context, `${field}.repoIdentity`),
+    }),
   };
+}
+
+/** 有界 opaque 身份串（如 gitdir-sha256:<hex>；拒绝空串/超长/控制字符，不解释语义）。 */
+function validateBoundedOpaqueIdentity(value: unknown, context: ValidationContext, field: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128 || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw validationError(context, field, '必须是不超过 128 字符且不含控制字符的身份字符串', typeof value);
+  }
+  return value;
 }
 
 function requireNonEmptyBoundedHash(value: unknown, context: ValidationContext, field: string): string {
@@ -237,6 +264,11 @@ export function computePlanningCodeBaselineDigest(baseline: PlanningCodeBaseline
       worktreeId: baseline.worktreeId,
       headCommit: baseline.headCommit,
       codeDigest: baseline.codeDigest,
+      /* DAG / F-002：仓库绑定身份参与内容身份（历史快照无这些字段时 stableStringify
+       * 丢弃 undefined，旧摘要公式保持不变，兼容已持久化的规划快照重核）。 */
+      repositoryBindingId: baseline.repositoryBindingId,
+      repositoryBindingRevision: baseline.repositoryBindingRevision,
+      repoIdentity: baseline.repoIdentity,
     }),
   );
 }

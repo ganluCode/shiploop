@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P08",
+  "feature": "shiploop-dag",
+  "scope": "ShipLoop DAG 集成生命周期修复的 Task 级索引；Feature task_union 与 Phase 集成按注册清单执行，不含 full/Phase/live 验收",
+  "tasks": [
+    {
+      "task_id": "F-002",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-002.json"
+    }
+  ]
+}
