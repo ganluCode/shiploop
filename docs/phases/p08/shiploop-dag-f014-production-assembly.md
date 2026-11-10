@@ -2,6 +2,8 @@
 
 F-014 未完成生产闭环。当前改动只加固装配失败关闭，并整理受影响回归入口；不能据此确认 Feature 或 Phase 通过。没有修改用户并发、auto_push、模型、真实业务项目、main 或正式任务状态。
 
+返工 attempt-2 新增了 `adapters/integration-verification.ts` 的真实 Node 检查执行器，并提取共享 Node collection-report 观察器；默认 Host 尚未启用它。启动授权循环及推荐衔接方案见 [授权与编码准入决策](shiploop-dag-f014-authorization-binding.md)。下列 attempt-1 测试日志保留为历史证据，本轮结果另记 Harness progress 与新的日志，不覆盖旧文件。
+
 ## 已实现与本地验证
 
 - Core 在接收 integrationPlanFactory 输出时校验 readApprovedBatch/readEvidence，以及显式 scheduler 的 list/reserve。null、缺方法、错误类型和异步工厂输出在返回应用前拒绝，失败仍由组合根关闭 SQLite。
@@ -22,7 +24,7 @@ F-014 未完成生产闭环。当前改动只加固装配失败关闭，并整�
 ## 尚未接通的生产链路
 
 1. composition 的 integrationPlanFactory 仍只支持可信注入；默认没有真实 Batch approval、前置交付/Git/制品核验事实、候选扫描及持久 reservation 的实现装配。
-2. 仓库定义了 IntegrationVerificationExecutor.start 契约与测试注入 executor，但没有将真实 CommandProcess/Artifact 验证执行器接入集成验证服务。不能以测试的 passed:true 输出作为生产实现。
+2. 返工 attempt-2 新增了 CommandProcess/Artifact 集成验证执行器，覆盖冻结计划/结果发布、实际 Git 身份、祖先覆盖、授权/deadline 重核和停止确认。该执行器依赖可信消费者提供持久唯一 admission、授权、进程登记与恢复；尚未接入默认组合根，不能以 standalone unit 结果声称生产集成验证已可用。
 3. 确定性 integration workspace/journal/reconciliation、资源 owner/version 和 GitAgent authority/候选发布器仍缺少贯穿同一 SQLite session 的生产组合。现有 Work/Feature closeout 的验证和停止链不能自动证明这条独立集成链已装配。
 4. 默认正常 Feature closeout、持久集成消费、Host startup recovery/周期补扫与集成成功后的后继 dispatch 尚未连通；当前可注入调度器不等于默认 Host 正在消费它。
 5. Host 仍按既有真实能力宣告；没有为缺少上述适配器的链路增加可用标志。缺失生产链仍阻塞验收，不用 unsupported 分支冒充交付。

@@ -154,7 +154,7 @@ function protocolFrom(value: unknown): unknown {
   try { return JSON.parse(json); } catch { return undefined; }
 }
 
-async function observeProtocol(handle: CommandProcessHandle, expectedTargets: readonly string[]): Promise<{
+export async function observeNodeCheckProtocol(handle: CommandProcessHandle, expectedTargets: readonly string[]): Promise<{
   readonly handle: CommandProcessHandle;
   readonly report: NodeCheckReport | null;
 }> {
@@ -342,7 +342,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
         identityConfirmed = true;
         return confirmed;
       }, signal);
-      const observed = await observeProtocol(handle, input.targets);
+      const observed = await observeNodeCheckProtocol(handle, input.targets);
       captured = await evidence.collect({ projectId: input.projectId, operationId: input.evidenceOperationId ?? input.operation, checkKey: check.checkKey,
         request, handle: observed.handle, environmentRef: check.environmentRef,
         codeIdentity: input.codeIdentity ?? codeIdentity(input.codeDigest) });
