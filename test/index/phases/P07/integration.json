@@ -553,6 +553,16 @@
           "file": "test/modules/storage/sqlite/p08-dag-f013-delivery-context.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-10-task-commit-store.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }
