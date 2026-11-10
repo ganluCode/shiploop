@@ -14,6 +14,7 @@ import type { GitAgentRepairAttempt, GitAgentRepairClaim, GitAgentRepairHold, Gi
   GitAgentRepairStore, GitAgentRepairView } from '../../ports/git-agent-repair-store.js';
 import { enqueueAuthorizedRunInTransaction } from '../../application/execution-dispatch.js';
 import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
+import { GIT_REPAIR_STATUS_EVENT_TYPE } from '../../ports/events.js';
 import type { SqliteStorageSession } from './session.js';
 
 const OP = 'GitAgentRepair';
@@ -85,11 +86,35 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
       throw new StorageError('corrupt', OP, 'Invalid persisted repair evidence', { cause: error });
     }
   }
+  /**
+   * F-013（P08 DAG）：修复状态事件（通知订阅）。只在真实写入边界调用；
+   * payload 仅冻结身份与受控状态/原因，不含路径/凭据/模型正文/冲突文件内容。
+   */
+  function appendRepairEvent(projectId: string, repairId: string, featureId: string,
+    status: 'requested' | 'blocked' | 'attempt_modified' | 'attempt_no_change' | 'attempt_failed' | 'attempt_cancelled',
+    reason: string | null): void {
+    active();
+    const sequence = (db.prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events').get()?.next ?? 1);
+    const timestamp = now();
+    db.prepare(
+      `INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, 'git_repair', ?, 1, ?, ?)`,
+    ).run(
+      randomUUID(), timestamp, timestamp, projectId, sequence,
+      GIT_REPAIR_STATUS_EVENT_TYPE, repairId,
+      JSON.stringify({ schemaVersion: 1, repairId, featureId, status, reason }),
+      timestamp,
+    );
+  }
   function hold(tx: CommandTransaction, projectId: string, repairId: string, reason: GitAgentRepairHold) {
     if (!GIT_AGENT_REPAIR_HOLDS.includes(reason)) fail('invalid_hold', 'validation');
     const current = row(projectId, repairId);
-    if (current.blocked_reason === null) db.prepare('UPDATE git_agent_repairs SET blocked_reason = ? WHERE repair_id = ?')
-      .run(reason, repairId);
+    if (current.blocked_reason === null) {
+      db.prepare('UPDATE git_agent_repairs SET blocked_reason = ? WHERE repair_id = ?')
+        .run(reason, repairId);
+      // F-013：首次人工/预算阻塞写入才发事件；重复 hold 不重复投递。
+      appendRepairEvent(projectId, repairId, current.feature_id, 'blocked', reason);
+    }
     // No mutation of Task, integration result, resource lease, slot or successor readiness.
     const held = current.blocked_reason ?? reason;
     // Keep the first human hold; subsequent model/script outcomes cannot replace it.
@@ -248,6 +273,9 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
           JSON.stringify(receipt), blockedReason, now());
       db.prepare('INSERT INTO git_agent_repair_commands VALUES (?, ?, ?, ?)')
         .run(request.projectId, request.commandId, request.repairId, request.commandDigest);
+      // F-013：首次授权写入即事件（requested 或创建期 blocked）；幂等重放早退不发。
+      appendRepairEvent(request.projectId, request.repairId, request.featureId,
+        blockedReason === null ? 'requested' : 'blocked', blockedReason);
       return receipt;
     },
     claim(tx, input) {
@@ -338,6 +366,13 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
       if (attempt.output !== null && !isDeepStrictEqual(attempt.output, output)) fail('attempt_result_conflict');
       db.prepare('UPDATE git_agent_repair_attempts SET output = ?, stopped_at = ? WHERE id = ?')
         .run(JSON.stringify(output), stopped ? now() : null, attempt.id);
+      // F-013：获准修复结果（Attempt 结算）事件；幂等重放早退不发。
+      const attemptStatus = output.status === 'modified' ? 'attempt_modified'
+        : output.status === 'no_change' ? 'attempt_no_change'
+        : output.status === 'failed' ? 'attempt_failed'
+        : 'attempt_cancelled';
+      appendRepairEvent(input.projectId, input.repairId, current.request.featureId,
+        attemptStatus, output.failureCode ?? null);
       if (!stopped) return hold(tx, input.projectId, input.repairId, 'stop_unconfirmed');
       const run = tx.getExecutionRun(input.projectId, attempt.runId);
       const batch = tx.getExecutionBatch(input.projectId, current.request.parentBatchId);

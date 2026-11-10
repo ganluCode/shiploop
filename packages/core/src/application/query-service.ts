@@ -258,6 +258,7 @@ import {
   type IntegrationPlanQueryResult,
   type IntegrationPlanQueryReadStore,
 } from '../ports/integration-plan-query.js';
+import type { DeliveryDisplayContextReadStore } from '../ports/delivery-display-context.js';
 import { gitAgentRepairCommitOperationId } from './git-agent-candidate-finalization.js';
 import {
   GIT_REPAIRS_LIST_OPERATION,
@@ -657,6 +658,12 @@ export interface QueryServiceOptions {
   readonly gitAgentRepairReads?: GitAgentRepairQueryReadStore;
   /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
   readonly integrationPlanReads?: IntegrationPlanQueryReadStore;
+  /**
+   * F-013（P08 DAG）：交付展示上下文只读端口（稳定层级编码/名称/branchName）。
+   * 未装配时 git.operations/git.repairs/integration.plan 查询不带展示字段，
+   * 既有身份/状态/证据字段不受影响（明确缺省，不虚构编码）。
+   */
+  readonly deliveryDisplayReads?: DeliveryDisplayContextReadStore;
   /** P03-9 / F-013 Run/Batch 控制进度与恢复诊断一致读取窄端口（只读）。 */
   readonly executionControlReads: ExecutionControlQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
@@ -832,6 +839,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     notificationReads,
     gitAgentRepairReads,
     integrationPlanReads,
+    deliveryDisplayReads,
     executionControlReads,
     artifacts,
     artifactFiles,
@@ -842,6 +850,24 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     throw new TypeError('createQueryService: dataRootIdentity 必须是 64 位小写十六进制（可信装配派生）');
   }
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+
+  /**
+   * F-013（P08 DAG）：展示上下文装配辅助（稳定层级编码/名称/branchName）。
+   * - 未装配展示读取端口时返回 undefined（查询保持既有字段，不虚构编码）；
+   * - 单体读取跨项目/不存在折叠为 null（存在性折叠由主查询负责）；
+   * - 列表按去重 featureId 批量读取（有界），缺失折叠为 null。
+   */
+  const readDisplay = (projectId: string, featureId: string) => {
+    if (deliveryDisplayReads === undefined) return undefined;
+    return deliveryDisplayReads.readFeatureDeliveryDisplay(projectId, featureId) ?? null;
+  };
+  const listDisplays = (projectId: string, featureIds: readonly string[]) => {
+    if (deliveryDisplayReads === undefined) return undefined;
+    const unique = [...new Set(featureIds)];
+    if (unique.length === 0) return new Map<string, NonNullable<ReturnType<typeof readDisplay>>>();
+    const found = deliveryDisplayReads.listFeatureDeliveryDisplays(projectId, unique);
+    return new Map(unique.map(id => [id, found.get(id) ?? null] as const));
+  };
 
   // P03-6 / F-011：结果证据（小 JSON）与诊断制品正文的完整性核验读取器
   // （复用既有 ArtifactVerifier；缓冲与时间上限显式有限，hash/size 核验失败即拒绝）。
@@ -1493,11 +1519,20 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           ? encodePlanListCursor(pageItems[pageItems.length - 1]!.feature.id, binding)
           : null;
         const pageIds = new Set(pageItems.map((item) => item.feature.id));
+        // F-013（P08 DAG）：同事务视图携带的稳定层级展示编码（未投影时缺省）。
+        const phaseDisplayCode = view.phaseDisplayCode ?? undefined;
+        const featureDisplayCode = (featureId: string): string | undefined =>
+          view.featureDisplayCodes?.get(featureId) ?? undefined;
+        const phaseRecord = toPublicPhaseRecord(view.phase);
         return {
           schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
           scope: 'phase-graph',
-          phase: toPublicPhaseRecord(view.phase),
-          features: pageItems.map((item) => toPublicFeatureRecord(item.feature)),
+          phase: phaseDisplayCode === undefined ? phaseRecord : { ...phaseRecord, displayCode: phaseDisplayCode },
+          features: pageItems.map((item) => {
+            const record = toPublicFeatureRecord(item.feature);
+            const code = featureDisplayCode(item.feature.id);
+            return code === undefined ? record : { ...record, displayCode: code };
+          }),
           dependencies: view.dependencies.map(toPublicFeatureDependencyEdge),
           readiness: pageItems.map((item) => item.readiness),
           readyFeatureIds: evaluation.readyFeatureIds.filter((id) =>
@@ -2850,10 +2885,17 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
                   request,
                 );
               })();
+        // F-013：批量展示上下文（去重 featureId 有界读取；未装配时缺省）。
+        const displays = listDisplays(projectId, page.records.map(record => record.intent.featureId));
         return {
           schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
           scope: 'git-operation-list',
-          records: page.records.map(toPublicGitOperationRecord),
+          records: page.records.map(record => {
+            const publicRecord = toPublicGitOperationRecord(record);
+            return displays === undefined
+              ? publicRecord
+              : { ...publicRecord, featureDisplay: displays.get(record.intent.featureId) ?? null };
+          }),
           nextCursor:
             page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
           limit: filter.limit,
@@ -2881,7 +2923,12 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         if (record === undefined) {
           gitOperationTargetNotFound(operation, 'git_operation');
         }
-        return { operation: toPublicGitOperationRecord(record) };
+        const base = toPublicGitOperationRecord(record!);
+        return {
+          operation: deliveryDisplayReads === undefined
+            ? base
+            : { ...base, featureDisplay: readDisplay(projectId, record!.intent.featureId) },
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }
@@ -2901,13 +2948,15 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         const binding = planCursorBinding({ kind: 'git-repairs', projectId }, operation);
         const request = planListRequest(filter, binding, operation);
         const page = gitAgentRepairReads.listGitAgentRepairs(projectId, request);
+        const displays = listDisplays(projectId, page.records.map(view => view.request.featureId));
         const records = page.records.map(view => {
           const source = gitOperationReads.readGitOperationRecord(projectId, view.request.source.operationId);
           const candidateId = gitAgentRepairCommitOperationId(view.request.repairId);
           const candidate = gitOperationReads.readGitOperationRecord(projectId, candidateId);
           return toPublicGitAgentRepairRecord(view,
             source === undefined ? null : toPublicGitOperationRecord(source),
-            candidate === undefined ? null : toPublicGitOperationRecord(candidate));
+            candidate === undefined ? null : toPublicGitOperationRecord(candidate),
+            displays === undefined ? undefined : (displays.get(view.request.featureId) ?? null));
         });
         const lastId = page.nextCursor;
         return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'git-repair-list', records,
@@ -2935,7 +2984,8 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         const candidate = gitOperationReads.readGitOperationRecord(projectId, gitAgentRepairCommitOperationId(repairId));
         return { repair: toPublicGitAgentRepairRecord(view,
           source === undefined ? null : toPublicGitOperationRecord(source),
-          candidate === undefined ? null : toPublicGitOperationRecord(candidate)) };
+          candidate === undefined ? null : toPublicGitOperationRecord(candidate),
+          deliveryDisplayReads === undefined ? undefined : readDisplay(projectId, view.request.featureId)) };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }
@@ -3276,7 +3326,27 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
             details: { reason: 'integration_plan_not_found' },
           });
         }
-        return buildIntegrationPlanQueryResult(view);
+        // F-013：展示上下文（后继 + 全部前置，一次有界批量读取；未装配时缺省）。
+        let displayView: typeof view.display;
+        if (deliveryDisplayReads !== undefined) {
+          const ids = [view.plan.successorFeatureId, ...view.predecessors.map(predecessor => predecessor.featureId)];
+          const found = deliveryDisplayReads.listFeatureDeliveryDisplays(projectId, ids);
+          const successor = found.get(view.plan.successorFeatureId);
+          if (successor !== undefined) {
+            displayView = {
+              successor,
+              predecessors: view.predecessors.map(predecessor => {
+                const display = found.get(predecessor.featureId);
+                return {
+                  featureId: predecessor.featureId,
+                  displayCode: display?.displayCode ?? null,
+                  title: display?.title ?? predecessor.featureId,
+                };
+              }),
+            };
+          }
+        }
+        return buildIntegrationPlanQueryResult(displayView === undefined ? view : { ...view, display: displayView });
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

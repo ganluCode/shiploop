@@ -198,6 +198,8 @@ describe('P07-4 / F-006 notification projection port contract', () => {
     expect([...NOTIFICATION_SUBSCRIPTION_EVENT_TYPES]).toEqual([
       'task.attempt.updated',
       'task.terminal', 'task.action_required', 'execution.run.ended', 'feature.finalized', 'feature.finalization_blocked',
+      // P08 / F-013：DAG 集成与 GitAgent 修复状态事件。
+      'integration.plan.updated', 'git.repair.updated',
     ]);
     expect(validateNotificationProjectionBatchRequest({ channelId: CHANNEL })).toMatchObject({
       channelId: CHANNEL, batchSize: NOTIFICATION_PROJECTION_BATCH_DEFAULT,

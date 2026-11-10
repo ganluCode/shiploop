@@ -128,6 +128,12 @@ function deliveryResult(
       planDigest: DIGEST,
       revision: 3,
       updatedAt: ISO,
+      title: 'F-1 交付',
+      branchName: 'feat/p01/f01-f-1-delivery',
+      phaseId: 'phase-1',
+      phaseTitle: 'P01',
+      displayCode: 'P01-F01',
+      phaseDisplayCode: 'P01',
     },
     run: { id: RUN_ID, batchId: BATCH_ID, status: 'running', reason: null, startedAt: ISO, endedAt: null },
     axes: {
@@ -156,6 +162,12 @@ function deliveryResult(
         verificationBatchId: null,
         gitOperationId: overrides.operation?.operationId ?? null,
       },
+    },
+    dag: {
+      frozenBaseCommit: null,
+      predecessors: [],
+      integrations: [],
+      successors: [],
     },
   };
 }

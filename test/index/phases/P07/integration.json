@@ -548,6 +548,11 @@
           "file": "test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p08-dag-f013-delivery-context.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }

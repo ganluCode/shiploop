@@ -20,14 +20,10 @@
  * - 授权与存在性折叠在应用层（能力位 project.read；跨项目/不存在统一
  *   not_found）；脱敏投影复用 F-013/F-009 既有公共形状，不新增第二套词汇。
  */
-import type {
-  FeaturePlanStatus,
-  FeatureStatus,
-  TaskApprovalItemRecord,
-  TaskStatus,
-} from './plan-store.js';
+import type { FeatureStatus, FeaturePlanStatus, TaskApprovalItemRecord, TaskStatus } from './plan-store.js';
 import type { ExecutionBatchStatus, ExecutionRunStatus } from './execution-store.js';
 import type { FeatureDeliveryStatus, GitOperationRecord } from './git-operations.js';
+import type { IntegrationPlanStatus } from './integration-plan.js';
 import type {
   CheckResultRecord,
   VerificationBatchRecord,
@@ -164,6 +160,13 @@ export interface FeatureDeliveryFeatureRow {
   readonly planDigest: string | null;
   readonly revision: number;
   readonly updatedAtUtcMs: number;
+  /** F-013（P08 DAG）：稳定层级展示事实（displayCode 缺失为 null，不冒充）。 */
+  readonly title: string;
+  readonly branchName: string | null;
+  readonly phaseId: string;
+  readonly phaseTitle: string;
+  readonly displayCode: string | null;
+  readonly phaseDisplayCode: string | null;
 }
 
 /** 必需 Task 当前有效结果与历史引用（latestAttemptId 无 Attempt 为 null）。 */
@@ -212,6 +215,46 @@ export interface FeatureDeliveryView {
   /** 有界人审事项（(created_at,id) 升序；超限置 approvalItemsTruncated）。 */
   readonly approvalItems: readonly TaskApprovalItemRecord[];
   readonly approvalItemsTruncated: boolean;
+  /**
+   * F-013（P08 DAG）：同事务投影的 DAG 交付上下文——冻结起点 SHA、直接
+   * 前置交付 SHA、作为后继的集成身份/状态/证据与后继阻塞原因。全部来自
+   * 持久冻结事实，缺事实保持 null/空，不虚构未核对交付。
+   */
+  readonly dag: FeatureDeliveryDagView;
+}
+
+/** Feature 交付 DAG 一致读视图（同事务组装；公开形状同源）。 */
+export interface FeatureDeliveryDagView {
+  /** Feature 编码工作区冻结起点 SHA（无受管工作区为 null）。 */
+  readonly frozenBaseCommit: string | null;
+  /** 直接前置（稳定 dependsOnId 升序）；交付事实来自后继权威集成计划。 */
+  readonly predecessors: readonly {
+    readonly featureId: string;
+    readonly displayCode: string | null;
+    readonly title: string;
+    readonly commitSha: string | null;
+    readonly evidenceId: string | null;
+    readonly evidenceDigest: string | null;
+  }[];
+  /** 以该 Feature 为后继的全部集成计划（integrationId 升序）。 */
+  readonly integrations: readonly {
+    readonly integrationId: string;
+    readonly status: IntegrationPlanStatus;
+    readonly inputDigest: string;
+    readonly targetBaseline: string;
+    readonly mergeOrder: readonly string[];
+    readonly commitSha: string | null;
+    readonly evidenceId: string | null;
+  }[];
+  /** 依赖该 Feature 的后继（featureId 升序）与其权威计划阻塞原因。 */
+  readonly successors: readonly {
+    readonly featureId: string;
+    readonly displayCode: string | null;
+    readonly title: string;
+    readonly integrationId: string | null;
+    readonly status: IntegrationPlanStatus | null;
+    readonly blockReasons: readonly string[];
+  }[];
 }
 
 /**
@@ -301,6 +344,13 @@ export interface FeatureDeliveryDetailResult {
     readonly planDigest: string | null;
     readonly revision: number;
     readonly updatedAt: string;
+    /** F-013：稳定层级展示事实（编码缺失为 null；不携带路径/凭据）。 */
+    readonly title: string;
+    readonly branchName: string | null;
+    readonly phaseId: string;
+    readonly phaseTitle: string;
+    readonly displayCode: string | null;
+    readonly phaseDisplayCode: string | null;
   };
   readonly run: PublicFeatureDeliveryRunRef | null;
   readonly axes: {
@@ -310,6 +360,8 @@ export interface FeatureDeliveryDetailResult {
     readonly delivery: PublicFeatureDeliveryDeliveryAxis;
   };
   readonly outcome: PublicFeatureDeliveryOutcome;
+  /** F-013（P08 DAG）：冻结起点、前置交付、集成身份/顺序与后继阻塞。 */
+  readonly dag: FeatureDeliveryDagView;
 }
 
 /* ------------------------------------------------------------------ *
@@ -566,6 +618,12 @@ export function buildFeatureDeliveryDetailResult(
       planDigest: view.feature.planDigest,
       revision: view.feature.revision,
       updatedAt: isoOr(view.feature.updatedAtUtcMs) ?? new Date(0).toISOString(),
+      title: view.feature.title,
+      branchName: view.feature.branchName,
+      phaseId: view.feature.phaseId,
+      phaseTitle: view.feature.phaseTitle,
+      displayCode: view.feature.displayCode,
+      phaseDisplayCode: view.feature.phaseDisplayCode,
     },
     run: view.run === null
       ? null
@@ -585,5 +643,17 @@ export function buildFeatureDeliveryDetailResult(
       approval,
       deliveryStatus: view.feature.deliveryStatus,
     }),
+    dag: {
+      frozenBaseCommit: view.dag.frozenBaseCommit,
+      predecessors: view.dag.predecessors.map(predecessor => ({ ...predecessor })),
+      integrations: view.dag.integrations.map(integration => ({
+        ...integration,
+        mergeOrder: [...integration.mergeOrder],
+      })),
+      successors: view.dag.successors.map(successor => ({
+        ...successor,
+        blockReasons: [...successor.blockReasons],
+      })),
+    },
   };
 }

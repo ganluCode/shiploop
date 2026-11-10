@@ -137,6 +137,14 @@ export const BASELINE_CANCELLED_EVENT_TYPE = 'baseline.cancelled';
 export const GIT_OPERATION_REGISTERED_EVENT_TYPE = 'git.operation.registered';
 export const GIT_OPERATION_SETTLED_EVENT_TYPE = 'git.operation.settled';
 
+/**
+ * P08 / F-013：DAG 集成计划状态与 GitAgent 修复状态事件（聚合为计划/修复自身）。
+ * 只在真实状态转换的事务内写入；重复/幂等重放不产生新事件（通知去重的
+ * 第一道边界），payload 仅携带冻结身份与受控状态/原因，不含路径/凭据/模型正文。
+ */
+export const INTEGRATION_PLAN_STATUS_EVENT_TYPE = 'integration.plan.updated';
+export const GIT_REPAIR_STATUS_EVENT_TYPE = 'git.repair.updated';
+
 /** §9.2 P02-2 事件类型白名单（顺序即冻结顺序；白名单外不得出现在公开流中）。 */
 export const PUBLIC_STATE_EVENT_TYPES = [
   ...PROJECT_PROFILE_AUDIT_TYPES,
@@ -217,6 +225,9 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // P03-8 / F-002：受控 Git 操作意图与终态回执（payload 仅 operationId/status）。
   GIT_OPERATION_REGISTERED_EVENT_TYPE,
   GIT_OPERATION_SETTLED_EVENT_TYPE,
+  // P08 / F-013：DAG 集成与 GitAgent 修复状态事件（通知订阅；脱敏身份+状态）。
+  INTEGRATION_PLAN_STATUS_EVENT_TYPE,
+  GIT_REPAIR_STATUS_EVENT_TYPE,
   'work.recovery.updated',
   'work.recovery.blocked',
 ] as const;
@@ -265,7 +276,9 @@ type EventPayloadKind =
   | 'workspaceOperationUpdated'
   | 'gitOperationRegistered'
   | 'gitOperationSettled'
-  | 'workRecovery';
+  | 'workRecovery'
+  | 'integrationPlanStatus'
+  | 'gitRepairStatus';
 
 /** Validate rich durable recovery evidence before projecting the public notification. */
 function validateWorkRecoveryPayload(payload: Record<string, unknown>, operation: string, global: boolean): void {
@@ -520,6 +533,12 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   }),
   [GIT_OPERATION_SETTLED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'git_operation', scopeKind: 'project', payloadKind: 'gitOperationSettled',
+  }),
+  [INTEGRATION_PLAN_STATUS_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'integration_plan', scopeKind: 'project', payloadKind: 'integrationPlanStatus',
+  }),
+  [GIT_REPAIR_STATUS_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'git_repair', scopeKind: 'project', payloadKind: 'gitRepairStatus',
   }),
   // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
   // {revised:true}，不携带预算数值/理由/批准主体/启动或恢复语义）。
@@ -934,6 +953,61 @@ function validateSummaryNameList(value: unknown): value is string[] {
   return value.every((entry) => typeof entry === 'string' && SUMMARY_NAME_PATTERN.test(entry));
 }
 
+/** P08 / F-013：集成计划状态事件状态/原因词溄（与 INTEGRATION_PLAN_STATUSES 同源冻结）。 */
+const INTEGRATION_PLAN_EVENT_STATUSES = ['dependency_passed', 'integration_passed', 'stale', 'blocked'] as const;
+const EVENT_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+function validateIntegrationPlanStatusPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+  aggregateId: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['schemaVersion', 'integrationId', 'successorFeatureId', 'status', 'blockReasons', 'staleReasons']);
+  if (payload.schemaVersion !== 1 || payload.integrationId !== aggregateId
+    || typeof payload.successorFeatureId !== 'string' || payload.successorFeatureId.length === 0
+    || typeof payload.status !== 'string'
+    || !(INTEGRATION_PLAN_EVENT_STATUSES as readonly string[]).includes(payload.status)
+    || !Array.isArray(payload.blockReasons) || !Array.isArray(payload.staleReasons)
+    || ![...payload.blockReasons, ...payload.staleReasons].every(reason =>
+      typeof reason === 'string' && EVENT_REASON_PATTERN.test(reason))) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return {
+    schemaVersion: 1,
+    integrationId: payload.integrationId as string,
+    successorFeatureId: payload.successorFeatureId as string,
+    status: payload.status as string,
+    blockReasons: [...(payload.blockReasons as string[])],
+    staleReasons: [...(payload.staleReasons as string[])],
+  };
+}
+
+/** P08 / F-013：GitAgent 修复状态事件冻结词汇（requested=已授权；blocked=人工/预算阻塞；attempt_* 为结算结果）。 */
+const GIT_REPAIR_EVENT_STATUSES = ['requested', 'blocked', 'attempt_modified', 'attempt_no_change', 'attempt_failed', 'attempt_cancelled'] as const;
+
+function validateGitRepairStatusPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+  aggregateId: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['schemaVersion', 'repairId', 'featureId', 'status', 'reason']);
+  if (payload.schemaVersion !== 1 || payload.repairId !== aggregateId
+    || typeof payload.featureId !== 'string' || payload.featureId.length === 0
+    || typeof payload.status !== 'string'
+    || !(GIT_REPAIR_EVENT_STATUSES as readonly string[]).includes(payload.status)
+    || (payload.reason !== null && (typeof payload.reason !== 'string' || !EVENT_REASON_PATTERN.test(payload.reason)
+      || payload.reason.length > 64))) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return {
+    schemaVersion: 1,
+    repairId: payload.repairId as string,
+    featureId: payload.featureId as string,
+    status: payload.status as string,
+    reason: payload.reason as string | null,
+  };
+}
+
 function validateSettingsSummaryPayload(
   payload: Record<string, unknown>,
   operation: string,
@@ -1307,6 +1381,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateGitOperationRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'gitOperationSettled') {
     payload = validateGitOperationSettledPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'integrationPlanStatus') {
+    payload = validateIntegrationPlanStatusPayload(row.payload, operation, row.aggregateId);
+  } else if (spec.payloadKind === 'gitRepairStatus') {
+    payload = validateGitRepairStatusPayload(row.payload, operation, row.aggregateId);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'projectStatus') {

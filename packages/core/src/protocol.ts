@@ -89,6 +89,7 @@ export {
   INTEGRATION_PLAN_QUERY_OPERATIONS,
 } from './ports/integration-plan-query.js';
 export type {
+  IntegrationPlanDisplayView,
   IntegrationPlanNextStep,
   IntegrationPlanQueryOperation,
   IntegrationPlanQueryResult,
@@ -469,6 +470,18 @@ export type {
   GitOperationQueryOperation,
   PublicGitOperationRecord,
 } from './ports/git-operation-query.js';
+// P08 / F-013 DAG 交付展示上下文（稳定层级编码/名称/branchName）。
+export {
+  DELIVERY_DISPLAY_CODE_MAX_LENGTH,
+  DELIVERY_DISPLAY_CONTEXT_BATCH_LIMIT,
+  DELIVERY_DISPLAY_TITLE_MAX_LENGTH,
+  isDeliveryDisplayCodeShape,
+  validateDeliveryEntityDisplay,
+} from './ports/delivery-display-context.js';
+export type {
+  DeliveryDisplayContextReadStore,
+  PublicDeliveryEntityDisplay,
+} from './ports/delivery-display-context.js';
 // P05-8 / F-006 GitAgent 修复只读查询面。
 export {
   GIT_REPAIR_QUERY_OPERATIONS,
@@ -501,6 +514,7 @@ export { validateRuntimeRecoverySelection, validateRuntimeRecoveryDecision } fro
 export type {
   FeatureApprovalAxisStatus,
   FeatureDeliveryDetailResult,
+  FeatureDeliveryDagView,
   FeatureDeliveryNextStep,
   FeatureDeliveryOutcome,
   FeatureDeliveryQueryOperation,

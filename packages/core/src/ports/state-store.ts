@@ -88,7 +88,10 @@ export type StateEventAggregateType =
   | 'run'
   | 'execution_batch'
   /** P03-8 / F-002：受控 Git 操作（git.operation.* 聚合自身）。 */
-  | 'git_operation';
+  | 'git_operation'
+  /** P08 / F-013：DAG 集成计划与 GitAgent 修复（各自聚合自身）。 */
+  | 'integration_plan'
+  | 'git_repair';
 
 /** 项目生命周期（core-design/02 §生命周期：active→archiving→archived；删除自 archived 起经 deleting）。 */
 export type ProjectStatus = 'active' | 'archiving' | 'archived' | 'deleting';

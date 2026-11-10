@@ -5,6 +5,7 @@
  * 或 Runtime，也不暴露 owner/lock/native path 等内部控制细节。
  */
 import type { IntegrationPlan, IntegrationResult, IntegrationPlanStatus } from './integration-plan.js';
+import type { PublicDeliveryEntityDisplay } from './delivery-display-context.js';
 import { WIRE_MESSAGE_SCHEMA_VERSION } from './commands.js';
 
 export const INTEGRATION_PLAN_GET_OPERATION = 'integration.plan.get' as const;
@@ -37,6 +38,12 @@ export interface IntegrationPlanQueryResultValue {
   readonly operationStatus: IntegrationResult['operationStatus'] | null;
 }
 
+/** 展示上下文投影（后继/前置/Phase 的稳定层级编码与名称；仅展示事实）。 */
+export interface IntegrationPlanDisplayView {
+  readonly successor: PublicDeliveryEntityDisplay;
+  readonly predecessors: readonly { readonly featureId: string; readonly displayCode: string | null; readonly title: string }[];
+}
+
 export interface IntegrationPlanQueryView {
   readonly plan: Omit<IntegrationPlan, 'predecessors' | 'approvedInputs' | 'integrationResult'> & {
     readonly revision: number;
@@ -46,6 +53,8 @@ export interface IntegrationPlanQueryView {
   };
   readonly predecessors: readonly IntegrationPlanQueryPredecessor[];
   readonly integrationResult: IntegrationPlanQueryResultValue | null;
+  /** F-013（P08 DAG）：可选展示上下文；未装配展示读取时缺省，不阻塞查询。 */
+  readonly display?: IntegrationPlanDisplayView;
 }
 
 export interface PublicIntegrationPlanPredecessor extends IntegrationPlanQueryPredecessor {}
@@ -87,6 +96,8 @@ export interface IntegrationPlanQueryResult {
   readonly predecessors: readonly PublicIntegrationPlanPredecessor[];
   readonly integrationResult: IntegrationPlanQueryResultValue | null;
   readonly outcome: PublicIntegrationPlanOutcome;
+  /** F-013（P08 DAG）：展示上下文（稳定层级编码/名称/branchName；可缺省）。 */
+  readonly display?: IntegrationPlanDisplayView;
 }
 
 export interface IntegrationPlanQueryReadStore {
@@ -186,5 +197,11 @@ export function buildIntegrationPlanQueryResult(view: IntegrationPlanQueryView):
       staleReasons: [...plan.staleReasons],
       nextStep: nextStep(plan),
     },
+    ...(view.display === undefined ? {} : {
+      display: {
+        successor: { ...view.display.successor },
+        predecessors: view.display.predecessors.map(predecessor => ({ ...predecessor })),
+      },
+    }),
   };
 }

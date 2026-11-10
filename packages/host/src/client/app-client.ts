@@ -1303,7 +1303,9 @@ export interface HostClientApplication {
    * ------------------------------------------------------------ */
   /**
    * features.delivery.get：Feature Task/最终检查/人工审批/交付分轴结果与
-   * 可区分总体 outcome；completed 不掩盖缺失证据或其他轴失败。
+   * 可区分总体 outcome；completed 不掩盖缺失证据或其他轴失败。F-013 起
+   * 结果携带稳定层级展示事实（编码/名称/branchName）与 dag 字段（冻结起点、
+   * 前置交付、集成身份/顺序与后继阻塞）。
    */
   getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult>;
   getFeatureReport(projectId: string, featureId: string): Promise<FeatureExecutionReport>;

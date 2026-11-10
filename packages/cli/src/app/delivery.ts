@@ -161,6 +161,8 @@ export interface IntegrationPlanCliView {
   readonly predecessors: IntegrationPlanQueryResult['predecessors'];
   readonly integrationResult: IntegrationPlanQueryResult['integrationResult'];
   readonly outcome: IntegrationPlanQueryResult['outcome'];
+  /** P08 / F-013：展示上下文（稳定层级编码/名称/branchName；可缺省）。 */
+  readonly display?: IntegrationPlanQueryResult['display'];
   readonly completed: boolean;
   readonly note: string;
 }
@@ -173,6 +175,7 @@ export function buildIntegrationPlanCliView(result: IntegrationPlanQueryResult):
     predecessors: result.predecessors,
     integrationResult: result.integrationResult,
     outcome: result.outcome,
+    ...(result.display === undefined ? {} : { display: result.display }),
     completed,
     note: completed
       ? '固定集成 commit 与组合验证证据已完成'
@@ -189,15 +192,25 @@ export function formatIntegrationPlanView(view: IntegrationPlanCliView): string 
     `  mode=${plan.mode} mergeOrder=${plan.mergeOrder.join(',')} verificationScope=${plan.verificationScope.join(',')}`,
     `  coverage=${plan.coverage.coveredInputCount}/${plan.coverage.approvedInputCount} complete=${String(plan.coverage.complete)}`,
   ];
+  if (view.display !== undefined) {
+    const successor = view.display.successor;
+    lines.push(
+      `  successor ${successor.displayCode ?? 'no-code'} ${successor.title} branch=${successor.branchName ?? 'none'} phase=${successor.phaseDisplayCode ?? 'no-code'}`,
+    );
+  }
   for (const predecessor of view.predecessors) {
-    lines.push(`  predecessor ${predecessor.featureId} dependencyPassed=${String(predecessor.dependencyPassed)} commit=${String(predecessor.commitSha)} ancestorVerified=${String(predecessor.ancestorVerified)}`);
+    const display = view.display?.predecessors.find(entry => entry.featureId === predecessor.featureId);
+    const label = display === undefined
+      ? predecessor.featureId
+      : `${display.displayCode ?? 'no-code'} ${display.title} (${predecessor.featureId})`;
+    lines.push(`  predecessor ${label} dependencyPassed=${String(predecessor.dependencyPassed)} commit=${String(predecessor.commitSha)} ancestorVerified=${String(predecessor.ancestorVerified)}`);
   }
   lines.push(`  outcome=${view.outcome.status} nextStep=${view.outcome.nextStep} reason=${view.outcome.reason}`);
   if (view.outcome.blockReasons.length > 0) lines.push(`  blockReasons=${view.outcome.blockReasons.join(',')}`);
   if (view.outcome.staleReasons.length > 0) lines.push(`  staleReasons=${view.outcome.staleReasons.join(',')}`);
   if (view.integrationResult !== null) lines.push(`  result commit=${String(view.integrationResult.commitSha)} tree=${String(view.integrationResult.treeSha)} operationStatus=${String(view.integrationResult.operationStatus)}`);
   lines.push(`  （${view.note}）`);
-  return `${lines.join('\\n')}\\n`;
+  return `${lines.join('\n')}\n`;
 }
 
 
@@ -248,7 +261,7 @@ export function formatIntegrationReconcileView(view: IntegrationReconcileCliView
     `  feature=${view.featureId} run=${view.runId} batch=${view.batchId} operation=${view.gitOperationId}`,
     `  deliveryStatus=${String(view.deliveryStatus)} successorStart=${String(view.canStartSuccessor)}`,
     `  reason=${view.reason}`,
-  ].join('\\n') + '\\n';
+  ].join('\n') + '\n';
 }
 
 
@@ -260,6 +273,8 @@ export interface FeatureDeliveryCliView {
   readonly run: FeatureDeliveryDetailResult['run'];
   readonly axes: FeatureDeliveryDetailResult['axes'];
   readonly outcome: FeatureDeliveryDetailResult['outcome'];
+  /** P08 / F-013：DAG 交付上下文（冻结起点/前置交付/集成身份与后继阻塞）。 */
+  readonly dag: FeatureDeliveryDetailResult['dag'];
   /**
    * completed 恒等于 outcome.status==='completed'：所有 Task 通过但最终失败、
    * 等待批准、no_change、待核对或证据不全恒为 false。
@@ -276,6 +291,7 @@ export function buildFeatureDeliveryView(result: FeatureDeliveryDetailResult): F
     run: result.run,
     axes: result.axes,
     outcome: result.outcome,
+    dag: result.dag,
     completed,
     note: completed
       ? '全部必需 Task、最终检查、人工批准与获准提交均完成'
@@ -293,6 +309,35 @@ export function formatFeatureDeliveryView(view: FeatureDeliveryCliView): string 
     `  feature status=${view.feature.status} deliveryStatus=${view.feature.deliveryStatus} ` +
       `planStatus=${view.feature.planStatus} revision=${view.feature.revision}`,
   );
+  // F-013：稳定层级展示事实（编码/名称/branchName；不携带路径/凭据）。
+  lines.push(
+    `  display code=${view.feature.displayCode ?? 'none'} title=${view.feature.title} ` +
+      `branch=${view.feature.branchName ?? 'none'} phase=${view.feature.phaseDisplayCode ?? 'none'} ${view.feature.phaseTitle}`,
+  );
+  const dag = view.dag;
+  lines.push(
+    `  dag frozenBase=${dag.frozenBaseCommit ?? 'none'} predecessors=${dag.predecessors.length} ` +
+      `integrations=${dag.integrations.length} successors=${dag.successors.length}`,
+  );
+  for (const predecessor of dag.predecessors) {
+    lines.push(
+      `    - predecessor ${predecessor.displayCode ?? 'no-code'} ${predecessor.title} (${predecessor.featureId}) ` +
+        `commit=${predecessor.commitSha ?? 'none'}${predecessor.evidenceId !== null ? ` evidence=${predecessor.evidenceId}` : ''}`,
+    );
+  }
+  for (const integration of dag.integrations) {
+    lines.push(
+      `    - integration ${integration.integrationId} status=${integration.status} ` +
+        `mergeOrder=${integration.mergeOrder.join(',')} commit=${integration.commitSha ?? 'none'}`,
+    );
+  }
+  for (const successor of dag.successors) {
+    lines.push(
+      `    - successor ${successor.displayCode ?? 'no-code'} ${successor.title} (${successor.featureId}) ` +
+        `integration=${successor.integrationId ?? 'none'} status=${successor.status ?? 'none'} ` +
+        `blockReasons=${successor.blockReasons.join(',') || 'none'}`,
+    );
+  }
   if (view.run !== null) {
     lines.push(
       `  run ${view.run.id} status=${view.run.status} batch=${view.run.batchId}` +
@@ -375,6 +420,8 @@ export interface GitOperationRecordView {
   readonly approvalRefs: PublicGitOperationRecord['approvalRefs'];
   readonly receiptRecorded: boolean;
   readonly committed: boolean;
+  /** P08 / F-013：目标 Feature 展示上下文（稳定层级编码/名称/branchName）。 */
+  readonly featureDisplay: PublicGitOperationRecord['featureDisplay'];
 }
 
 export function gitOperationCommitted(record: PublicGitOperationRecord): boolean {
@@ -405,6 +452,7 @@ export function buildGitOperationRecordView(record: PublicGitOperationRecord): G
     approvalRefs: record.approvalRefs,
     receiptRecorded: record.receipt !== null,
     committed: gitOperationCommitted(record),
+    featureDisplay: record.featureDisplay ?? null,
   };
 }
 
@@ -433,21 +481,27 @@ export function buildGitAgentRepairListView(result: GitAgentRepairListResult): G
 
 export function formatGitAgentRepairListView(view: GitAgentRepairListCliView): string {
   const lines = [`shiploop git repairs: ${view.records.length} record(s)`];
-  for (const repair of view.records) lines.push(`  - ${repair.repairId} run=${String(repair.runId)} blocked=${String(repair.blockedReason)} attempts=${repair.attempts.length} candidate=${repair.candidateOperation?.status ?? 'none'}`);
+  for (const repair of view.records) {
+    const display = repair.featureDisplay ?? null;
+    lines.push(`  - ${repair.repairId}${display !== null && display !== undefined ? ` ${display.displayCode ?? 'no-code'} ${display.title}` : ''} run=${String(repair.runId)} blocked=${String(repair.blockedReason)} attempts=${repair.attempts.length} candidate=${repair.candidateOperation?.status ?? 'none'}`);
+  }
   lines.push(`  nextCursor=${view.nextCursor ?? 'none'}`);
-  return `${lines.join('\\n')}\\n`;
+  return `${lines.join('\n')}\n`;
 }
 
 export function formatGitAgentRepairView(view: GitAgentRepairCliView): string {
   const repair = view.repair;
   const latest = repair.attempts.at(-1);
-  return [
+  const display = repair.featureDisplay ?? null;
+  const lines = [
     `shiploop git repair: ${repair.repairId} completed=${String(view.completed)}`,
     `  project=${repair.projectId} feature=${repair.featureId} run=${String(repair.runId)} sourceOperation=${repair.sourceOperationId}`,
+    `  featureDisplay=${display === null || display === undefined ? 'none' : `${display.displayCode ?? 'no-code'} ${display.title} branch=${display.branchName ?? 'none'}`}`,
     `  blocked=${String(repair.blockedReason)} failureKind=${repair.source.failureKind} inputDigest=${repair.source.inputDigest}`,
     `  attempts=${repair.attempts.length} latestStatus=${latest?.status ?? 'none'} tokens=${String(latest?.consumedTokens ?? null)} runtimeMs=${String(latest?.runtimeMs ?? null)}`,
     `  candidate=${repair.candidateOperation?.status ?? 'none'} deliveryStatus=${String(repair.candidateOperation?.deliveryStatus ?? null)}（候选/模型完成不等于交付完成）`,
-  ].join('\\n') + '\\n';
+  ];
+  return `${lines.join('\n')}\n`;
 }
 export interface GitOperationListCliView {
   readonly scope: 'git-operation-list';
@@ -520,6 +574,14 @@ export function formatGitOperationDetailView(view: GitOperationDetailCliView): s
     `shiploop git operation: ${record.operationId} status=${record.status} ` +
       `committed=${String(record.committed)}（待核对/无变更不显示为已提交）`,
     `  feature=${record.featureId} run=${record.runId}`,
+  ];
+  if (record.featureDisplay !== null && record.featureDisplay !== undefined) {
+    const display = record.featureDisplay;
+    lines.push(
+      `  featureDisplay code=${display.displayCode ?? 'none'} title=${display.title} branch=${display.branchName ?? 'none'}`,
+    );
+  }
+  lines.push(
     `  expectedHead=${record.expectedHead} candidateTree=${record.candidateTree}`,
     `  actualCommit=${String(record.actualCommit)} actualParent=${String(record.actualParent)}`,
     `  deliveryStatus=${String(record.deliveryStatus)} reasonCode=${String(record.reasonCode)} ` +
@@ -528,7 +590,7 @@ export function formatGitOperationDetailView(view: GitOperationDetailCliView): s
     `  intentDigest=${view.intentDigest} codeDigest=${view.codeDigest} ` +
       `deliveryPolicyDigest=${view.deliveryPolicyDigest}`,
     `  gitIdentity=${view.gitIdentity.name} <${view.gitIdentity.email}> confirmed=${String(view.gitIdentity.confirmed)}`,
-  ];
+  );
   const refs = (refs: readonly { kind: string; id: string; digest: string }[]): string =>
     refs.length === 0 ? 'none' : refs.map((ref) => `${ref.kind}:${ref.id}`).join(',');
   lines.push(`  verificationRefs=${refs(record.verificationRefs)}`);

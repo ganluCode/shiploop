@@ -16,6 +16,8 @@
  */
 import { createSqliteEntityLabelQueryStore } from './entity-label-query-store.js';
 import type { EntityLabelQueryReadStore } from '../../ports/entity-label-query.js';
+import { createSqliteDeliveryDisplayContextStore } from './delivery-display-context-store.js';
+import type { DeliveryDisplayContextReadStore } from '../../ports/delivery-display-context.js';
 import type { StateEventReadStore } from '../../ports/events.js';
 import type { PersistedStateEventRow } from '../../ports/events.js';
 import type {
@@ -162,7 +164,8 @@ export interface SqliteQueryStore
     ResultDiagnosticsQueryReadStore,
     NotificationQueryReadStore,
     KnowledgeQueryReadStore,
-    MemoryQueryReadStore {}
+    MemoryQueryReadStore,
+    DeliveryDisplayContextReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -199,10 +202,15 @@ export function createSqliteQueryStore(
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
   const labelQueries = createSqliteEntityLabelQueryStore(session);
+  const deliveryDisplay = createSqliteDeliveryDisplayContextStore(session);
   const knowledgeQueries = createSqliteDocumentQueryStore(session);
   const memoryQueries = createSqliteMemoryQueryStore(session);
   return {
     ...labelQueries,
+    readFeatureDeliveryDisplay: (projectId: unknown, featureId: unknown) =>
+      deliveryDisplay.readFeatureDeliveryDisplay(projectId, featureId),
+    listFeatureDeliveryDisplays: (projectId: unknown, featureIds: readonly unknown[]) =>
+      deliveryDisplay.listFeatureDeliveryDisplays(projectId, featureIds),
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
     },

@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "task_id": "F-013",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p08-dag-f013-public-query-views.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/events/events-contract.test.ts",
+          "all": true,
+          "level": "unit"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p08-dag-f013-delivery-context.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-10-task-commit-store.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}

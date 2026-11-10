@@ -139,6 +139,8 @@ export interface PublicPhaseRecord {
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** F-013（P08 DAG）：稳定层级展示编码（Phase 图视图装配；缺省不冒充）。 */
+  readonly displayCode?: string;
 }
 
 export function toPublicPhaseRecord(phase: PhaseRecord): PublicPhaseRecord {
@@ -175,6 +177,8 @@ export interface PublicFeatureRecord {
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** F-013（P08 DAG）：稳定层级展示编码（Phase 图视图装配；缺省不冒充）。 */
+  readonly displayCode?: string;
 }
 
 export function toPublicFeatureRecord(feature: FeatureRecord): PublicFeatureRecord {
@@ -587,6 +591,12 @@ export interface PhaseFeatureGraphView {
    */
   readonly nodeIntegrationEvidence?: ReadonlyMap<string, FeatureIntegrationEvidence | null>;
   readonly edgeIntegrationEvidence?: ReadonlyMap<string, FeatureIntegrationEvidence | null>;
+  /**
+   * F-013（P08 DAG）：同一事务内读取的稳定层级展示编码（phase + features；
+   * 缺省表示视图提供方未投影，查询结果不带编码，不以 UUID 片段冒充）。
+   */
+  readonly phaseDisplayCode?: string | null;
+  readonly featureDisplayCodes?: ReadonlyMap<string, string>;
 }
 
 /** phases.get → {phase}（真实父级 projectId 在记录内）。 */

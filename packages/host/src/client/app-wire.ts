@@ -28,6 +28,7 @@ import { FEATURE_GRAPH_BLOCKER_REASONS, FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_
 import { validateGitAgentRepairQueryResult as validateCoreGitAgentRepairQueryResult } from 'shiploop-core/protocol';
 import type { GitAgentRepairListResult, GitAgentRepairDetailResult } from 'shiploop-core/protocol';
 import type { PhaseGraphResult, PublicFeatureDependencyEdge } from 'shiploop-core/protocol';
+import type { PublicDeliveryEntityDisplay, FeatureDeliveryDagView } from 'shiploop-core/protocol';
 export type { PhaseGraphResult, PhaseGraphFeatureReadiness, PublicFeatureDependencyEdge } from 'shiploop-core/protocol';
 import { validateFeatureReportWire } from './feature-report-wire.js';
 import { validateWorkSessionListWire, validateWorkSessionDetailWire, validateWorkSessionEvidenceWire } from './work-session-wire.js';
@@ -1311,7 +1312,10 @@ function validatePhaseRecordWire(operation: HostOperation, value: unknown): Publ
     'revision',
     'createdAt',
     'updatedAt',
+    // P08 / F-013：稳定层级展示编码（可选；未投影时缺省）。
+    'displayCode',
   ]);
+  if (object.displayCode !== undefined) requireDeliveryDisplayCodeOrNull(operation, object.displayCode);
   const record = {
     id: requireStableId(operation, object.id),
     projectId: requireStableId(operation, object.projectId),
@@ -1323,6 +1327,8 @@ function validatePhaseRecordWire(operation: HostOperation, value: unknown): Publ
     labels: requireLabelsArray(operation, object.labels),
     status: typeof object.status === 'string' && object.status.length > 0 ? object.status : malformed(operation, 'plan_status_invalid'),
     revision: requirePositiveInteger(operation, object.revision),
+    // F-013：可选稳定层级展示编码（在场时保留；缺省不冒充）。
+    ...(object.displayCode === undefined ? {} : { displayCode: object.displayCode as string }),
   };
   if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
     malformed(operation, 'plan_time_invalid');
@@ -1353,7 +1359,10 @@ function validateFeatureRecordWire(operation: HostOperation, value: unknown): Pu
     'createdAt',
     'updatedAt',
     'branchName',
+    // P08 / F-013：稳定层级展示编码（可选；未投影时缺省）。
+    'displayCode',
   ]);
+  if (object.displayCode !== undefined) requireDeliveryDisplayCodeOrNull(operation, object.displayCode);
   if (object.branchName !== undefined && object.branchName !== null
     && (typeof object.branchName !== 'string' || object.branchName.length === 0 || object.branchName.length > 255
       || /[\x00-\x20\x7f~^:?*\[\\]/.test(object.branchName) || object.branchName.includes('..')
@@ -1382,6 +1391,8 @@ function validateFeatureRecordWire(operation: HostOperation, value: unknown): Pu
         : malformed(operation, 'plan_status_invalid'),
     sourceRefs: validatePlanArtifactRefsWire(operation, object.sourceRefs),
     revision: requirePositiveInteger(operation, object.revision),
+    // F-013：可选稳定层级展示编码（在场时保留；缺省不冒充）。
+    ...(object.displayCode === undefined ? {} : { displayCode: object.displayCode as string }),
   };
   if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
     malformed(operation, 'plan_time_invalid');
@@ -1899,6 +1910,48 @@ function requireSha256HexOrNull(
   reason: string,
 ): string | null {
   return value === null ? null : requireSha256Hex(operation, value, reason);
+}
+
+/* ------------------------------------------------------------------ *
+ * P08 / F-013：DAG 交付展示上下文线校验（稳定层级编码/名称/branchName；
+ * 编码缺失为 null；不携带路径/凭据/模型正文）
+ * ------------------------------------------------------------------ */
+
+const DELIVERY_DISPLAY_CODE_WIRE_PATTERN = /^[A-Z][A-Z0-9-]{0,63}$/;
+
+function requireDeliveryDisplayCodeOrNull(operation: HostOperation, value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !DELIVERY_DISPLAY_CODE_WIRE_PATTERN.test(value)) {
+    malformed(operation, 'delivery_display_code_invalid');
+  }
+  return value;
+}
+
+/** 展示上下文（冻结字段集）：featureId/title 必在；编码缺失为 null。 */
+function validateDeliveryEntityDisplayWire(operation: HostOperation, value: unknown): PublicDeliveryEntityDisplay {
+  const display = requirePlain(operation, value);
+  exactKeys(operation, display, ['featureId', 'displayCode', 'title', 'branchName', 'phaseId', 'phaseDisplayCode', 'phaseTitle']);
+  requireStableId(operation, display.featureId);
+  requireStableId(operation, display.phaseId);
+  requireDeliveryDisplayCodeOrNull(operation, display.displayCode);
+  requireDeliveryDisplayCodeOrNull(operation, display.phaseDisplayCode);
+  if (typeof display.title !== 'string' || display.title.length === 0 || display.title.length > 512
+    || typeof display.phaseTitle !== 'string' || display.phaseTitle.length === 0 || display.phaseTitle.length > 512) {
+    malformed(operation, 'delivery_display_title_invalid');
+  }
+  if (display.branchName !== null && (typeof display.branchName !== 'string' || display.branchName.length === 0
+    || display.branchName.length > 255 || display.branchName.startsWith('/') || /[\x00-\x20\x7f~^:?*\[\\]/.test(display.branchName)
+    || display.branchName.includes('..') || display.branchName.includes('@{'))) {
+    malformed(operation, 'delivery_display_branch_invalid');
+  }
+  return display as unknown as PublicDeliveryEntityDisplay;
+}
+
+/** 可选展示上下文字段（未装配时缺省；在场则形状校验）。 */
+function validateOptionalDeliveryDisplayWire(operation: HostOperation, value: unknown): PublicDeliveryEntityDisplay | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return validateDeliveryEntityDisplayWire(operation, value);
 }
 
 function requireNonEmptyString(
@@ -5632,7 +5685,11 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
     'revision',
     'createdAt',
     'updatedAt',
+    // P08 / F-013：目标 Feature 展示上下文（可选；未装配时缺省）。
+    'featureDisplay',
   ]);
+  // F-013：可选展示上下文；在场时形状校验（不含路径/凭据）。
+  validateOptionalDeliveryDisplayWire(operation, record.featureDisplay);
   requireStableId(operation, record.operationId);
   requireStableId(operation, record.projectId);
   requireStableId(operation, record.featureId);
@@ -5894,7 +5951,9 @@ export function validateGitAgentRepairQueryResultWire(
     : ['schemaVersion', 'repair']);
   const checkRecord = (value: unknown): void => {
     const record = requirePlain(operation, value);
-    exactKeys(operation, record, ['repairId', 'projectId', 'featureId', 'parentBatchId', 'sourceOperationId', 'runId', 'authorizationDigest', 'authorizationVersion', 'blockedReason', 'source', 'target', 'workspaceId', 'conflictFiles', 'writablePaths', 'intentId', 'verificationStrategyId', 'budget', 'attempts', 'sourceOperation', 'candidateOperation']);
+    exactKeys(operation, record, ['repairId', 'projectId', 'featureId', 'parentBatchId', 'sourceOperationId', 'runId', 'authorizationDigest', 'authorizationVersion', 'blockedReason', 'source', 'target', 'workspaceId', 'conflictFiles', 'writablePaths', 'intentId', 'verificationStrategyId', 'budget', 'attempts', 'sourceOperation', 'candidateOperation', 'featureDisplay']);
+    // P08 / F-013：目标 Feature 展示上下文（可选；未装配时缺省）。
+    validateOptionalDeliveryDisplayWire(operation, record.featureDisplay);
     const source = requirePlain(operation, record.source);
     exactKeys(operation, source, ['failureKind', 'evidenceId', 'inputDigest']);
     const target = requirePlain(operation, record.target);
@@ -5930,7 +5989,7 @@ function validateIntegrationPlanQueryResultWire(
   operation: HostOperation = 'integration.plan.get',
 ): IntegrationPlanQueryResult {
   const object = requirePlain(operation, value);
-  exactKeys(operation, object, ['schemaVersion', 'scope', 'integration', 'predecessors', 'integrationResult', 'outcome']);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'integration', 'predecessors', 'integrationResult', 'outcome', 'display']);
   if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
     if (typeof object.schemaVersion === 'number') unsupportedVersion(operation, 'schemaVersion');
     malformed(operation, 'integration_plan_schema_version_invalid');
@@ -5981,6 +6040,20 @@ function validateIntegrationPlanQueryResultWire(
   exactKeys(operation, outcome, ['status', 'reason', 'blockReasons', 'staleReasons', 'nextStep']);
   if (!(INTEGRATION_PLAN_STATUSES as readonly unknown[]).includes(outcome.status) || typeof outcome.reason !== 'string' || !(INTEGRATION_PLAN_NEXT_STEPS as readonly unknown[]).includes(outcome.nextStep)) malformed(operation, 'integration_plan_outcome_invalid');
   if (!Array.isArray(outcome.blockReasons) || !Array.isArray(outcome.staleReasons)) malformed(operation, 'integration_plan_outcome_reasons_invalid');
+  // P08 / F-013：可选展示上下文（未装配时缺省；在场则形状校验）。
+  if (object.display !== undefined) {
+    const display = requirePlain(operation, object.display);
+    exactKeys(operation, display, ['successor', 'predecessors']);
+    validateDeliveryEntityDisplayWire(operation, display.successor);
+    if (!Array.isArray(display.predecessors) || display.predecessors.length > 128) malformed(operation, 'integration_plan_display_invalid');
+    for (const raw of display.predecessors as unknown[]) {
+      const predecessor = requirePlain(operation, raw);
+      exactKeys(operation, predecessor, ['featureId', 'displayCode', 'title']);
+      requireStableId(operation, predecessor.featureId);
+      requireDeliveryDisplayCodeOrNull(operation, predecessor.displayCode);
+      requireNonEmptyString(operation, predecessor.title, 'integration_plan_display_invalid');
+    }
+  }
   return object as unknown as IntegrationPlanQueryResult;
 }
 
@@ -6083,7 +6156,7 @@ export function validateFeatureDeliveryDetailResultWire(
   operation: HostOperation = 'features.delivery.get',
 ): FeatureDeliveryDetailResult {
   const object = requirePlain(operation, value);
-  exactKeys(operation, object, ['schemaVersion', 'scope', 'feature', 'run', 'axes', 'outcome']);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'feature', 'run', 'axes', 'outcome', 'dag']);
   if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
     if (typeof object.schemaVersion === 'number') {
       unsupportedVersion(operation, 'schemaVersion');
@@ -6102,7 +6175,27 @@ export function validateFeatureDeliveryDetailResultWire(
     'planDigest',
     'revision',
     'updatedAt',
+    // P08 / F-013：稳定层级展示事实（编码缺失为 null，不携带路径/凭据）。
+    'title',
+    'branchName',
+    'phaseId',
+    'phaseTitle',
+    'displayCode',
+    'phaseDisplayCode',
   ]);
+  requireStableId(operation, feature.featureId);
+  requireStableId(operation, feature.phaseId);
+  requireDeliveryDisplayCodeOrNull(operation, feature.displayCode);
+  requireDeliveryDisplayCodeOrNull(operation, feature.phaseDisplayCode);
+  if (typeof feature.title !== 'string' || feature.title.length === 0 || feature.title.length > 512
+    || typeof feature.phaseTitle !== 'string' || feature.phaseTitle.length === 0 || feature.phaseTitle.length > 512) {
+    malformed(operation, 'feature_delivery_display_invalid');
+  }
+  if (feature.branchName !== null && (typeof feature.branchName !== 'string' || feature.branchName.length === 0
+    || feature.branchName.length > 255 || /[\x00-\x20\x7f~^:?*\[\\]/.test(feature.branchName)
+    || feature.branchName.includes('..') || feature.branchName.includes('@{'))) {
+    malformed(operation, 'feature_delivery_display_invalid');
+  }
   requireStableId(operation, feature.featureId);
   if (!(FEATURE_STATUSES as readonly unknown[]).includes(feature.status)) {
     malformed(operation, 'feature_delivery_feature_status_invalid');
@@ -6169,6 +6262,52 @@ export function validateFeatureDeliveryDetailResultWire(
   requireStableIdOrNull(operation, identities.batchId);
   requireStableIdOrNull(operation, identities.verificationBatchId);
   requireStableIdOrNull(operation, identities.gitOperationId);
+  // P08 / F-013：DAG 交付上下文（冻结起点/前置交付/集成身份与后继阻塞）。
+  const dag = requirePlain(operation, object.dag);
+  exactKeys(operation, dag, ['frozenBaseCommit', 'predecessors', 'integrations', 'successors']);
+  if (dag.frozenBaseCommit !== null && (typeof dag.frozenBaseCommit !== 'string'
+    || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(dag.frozenBaseCommit))) {
+    malformed(operation, 'feature_delivery_dag_invalid');
+  }
+  if (!Array.isArray(dag.predecessors) || dag.predecessors.length > 128
+    || !Array.isArray(dag.integrations) || dag.integrations.length > 128
+    || !Array.isArray(dag.successors) || dag.successors.length > 128) {
+    malformed(operation, 'feature_delivery_dag_invalid');
+  }
+  for (const raw of dag.predecessors as unknown[]) {
+    const predecessor = requirePlain(operation, raw);
+    exactKeys(operation, predecessor, ['featureId', 'displayCode', 'title', 'commitSha', 'evidenceId', 'evidenceDigest']);
+    requireStableId(operation, predecessor.featureId);
+    requireDeliveryDisplayCodeOrNull(operation, predecessor.displayCode);
+    requireNonEmptyString(operation, predecessor.title, 'feature_delivery_dag_invalid');
+    if (predecessor.commitSha !== null && (typeof predecessor.commitSha !== 'string'
+      || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(predecessor.commitSha))) malformed(operation, 'feature_delivery_dag_invalid');
+    if (predecessor.evidenceId !== null) requireStableId(operation, predecessor.evidenceId);
+    if (predecessor.evidenceDigest !== null) requireSha256Hex(operation, predecessor.evidenceDigest, 'feature_delivery_dag_invalid');
+  }
+  for (const raw of dag.integrations as unknown[]) {
+    const integration = requirePlain(operation, raw);
+    exactKeys(operation, integration, ['integrationId', 'status', 'inputDigest', 'targetBaseline', 'mergeOrder', 'commitSha', 'evidenceId']);
+    requireStableId(operation, integration.integrationId);
+    if (!(INTEGRATION_PLAN_STATUSES as readonly unknown[]).includes(integration.status)) malformed(operation, 'feature_delivery_dag_invalid');
+    requireSha256Hex(operation, integration.inputDigest, 'feature_delivery_dag_invalid');
+    if (typeof integration.targetBaseline !== 'string'
+      || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(integration.targetBaseline)) malformed(operation, 'feature_delivery_dag_invalid');
+    requireStringArrayWire(operation, integration.mergeOrder, 'feature_delivery_dag_invalid');
+    if (integration.commitSha !== null && (typeof integration.commitSha !== 'string'
+      || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(integration.commitSha))) malformed(operation, 'feature_delivery_dag_invalid');
+    if (integration.evidenceId !== null) requireStableId(operation, integration.evidenceId);
+  }
+  for (const raw of dag.successors as unknown[]) {
+    const successor = requirePlain(operation, raw);
+    exactKeys(operation, successor, ['featureId', 'displayCode', 'title', 'integrationId', 'status', 'blockReasons']);
+    requireStableId(operation, successor.featureId);
+    requireDeliveryDisplayCodeOrNull(operation, successor.displayCode);
+    requireNonEmptyString(operation, successor.title, 'feature_delivery_dag_invalid');
+    if (successor.integrationId !== null) requireStableId(operation, successor.integrationId);
+    if (successor.status !== null && !(INTEGRATION_PLAN_STATUSES as readonly unknown[]).includes(successor.status)) malformed(operation, 'feature_delivery_dag_invalid');
+    requireStringArrayWire(operation, successor.blockReasons, 'feature_delivery_dag_invalid');
+  }
   return object as unknown as FeatureDeliveryDetailResult;
 }
 

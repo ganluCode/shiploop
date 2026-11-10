@@ -19,5 +19,6 @@
 // P07 closeout：v64 持久 Feature 自动收尾 ledger。
 // Production operations v65; Task languages v66.
 // Managed documents v68; persistent notification display aliases v69.
-export const currentSchemaVersion = 70;
+// P08 / F-012：Phase 交付批准追加 phase_revision/dag_digest（v71）；当时未同步本常量，F-013 补齐。
+export const currentSchemaVersion = 71;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

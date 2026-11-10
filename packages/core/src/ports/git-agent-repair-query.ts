@@ -1,4 +1,5 @@
 import type { GitAgentRepairView } from './git-agent-repair-store.js';
+import type { PublicDeliveryEntityDisplay } from './delivery-display-context.js';
 import type { GitOperationDetailResult, PublicGitOperationRecord } from './git-operation-query.js';
 import { WIRE_MESSAGE_SCHEMA_VERSION } from './commands.js';
 import type { PlanListRequest, PlanListResultBase } from './queries.js';
@@ -51,6 +52,8 @@ export interface PublicGitAgentRepairRecord {
   readonly attempts: readonly PublicGitAgentRepairAttempt[];
   readonly sourceOperation: PublicGitOperationRecord | null;
   readonly candidateOperation: PublicGitOperationRecord | null;
+  /** F-013（P08 DAG）：目标 Feature 展示上下文（应用层装配；未装配时缺省）。 */
+  readonly featureDisplay?: PublicDeliveryEntityDisplay | null;
 }
 
 export interface GitAgentRepairListResult extends PlanListResultBase {
@@ -74,6 +77,7 @@ export function toPublicGitAgentRepairRecord(
   view: GitAgentRepairView,
   sourceOperation: PublicGitOperationRecord | null = null,
   candidateOperation: PublicGitOperationRecord | null = null,
+  featureDisplay: PublicDeliveryEntityDisplay | null = null,
 ): PublicGitAgentRepairRecord {
   return {
     repairId: view.receipt.repairId,
@@ -118,6 +122,7 @@ export function toPublicGitAgentRepairRecord(
     })),
     sourceOperation,
     candidateOperation,
+    featureDisplay,
   };
 }
 

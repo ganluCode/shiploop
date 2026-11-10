@@ -32,6 +32,10 @@ import {
   FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
 } from './execution-store.js';
 import {
+  INTEGRATION_PLAN_STATUS_EVENT_TYPE,
+  GIT_REPAIR_STATUS_EVENT_TYPE,
+} from './events.js';
+import {
   isPlainObject,
   requirePlainObject,
   rejectUnknownKeys,
@@ -542,7 +546,9 @@ export const NOTIFICATION_SUMMARY_SCHEMA_VERSION = 1 as const;
  * - task.terminal：Task 终态（含失败/取消）；
  * - task.action_required：需人处理（人工审批阻塞）；
  * - execution.run.ended：Run 结束（含失败）；
- * - feature.finalized / feature.finalization_blocked：Feature 最终交付完成/受阻。
+ * - feature.finalized / feature.finalization_blocked：Feature 最终交付完成/受阻；
+ * - integration.plan.updated / git.repair.updated（P08 / F-013）：DAG 集成
+ *   pending/succeeded/failed/manual hold 与 GitAgent 修复/获准修复结果。
  * execution.batch.ended 等其余白名单事件是非订阅事件：扫描位置照常推进，
  * 不产生 delivery；新订阅类型经端口版本化扩展，不猜下游渠道。
  */
@@ -553,6 +559,8 @@ export const NOTIFICATION_SUBSCRIPTION_EVENT_TYPES = [
   EXECUTION_RUN_TERMINAL_EVENT_TYPE,
   FEATURE_FINALIZED_EVENT_TYPE,
   FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
+  INTEGRATION_PLAN_STATUS_EVENT_TYPE,
+  GIT_REPAIR_STATUS_EVENT_TYPE,
 ] as const;
 export type NotificationSubscriptionEventType = (typeof NOTIFICATION_SUBSCRIPTION_EVENT_TYPES)[number];
 
@@ -634,8 +642,7 @@ export function deriveNotificationSummary(
         featureId: payload.featureId,
       };
     }
-    case FEATURE_FINALIZED_EVENT_TYPE:
-    case FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE: {
+    case FEATURE_FINALIZED_EVENT_TYPE:    case FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE: {
       const blocked = event.type === FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE;
       if (!blocked && (event.payload as { finalized?: true }).finalized === true) {
         return { schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION, kind: 'feature_finalized', featureId: aggregateId };
@@ -654,6 +661,32 @@ export function deriveNotificationSummary(
         runId: payload.runId,
         batchId: payload.batchId,
         operationId: payload.operationId,
+      };
+    }
+    case INTEGRATION_PLAN_STATUS_EVENT_TYPE: {
+      const payload = event.payload as {
+        integrationId: string; successorFeatureId: string; status: string;
+        blockReasons: string[]; staleReasons: string[];
+      };
+      return {
+        schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION,
+        kind: 'integration_status',
+        integrationId: payload.integrationId,
+        successorFeatureId: payload.successorFeatureId,
+        status: payload.status,
+        blockReasons: payload.blockReasons,
+        staleReasons: payload.staleReasons,
+      };
+    }
+    case GIT_REPAIR_STATUS_EVENT_TYPE: {
+      const payload = event.payload as { repairId: string; featureId: string; status: string; reason: string | null };
+      return {
+        schemaVersion: NOTIFICATION_SUMMARY_SCHEMA_VERSION,
+        kind: 'git_repair_status',
+        repairId: payload.repairId,
+        featureId: payload.featureId,
+        status: payload.status,
+        reason: payload.reason,
       };
     }
     default:

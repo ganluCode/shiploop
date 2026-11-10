@@ -25,6 +25,7 @@
  *   不导入 Git、SDK、HTTP 或 ORM。真实 SQLite 读取实现在 adapters 层。
  */
 import type { ConfirmedGitIdentity, RuntimeSourceAuditRecord } from './delivery-policy.js';
+import type { PublicDeliveryEntityDisplay } from './delivery-display-context.js';
 import type {
   FeatureDeliveryStatus,
   GitOperationEvidenceRef,
@@ -99,6 +100,11 @@ export interface PublicGitOperationRecord {
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /**
+   * F-013（P08 DAG）：目标 Feature 展示上下文（稳定层级编码/名称/branchName；
+   * 由应用层经展示读取端口装配；未装配时缺省，不阻塞既有字段）。
+   */
+  readonly featureDisplay?: PublicDeliveryEntityDisplay | null;
 }
 
 export interface PublicGitIntegrationView {

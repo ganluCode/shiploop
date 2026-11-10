@@ -2141,6 +2141,18 @@ export function createSqlitePlanAccess(
         featureIds: new Set(featureRows.map((row) => row.id)),
         edges: edgeRows.map((row) => ({ featureId: row.feature_id, dependsOnId: row.depends_on_id })),
       });
+      // F-013（P08 DAG）：同事务读取稳定层级展示编码（display-only 别名）。
+      const phaseCodeRow = db
+        .prepare<[string, string], { code: string }>(
+          "SELECT code FROM entity_display_codes WHERE project_id = ? AND entity_kind = 'phase' AND entity_id = ?",
+        )
+        .get(validProjectId, validPhaseId);
+      const featureCodeRows = db
+        .prepare<[string, string], { entity_id: string; code: string }>(
+          "SELECT entity_id, code FROM entity_display_codes WHERE project_id = ? AND entity_kind = 'feature' AND parent_id = ?",
+        )
+        .all(validProjectId, validPhaseId) as { entity_id: string; code: string }[];
+      const featureDisplayCodes = new Map<string, string>(featureCodeRows.map(row => [row.entity_id, row.code]));
       return {
         phase: phaseFromRow(phaseRow),
         features: featureRows.map(featureFromRow),
@@ -2158,6 +2170,8 @@ export function createSqlitePlanAccess(
         activeFeatureIds: activeRows.map((row) => row.feature_id),
         nodeIntegrationEvidence: evidence.nodeEvidence,
         edgeIntegrationEvidence: evidence.edgeEvidence,
+        phaseDisplayCode: phaseCodeRow?.code ?? null,
+        featureDisplayCodes,
       };
     });
   }

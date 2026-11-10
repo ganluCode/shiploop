@@ -64,6 +64,8 @@ import {
   EXECUTION_BATCH_RESUMED_EVENT_TYPE,
   GIT_OPERATION_REGISTERED_EVENT_TYPE,
   GIT_OPERATION_SETTLED_EVENT_TYPE,
+  INTEGRATION_PLAN_STATUS_EVENT_TYPE,
+  GIT_REPAIR_STATUS_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -218,6 +220,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // P03-8 / F-002：受控 Git 操作意图登记与终态回执（聚合为 Git operation）。
       GIT_OPERATION_REGISTERED_EVENT_TYPE,
       GIT_OPERATION_SETTLED_EVENT_TYPE,
+      // P08 / F-013：DAG 集成与 GitAgent 修复状态事件（通知订阅）。
+      INTEGRATION_PLAN_STATUS_EVENT_TYPE,
+      GIT_REPAIR_STATUS_EVENT_TYPE,
       'work.recovery.updated',
       'work.recovery.blocked',
     ]);

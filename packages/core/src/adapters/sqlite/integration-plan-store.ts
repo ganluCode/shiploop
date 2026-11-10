@@ -16,6 +16,7 @@ import type {
   PersistedIntegrationPlan,
 } from '../../ports/integration-plan-store.js';
 import { validateStableId } from '../../ports/validation.js';
+import { INTEGRATION_PLAN_STATUS_EVENT_TYPE } from '../../ports/events.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 
@@ -255,6 +256,31 @@ export function createSqliteIntegrationPlanAccess(
     return recordFromRow(db, row, operation);
   }
 
+  /**
+   * F-013（P08 DAG）：同事务状态事件（通知订阅）。只在真实转换边界调用；
+   * payload 仅冻结身份与受控状态/原因，不含路径/凭据/策略正文。
+   */
+  function appendStatusEvent(record: PersistedIntegrationPlan): void {
+    assertTransaction(db, `${OPERATION}.appendStatusEvent`);
+    const sequence = (db.prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events').get()?.next ?? 1);
+    db.prepare(
+      `INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at)
+       VALUES (?, ?, 1, ?, ?, ?, ?, 'integration_plan', ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(), record.updatedAtUtcMs, record.updatedAtUtcMs, record.projectId, sequence,
+      INTEGRATION_PLAN_STATUS_EVENT_TYPE, record.integrationId, record.revision,
+      JSON.stringify({
+        schemaVersion: 1,
+        integrationId: record.integrationId,
+        successorFeatureId: record.successorFeatureId,
+        status: record.status,
+        blockReasons: record.blockReasons,
+        staleReasons: record.staleReasons,
+      }),
+      record.updatedAtUtcMs,
+    );
+  }
+
   function createInTransaction(raw: unknown): PersistedIntegrationPlan {
     const operation = `${OPERATION}.create`;
     assertTransaction(db, operation);
@@ -289,7 +315,10 @@ export function createSqliteIntegrationPlanAccess(
       if (constraintKind(error)) throw new StorageError('conflict', operation, '集成计划身份已存在或归属约束冲突', { entity: entity(plan.projectId, plan.integrationId), cause: error });
       throw error;
     }
-    return getInTransaction(plan.projectId, plan.integrationId);
+    const created = getInTransaction(plan.projectId, plan.integrationId);
+    // F-013：创建即首次状态事件（dependency_passed 或 blocked）。
+    appendStatusEvent(created);
+    return created;
   }
 
   function freezeInTransaction(raw: unknown): PersistedIntegrationPlan {
@@ -367,7 +396,10 @@ export function createSqliteIntegrationPlanAccess(
       result === null ? null : JSON.stringify(next.integrationResult), next.status, JSON.stringify(next.blockReasons), JSON.stringify(next.staleReasons), now(), projectId, integrationId, expectedRevision,
     );
     if (changed.changes !== 1) throw new StorageError('conflict', operation, '集成结果 revision CAS 未命中', { entity: entity(projectId, integrationId), details: { expectedRevision, actualRevision: current.revision } });
-    return getInTransaction(projectId, integrationId);
+    const updated = getInTransaction(projectId, integrationId);
+    // F-013：结果写入即状态转换事件（integration_passed/blocked 等）。
+    appendStatusEvent(updated);
+    return updated;
   }
 
   function updateStatusInTransaction(raw: unknown): PersistedIntegrationPlan {
@@ -391,7 +423,10 @@ export function createSqliteIntegrationPlanAccess(
     const changed = db.prepare('UPDATE integration_plans SET status = ?, block_reasons = ?, stale_reasons = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?')
       .run(value.status, JSON.stringify(value.blockReasons), JSON.stringify(value.staleReasons), now(), projectId, integrationId, expectedRevision);
     if (changed.changes !== 1) throw new StorageError('conflict', operation, '集成计划状态 revision CAS 未命中', { entity: entity(projectId, integrationId), details: { expectedRevision, actualRevision: current.revision } });
-    return getInTransaction(projectId, integrationId);
+    const updated = getInTransaction(projectId, integrationId);
+    // F-013：同状态幂等重放不产生新事件；真实转换才发通知事件。
+    appendStatusEvent(updated);
+    return updated;
   }
 
   return {
