@@ -97,5 +97,7 @@ export interface IntegrationMergeOutcome extends IntegrationWorkspaceOutcome {
 export interface IntegrationWorkspaceAdapter {
   prepare(input: IntegrationWorkspacePrepareInput): Promise<IntegrationWorkspaceOutcome>;
   merge(workspace: IntegrationWorkspaceHandle): Promise<IntegrationMergeOutcome>;
+  /** Trusted recovery only: adopt a reconciled, stopped workspace without replaying any Git write. */
+  resume?(input: IntegrationWorkspacePrepareInput, workspace: IntegrationWorkspaceHandle): Promise<IntegrationWorkspaceOutcome>;
   cleanup(workspace: IntegrationWorkspaceHandle): Promise<IntegrationWorkspaceOutcome>;
 }

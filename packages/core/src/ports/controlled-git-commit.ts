@@ -2,7 +2,21 @@ import type { GitOperationRegisterInput, GitOperationRecord } from './git-operat
 import type { ConfirmedGitIdentity } from './delivery-policy.js';
 import type { WorkspaceBaseline } from './workspace.js';
 import type { WorkspaceContentEntry } from './workspace-inspector.js';
+import type { FeatureResourceLeaseRecord } from './feature-resources.js';
+import type { CommandProcessIdentity } from './command-process.js';
 import type { WorkResourceIdentity } from './work-resources.js';
+
+/** Real integration/repair delegation; it never fabricates the three Task workspace leases. */
+export interface IntegrationCommitResourceSnapshot {
+  readonly identity: WorkResourceIdentity;
+  readonly invocationId: string | null;
+  readonly processIdentity: CommandProcessIdentity | null;
+  readonly leases: readonly FeatureResourceLeaseRecord[];
+}
+export interface IntegrationCommitResourceFence {
+  read(request: GitCommitRequest, identity: WorkResourceIdentity): IntegrationCommitResourceSnapshot;
+  verifyStopped(snapshot: IntegrationCommitResourceSnapshot): Promise<boolean>;
+}
 
 /** Issued by trusted Core orchestration, never deserialized from a Runtime/Host payload.
  * readAuthorization must re-read current verification, approval, policy, permission and

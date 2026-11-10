@@ -3186,3 +3186,35 @@ export const featureDocumentSources = sqliteTable('feature_document_sources', {
   foreignKey({ columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
   foreignKey({ columns: [table.projectId, table.path], foreignColumns: [managedDocumentSources.projectId, managedDocumentSources.path] }).onDelete('restrict'),
   check('feature_document_sources_role_check', sql`${table.role} IN ('prd','design','architecture','product','index')`)]);
+
+/** v72: one immutable coding baseline per explicitly authorized, not-yet-started Run. */
+export const runExecutionBaselines = sqliteTable('run_execution_baselines', {
+  projectId: text('project_id').notNull(), runId: text('run_id').notNull(), featureId: text('feature_id').notNull(), batchId: text('batch_id').notNull(),
+  repositoryBindingId: text('repository_binding_id').notNull(), bindingRevision: integer('binding_revision').notNull(),
+  repoIdentity: text('repo_identity').notNull(), baseCommit: text('base_commit').notNull(),
+  integrationId: text('integration_id').notNull(), planRevision: integer('plan_revision').notNull(),
+  authorizationDigest: text('authorization_digest').notNull(), inputDigest: text('input_digest').notNull(), createdAt: integer('created_at').notNull(),
+}, table => [primaryKey({ columns: [table.projectId, table.runId] }),
+  foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.integrationId], foreignColumns: [integrationPlans.projectId, integrationPlans.id] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.repositoryBindingId], foreignColumns: [repositoryBindings.projectId, repositoryBindings.id] }).onDelete('restrict'),
+]);
+
+/** Admission and process evidence only; Git operations/plans remain lifecycle authorities. */
+export const integrationExecutionClaims = sqliteTable('integration_execution_claims', {
+  projectId: text('project_id').notNull(), operationId: text('operation_id').notNull(), runId: text('run_id').notNull(), sourcePlanId: text('source_plan_id').notNull(),
+  ownerId: text('owner_id').notNull(), ownerVersion: integer('owner_version').notNull(), intent: text('intent').notNull(), admission: text('admission').notNull(),
+  verificationStarted: integer('verification_started').notNull().default(0), verificationResult: text('verification_result'),
+  revision: integer('revision').notNull().default(1), reason: text('reason'), createdAt: integer('created_at').notNull(),
+}, table => [primaryKey({ columns: [table.projectId, table.operationId] }),
+  uniqueIndex('integration_execution_claims_run_unique').on(table.projectId, table.runId),
+  foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.sourcePlanId], foreignColumns: [integrationPlans.projectId, integrationPlans.id] }).onDelete('restrict'),
+]);
+
+export const integrationProcesses = sqliteTable('integration_processes', {
+  projectId: text('project_id').notNull(), operationId: text('operation_id').notNull(), launchId: text('launch_id').notNull(),
+  processIdentity: text('process_identity').notNull(), stopped: integer('stopped').notNull().default(0), createdAt: integer('created_at').notNull(),
+}, table => [primaryKey({ columns: [table.projectId, table.operationId, table.launchId] }),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [integrationExecutionClaims.projectId, integrationExecutionClaims.operationId] }).onDelete('restrict'),
+]);

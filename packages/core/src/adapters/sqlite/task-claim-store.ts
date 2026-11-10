@@ -14,6 +14,7 @@ import type { MaintenanceWriteGate } from '../../ports/data-maintenance.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
+import { readRunExecutionBaseline } from './run-execution-baseline.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteWorkResourceAccess } from './work-resources.js';
 import { createSqliteStateAccess } from './state-store.js';
@@ -109,6 +110,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
           if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid claim clock');
           if (valid.leaseUntilUtcMs <= now) throw new StorageError('validation', operation, 'Expired new claim lease');
           const view = dag.readTaskDagView(valid.projectId, valid.runId);
+          if(view.run.inputSnapshot.integrationAuthorization !== undefined && !readRunExecutionBaseline(db,view.run)) fail('not_ready',{eligibility:'integration_pending'});
           if (view.run.pauseRequestedAtUtcMs !== null) fail('not_ready', { eligibility: 'run_control_blocked' });
           if (view.batch.pauseRequestedAtUtcMs !== null) fail('not_ready', { eligibility: 'batch_control_blocked' });
           const task = view.plan.tasks.find(t => t.id === valid.taskId);
@@ -125,9 +127,13 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
             fail(reason === 'resource_busy' ? 'resource_busy' : 'not_ready', { eligibility: reason });
           }
           const snapshot = valid.inputSnapshot;
-          const approval = view.batch.configSnapshot.approval as Record<string, unknown>;
-          const strategies = view.batch.configSnapshot.tasks as { taskId: string; digest: string }[];
-          const permissions = view.batch.configSnapshot.permissions as { taskId: string; digest: string }[];
+          const memberApproval=Array.isArray(view.batch.configSnapshot.members)
+            ? (view.batch.configSnapshot.members as {featureId:string;approval?:Record<string,unknown>}[]).find(member=>member.featureId===view.run.featureId)?.approval : undefined;
+          const approval = memberApproval ?? view.batch.configSnapshot.approval as Record<string, unknown>;
+          const strategies = (view.batch.configSnapshot.tasks as { taskId: string; digest: string; featureId?:string }[])
+            .filter(entry=>entry.featureId===undefined||entry.featureId===view.run.featureId);
+          const permissions = (view.batch.configSnapshot.permissions as { taskId: string; digest: string; featureId?:string }[])
+            .filter(entry=>entry.featureId===undefined||entry.featureId===view.run.featureId);
           if (snapshot.projectId !== valid.projectId || snapshot.featureId !== view.plan.feature.id
             || snapshot.taskId !== valid.taskId || snapshot.approval.planDigest !== approval.planDigest
             || snapshot.approval.decisionId !== approval.decisionId

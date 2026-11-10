@@ -48,19 +48,24 @@ export function evaluateTaskDag(view: TaskDagView, nowMs: number): TaskDagResult
     const batchScope = object(batch.scopeSnapshot);
     const config = object(batch.configSnapshot);
     input = object(run.inputSnapshot);
-    approval = object(config.approval);
+    const members = ids(batchScope.featureIds);
+    const member = Array.isArray(config.members) ? config.members.map(object).find(row => row.featureId === feature.id) : undefined;
+    approval = member?.approval === undefined ? object(config.approval) : object(member.approval);
     if (input.schemaVersion !== 1 || batchScope.schemaVersion !== 1 || config.schemaVersion !== 1
-      || !equal(ids(batchScope.featureIds), [feature.id])
+      || !members.includes(feature.id)
       || run.scopeDigest !== batchScope.previewDigest || input.previewDigest !== run.scopeDigest
-      || run.featureId !== feature.id || batch.featureId !== feature.id || batch.phaseId !== feature.phaseId
+      || run.featureId !== feature.id || batch.phaseId !== feature.phaseId
       || batch.projectId !== run.projectId || run.purpose !== 'execute') throw new Error('snapshot_mismatch');
     if (!Array.isArray(config.tasks)) throw new Error('invalid_scope');
-    configTasks = config.tasks.map(object);
+    configTasks = config.tasks.map(object).filter(row => members.length === 1 || row.featureId === feature.id)
+      .map(row => ({ taskId: row.taskId, digest: row.digest }));
     scope = ids(configTasks.map(t => t.taskId));
     const codingIds = plan.tasks.filter(t => facts.get(t.id)?.kind === 'coding').map(t => t.id);
     if (!equal(sorted(scope), sorted(codingIds))) throw new Error('scope_membership_mismatch');
-    if (!Array.isArray(config.permissions) || config.permissions.some(p => !/^[0-9a-f]{64}$/.test(String(object(p).digest)))
-      || !equal(sorted(ids(config.permissions.map(p => object(p).taskId))), sorted(scope))) {
+    const permissions = Array.isArray(config.permissions) ? config.permissions.map(object)
+      .filter(row => members.length === 1 || row.featureId === feature.id) : null;
+    if (!permissions || permissions.some(p => !/^[0-9a-f]{64}$/.test(String(p.digest)))
+      || !equal(sorted(ids(permissions.map(p => p.taskId))), sorted(scope))) {
       throw new Error('permissions_scope_mismatch');
     }
     if (!/^[0-9a-f]{64}$/.test(String(approval.checkPolicyDigest)) || typeof approval.decisionId !== 'string') {

@@ -290,6 +290,7 @@ import { createSqliteGitAgentRepairStore } from './sqlite/git-agent-repair-store
 import { createSqliteGitAgentRepairQueryStore } from './sqlite/git-agent-repair-query-store.js';
 import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
+import { assembleDagIntegration } from './dag-integration.js';
 import { createIntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
 import type { IntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
@@ -483,6 +484,7 @@ export interface CoreApplication {
   readonly integrationPlanControl: IntegrationPlanControlService;
   /** P05-6：Feature 交付事件后的低延迟重评估与 SQLite 有界补偿扫描。 */
   readonly integrationPlanScheduler?: IntegrationPlanScheduler;
+  readonly dagIntegration: ReturnType<typeof assembleDagIntegration>;
   readonly gitAgentRepair: GitAgentRepairService;
   /**
    * P05-1 / F-011：规划上下文/候选只读授权查询（planning.contexts.list /
@@ -1020,11 +1022,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const executionBaselineAuthority: ExecutionBaselineAuthority = createExecutionBaselineAuthority({
       approvedPlanningBaseline: approvedPlanningBaselineForFeature,
     });
+    let dagIntegration: ReturnType<typeof assembleDagIntegration> | undefined;
     // P03-3 / F-004：单 Feature 执行 prepare 预览服务（只读预览：一致读视图 +
     // 受控仓库检查；授权与纯校验先于仓库/制品 I/O；不创建执行实体、不扣预算；
     // 权限面沿用 P03-2 生产缺省空集边界宣告，运行时授权面随后续阶段引入时
     // 替换为真实权威读取并保持同一重核契约）。
     const executionPreview: ExecutionPreviewPort = createExecutionPreviewService({
+      integrationCapabilities: () => dagIntegration!.capabilities(),
       views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inspector: repositoryInspector,
       workspace: createBaselineWorkspaceReader(),
@@ -1045,6 +1049,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       assertCanDispatch() {
         if (startupRecovery.blocked()) throw new PublicError('resource_busy', 'execution.start', undefined,
           { details: { reason: 'startup_recovery' } });
+      },
+      integrationBaseline(projectId, featureId) {
+        const row=session.database.prepare('SELECT phase_id FROM features WHERE project_id=? AND id=?').get(projectId,featureId) as {phase_id:string}|undefined;
+        if(!row)throw new PublicError('not_found','execution.start');
+        const dependencies=session.database.prepare('SELECT depends_on_id FROM feature_dependencies WHERE project_id=? AND feature_id=? ORDER BY depends_on_id')
+          .all(projectId,featureId) as {depends_on_id:string}[];
+        if(!dependencies.length)return null;
+        return executionBaselineAuthority.resolve({projectId,featureId,phaseId:row.phase_id,dependencyFeatureIds:dependencies.map(edge=>edge.depends_on_id),
+          currentHeadCommit:null,integrationPlans:integrationPlanStore.listIntegrationPlansByPhase(projectId,row.phase_id)});
       },
       preview: executionPreview,
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
@@ -1488,6 +1501,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const verificationStops = createVerificationStopControl();
     const workExecution = assembleWorkExecution({ session,
+      integration: {
+        ensure: (projectId, runId) => dagIntegration!.ensure(projectId,runId),
+        recover: () => dagIntegration!.recover(),
+        enterQuiesce: () => dagIntegration!.enterQuiesce(),
+        awaitQuiesce: budgetMs => dagIntegration!.awaitQuiesce(budgetMs),
+        activeCount: () => dagIntegration!.activeCount(),
+      },
       planningWorkspacePreparer: planningSnapshotWorkspace,
       featureCloseoutFactory: identity => assembleFeatureCloseout({ ...identity, session, resources: workResources,
         artifacts: artifactStore, files: artifactFileStore, publisher: workspacePublisher,
@@ -1517,6 +1537,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       }) });
     /* P07-1 / F-008：受信补回执后恢复状态重评为 complete 时，恢复周期调度
      * （start 幂等；startup 时被 blocked 跳过的定时器在此补启）。 */
+    dagIntegration = assembleDagIntegration({session,dataRoot:basePathService.dataRoot(),artifacts:artifactStore,files:artifactFileStore,
+      publisher:workspacePublisher,processes:workspaceCommandProcess,lock:workspaceGitLock,nowUtcMs,
+      assertCanDispatch() {
+        if(dataRestoreIsolation || startupRecovery.blocked()) throw new PublicError('resource_busy','execution.start',undefined,{details:{reason:'startup_recovery'}});
+        if(workExecution.activeAttemptIds().length>0) throw new PublicError('resource_busy','execution.start',undefined,{details:{reason:'resource_busy'}});
+      },
+      wake:()=>{notificationRuntime.wake();},
+    });
     resumeRecoveryCompletionHook = () => { workExecution.start(); };
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
@@ -1908,6 +1936,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       integrationPlanGeneration,
       integrationPlanScheduler,
       integrationPlanControl,
+      dagIntegration,
       gitAgentRepair,
       executionInputPrepare,
       executionPreview,
@@ -1955,6 +1984,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
         // P07-4 / F-008：确认通知服务不再写入（无在途轮次）后才关闭状态库；
         // 在途未收尾时 conflict 拒绝，保留现场，不吞掉未确认失败。
+        if (dagIntegration!.activeCount()>0) throw new StorageError('conflict','CoreApplication.close','集成执行尚未确认停止');
         notificationRuntime.close();
         session.close();
       },

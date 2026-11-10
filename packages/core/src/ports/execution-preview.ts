@@ -89,7 +89,7 @@ export type ActiveExecutionStatus = (typeof ACTIVE_EXECUTION_STATUSES)[number];
 export const EXECUTION_PREVIEW_PENDING_WORK_TASK_STATUSES = ['pending', 'failed'] as const;
 
 /** 预览状态词汇（冻结）：ready / no_work / blocked。 */
-export const EXECUTION_PREVIEW_STATUSES = ['ready', 'no_work', 'blocked'] as const;
+export const EXECUTION_PREVIEW_STATUSES = ['ready', 'authorization_ready', 'no_work', 'blocked'] as const;
 export type ExecutionPreviewStatus = (typeof EXECUTION_PREVIEW_STATUSES)[number];
 
 /** no_work 原因词汇（冻结）：空范围 / 范围内无待执行工作。 */
@@ -352,8 +352,16 @@ export interface ExecutionPreviewMemberSummary {
   readonly pendingTaskIds: readonly string[];
 }
 
-/** ready 预览摘要：计划/代码/Task 策略/检查/权限/预算与并发政策。 */
+export interface ExecutionScopeAuthorization {
+  readonly deferredFeatureIds: readonly string[];
+  readonly dependencies: readonly { readonly featureId: string; readonly dependsOnId: string; readonly revision: number | null }[];
+  readonly dagDigest: string;
+}
+
+/** ready/authorization_ready summary; coding readiness remains a per-member fact. */
 export interface ExecutionPreviewSummary {
+  readonly integrationCapabilities?: Readonly<Record<'deterministic' | 'verification' | 'recovery' | 'gitAgent', 'available' | 'unsupported'>>;
+  readonly authorization?: ExecutionScopeAuthorization;
   readonly members: readonly ExecutionPreviewMemberSummary[];
   readonly approval: {
     readonly planDigest: string;
@@ -425,6 +433,7 @@ export interface ExecutionPreviewResult {
 
 /** computeExecutionPreviewDigest 输入（与 ExecutionPreviewSummary 同源的最小面）。 */
 export interface ExecutionPreviewDigestInput {
+  readonly authorization?: ExecutionScopeAuthorization;
   readonly projectId: string;
   /** Affiliation is execution scope identity, independent of plan approval. */
   readonly phaseId: string;
@@ -467,6 +476,7 @@ export interface ExecutionPreviewDigestInput {
 export function computeExecutionPreviewDigest(input: ExecutionPreviewDigestInput): string {
   const canonical = stableStringify({
     schemaVersion: EXECUTION_PREVIEW_RESULT_SCHEMA_VERSION,
+    ...(input.authorization === undefined ? {} : { authorization: input.authorization }),
     projectId: input.projectId,
     phaseId: input.phaseId,
     scope: { featureIds: [...input.featureIds] },

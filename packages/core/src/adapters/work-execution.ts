@@ -117,6 +117,7 @@ export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
 };
 
 export function assembleWorkExecution(options: {
+  readonly integration?: { ensure(projectId:string,runId:string): Promise<void>; scan?():Promise<void>; enterQuiesce?():{accepted:number}; awaitQuiesce?(budgetMs:number):Promise<{confirmed:boolean;pending:readonly string[]}>; recover?():Promise<void>; activeCount?():number };
   readonly session: SqliteStorageSession;
   readonly application: Pick<CoreApplication, 'dataRoot' | 'artifactStore' | 'artifactFileStore' | 'stateStore' |
     'configurationService' | 'projectResourceService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare' | 'planningInputPrepare'> & {
@@ -828,7 +829,7 @@ export function assembleWorkExecution(options: {
     } }),
     claims: app.taskClaims,
     admission: { check: ref => finalizationAdmission(ref.projectId) },
-    beforeRun: ref => { settleRun(ref.projectId, ref.runId); },
+    beforeRun: async ref => { settleRun(ref.projectId, ref.runId); await options.integration?.ensure(ref.projectId,ref.runId); },
     ...(options.finalizationExecution === undefined ? {} : {
       finalization: {
         async execute(handoff: { readonly projectId: string; readonly runId: string }) {
@@ -870,6 +871,7 @@ export function assembleWorkExecution(options: {
       }
       if (quiescing || options.startupRecovery.blocked()) throw new PublicError('resource_busy', 'execution.start');
       const projectId = candidate.run.projectId;
+      await options.integration?.ensure(projectId,candidate.run.id);
       const view = dag.readTaskDagView(projectId, candidate.run.id);
       const task = view.plan.tasks.find(task => task.id === taskId)!;
       const config = validateTaskExecutionConfig(task.executionConfig, 'WorkRuntime.prepare');
@@ -1060,7 +1062,7 @@ export function assembleWorkExecution(options: {
   return {
     scan,
     enterRecovery: () => options.startupRecovery.enter(),
-    recover: () => options.startupRecovery.recover(),
+    recover: async () => { await options.integration?.recover?.(); return options.startupRecovery.recover(); },
     recoveryState: () => options.startupRecovery.state(),
     start() { if (options.runtimeFactory && !options.startupRecovery.blocked()) scheduler.start(); },
     signalRunDispatched(input: { projectId: string; runId: string }) {
@@ -1102,10 +1104,11 @@ export function assembleWorkExecution(options: {
         settlement: settlementNotes.get(runKey(projectId, runId)) ?? null };
     },
     activeAttemptIds() { return pending(); },
-    enterQuiesce() { quiescing = true; return { accepted: pending().length }; },
+    enterQuiesce() { quiescing = true; const integration=options.integration?.enterQuiesce?.(); return { accepted: pending().length + (integration?.accepted ?? 0) }; },
     async awaitQuiesce(budgetMs: number) {
       const result = await observeWithin(this.close(), Math.max(1, budgetMs));
-      return { confirmed: result?.closed === true, pending: result?.pendingAttemptIds ?? pending() };
+      const integration = options.integration?.awaitQuiesce ? await options.integration.awaitQuiesce(budgetMs) : { confirmed:true,pending:[] as readonly string[] };
+      return { confirmed: result?.closed === true && integration.confirmed, pending: [...(result?.pendingAttemptIds ?? pending()), ...integration.pending] };
     },
     async close() {
       quiescing = true;
@@ -1115,7 +1118,8 @@ export function assembleWorkExecution(options: {
       await scheduler.close();
       const result = await execution.close();
       const pendingAttemptIds = [...new Set([...pending(), ...result.pendingAttemptIds])];
-      closed = result.closed && pendingAttemptIds.length === 0;
+      const integration = options.integration?.awaitQuiesce ? await options.integration.awaitQuiesce(1000) : {confirmed:true};
+      closed = result.closed && pendingAttemptIds.length === 0 && integration.confirmed;
       return { closed, pendingAttemptIds };
     },
     isClosed() { return closed; },

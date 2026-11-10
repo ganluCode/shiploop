@@ -68,7 +68,7 @@ export function createNodeIntegrationVerificationExecutor(options: IntegrationVe
     };
     const baseline: WorkspaceBaseline = { repositoryBindingId: grant.bindingId, repositoryBindingRevision: grant.bindingRevision,
       canonicalPath: workspace.path, gitCommonDir: workspace.gitCommonDir, repoIdentity: workspace.repoIdentity,
-      branch: '', baseCommit: workspace.targetBase };
+      branch: 'HEAD', baseCommit: workspace.targetBase };
     options.assertOutsideTransaction();
     const git = options.driverFor(input.projectId).open(baseline, () => options.assertOutsideTransaction());
     let codeDigest: string | undefined;

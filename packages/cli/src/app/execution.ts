@@ -343,7 +343,7 @@ export interface ExecutionPreviewView {
   /** 服务端解析出的固定范围；包含 phase/requested/member 身份与成员快照。 */
   readonly scope: ExecutionPreviewResult['scope'];
   readonly featureIds: readonly string[];
-  readonly status: 'ready' | 'no_work' | 'blocked';
+  readonly status: ExecutionPreviewResult['status'];
   readonly noWorkReason: string | null;
   readonly blocked: readonly unknown[];
   readonly previewDigest: string | null;
@@ -388,7 +388,7 @@ export function buildExecutionPreviewView(
 
 export function formatExecutionPreviewView(view: ExecutionPreviewView): string {
   const marker = view.replayed ? '（replayed）' : '';
-  if (view.status === 'ready') {
+  if (view.status === 'ready' || view.status === 'authorization_ready') {
     const scopeRecord = view.scope as {
       readonly phaseId?: string;
       readonly requestedFeatureIds?: readonly string[];
@@ -408,7 +408,7 @@ export function formatExecutionPreviewView(view: ExecutionPreviewView): string {
     const concurrency = summary?.concurrency?.maxConcurrentWorks ?? 'unknown';
     const deadline = summary?.budget.batch.deadlineUtcMs ?? 'unknown';
     return [
-      `shiploop execution preview: status=ready ${scope}`,
+      `shiploop execution preview: status=${view.status} ${scope}`,
       `  dependencies=${dependencies} baseline=${baselines} concurrency=${String(concurrency)} deadline=${String(deadline)}`,
       `  digest=${String(view.previewDigest)} tasks=${String(summary?.plan.taskCount ?? 0)} pending=${String(summary?.plan.pendingTaskIds.length ?? 0)}`,
       `  （预览不是授权；执行需 execution start --confirm --preview-digest）${marker}`,

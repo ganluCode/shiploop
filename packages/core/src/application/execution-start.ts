@@ -42,6 +42,7 @@
  * 本模块不实现：预算预占/结算与 Task 累计额度记账（F-006..F-008）、Run 生命
  * 周期 CAS（F-008）、预算显式修订（F-009）、查询面（F-010）。
  */
+import { freezeRunWorkspaceAuthorization } from './execution-workspace-authorization.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   PublicError,
@@ -241,7 +242,8 @@ function submitMultiExecutionStart(
   };
   const memberIds = [...prepared.scopeFeatureIds];
   const requestedIds = new Set(envelope.payload.featureIds);
-  if (memberIds.length < 2 || new Set(memberIds).size !== memberIds.length || requestedIds.size !== memberIds.length || memberIds.some((id) => !requestedIds.has(id))) return reject();
+  if (memberIds.length === 0 || new Set(memberIds).size !== memberIds.length
+    || requestedIds.size === 0 || [...requestedIds].some(id => !memberIds.includes(id))) return reject();
   const snapshots = memberIds.map((featureId) => transaction.getFeaturePlan(prepared.projectId, featureId));
   const first = snapshots[0]!.feature;
   const phase = transaction.getPhase(prepared.projectId, prepared.phaseId);
@@ -261,12 +263,13 @@ function submitMultiExecutionStart(
   const strategyEntries: { readonly taskId: string; readonly featureId: string; readonly digest: string }[] = [];
   const permissionEntries: { readonly taskId: string; readonly featureId: string; readonly digest: string }[] = [];
   const inputMap = new Map<string, ExecutionPreviewInputRefSummary>();
-  const facts: Array<{ snapshot: typeof snapshots[number]; pendingTasks: typeof snapshots[number]['tasks']; inputs: ExecutionPreviewInputRefSummary[] }> = [];
+  const facts: Array<{ snapshot: typeof snapshots[number]; pendingTasks: typeof snapshots[number]['tasks']; inputs: ExecutionPreviewInputRefSummary[]; approval: { planDigest: string; checkPolicyDigest: string; decisionId: string | null } }> = [];
   for (const snapshot of snapshots) {
     const validity = evaluatePlanApprovalValidity({ planDigest: snapshot.feature.planDigest, planStatus: snapshot.feature.planStatus, taskCount: snapshot.tasks.length,
       decisions: transaction.listPlanApprovals(prepared.projectId, snapshot.feature.id), currentCheckPolicyDigest: checkPolicyDigest });
     const pendingTasks = snapshot.tasks.filter((task) => task.status === 'pending' || task.status === 'failed');
-    if (!validity.valid || snapshot.feature.planDigest === null || pendingTasks.length === 0) return reject();
+    if (!validity.valid || snapshot.feature.planDigest === null
+      || pendingTasks.length === 0 && (snapshot.feature.status !== 'completed' || snapshot.feature.deliveryStatus !== 'succeeded')) return reject();
     const refs = new Map<string, PlanArtifactRef>();
     for (const ref of [...snapshot.feature.sourceRefs, ...snapshot.tasks.flatMap((task) => [...task.requirementsRefs])]) refs.set(`${ref.artifactId}\u0000${ref.contentHash ?? ''}`, ref);
     const inputs: ExecutionPreviewInputRefSummary[] = [];
@@ -283,7 +286,7 @@ function submitMultiExecutionStart(
     }
     strategyEntries.push(...snapshot.tasks.slice().map((task) => ({ taskId: task.id, featureId: snapshot.feature.id, digest: computeExecutionStrategyCopyDigest({ executionConfig: task.executionConfig, configSource: task.configSource, configSourceKey: task.configSourceKey }) })));
     permissionEntries.push(...snapshot.tasks.slice().map((task) => ({ taskId: task.id, featureId: snapshot.feature.id, digest: computeExecutionPermissionsDigest(readPermissionsFace(deps.permissions, { projectId: prepared.projectId, featureId: snapshot.feature.id, taskId: task.id }).grants) })));
-    facts.push({ snapshot, pendingTasks, inputs });
+    facts.push({ snapshot, pendingTasks, inputs, approval: { planDigest: snapshot.feature.planDigest, checkPolicyDigest, decisionId: validity.currentDecisionId } });
   }
   const strategies = strategyEntries.slice().sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : left.featureId < right.featureId ? -1 : 1).map(({ taskId, digest }) => ({ taskId, digest }));
   const permissions = permissionEntries.slice().sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : left.featureId < right.featureId ? -1 : 1).map(({ taskId, digest }) => ({ taskId, digest }));
@@ -299,20 +302,24 @@ function submitMultiExecutionStart(
   if (transaction.getActivePhaseExecutionBatch(prepared.projectId, phase.id) !== null) throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON);
   const now = (deps.nowMs ?? Date.now)();
   const budget = evaluateBatchBudgetReservation(prepared.budget.batch, { runsCreated: 0, attemptsCreated: 0, runtimeStarts: 0, noProgressRuns: 0 }, now);
-  if (!budget.allowed || memberIds.length > prepared.budget.batch.maxRuns) return reject();
+  const runnableFacts = facts.filter(fact => fact.pendingTasks.length > 0);
+  if (!budget.allowed || runnableFacts.length === 0 || runnableFacts.length > prepared.budget.batch.maxRuns) return reject();
   const batch = transaction.insertExecutionBatch({ projectId: prepared.projectId, phaseId: phase.id, featureId: first.id, batchId: randomUUID(),
-    scopeSnapshot: { schemaVersion: 1, featureIds: memberIds, previewDigest: prepared.previewDigest },
-    configSnapshot: { schemaVersion: 1, approval: { planDigest: prepared.planDigest, checkPolicyDigest }, concurrency: prepared.concurrency, tasks: strategies, permissions,
-      members: snapshots.map((item) => ({ featureId: item.feature.id, revision: item.feature.revision, planDigest: item.feature.planDigest })) },
-    budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, status: 'queued', runsCreated: memberIds.length, reason: null });
+    scopeSnapshot: { schemaVersion: 1, featureIds: memberIds, previewDigest: prepared.previewDigest,
+      ...(prepared.authorization === undefined ? {} : { authorization: prepared.authorization }) },
+    configSnapshot: { schemaVersion: 1, approval: { planDigest: prepared.planDigest, checkPolicyDigest }, concurrency: prepared.concurrency,
+      tasks: strategyEntries, permissions: permissionEntries,
+      members: facts.map(item => ({ featureId: item.snapshot.feature.id, revision: item.snapshot.feature.revision,
+        planDigest: item.snapshot.feature.planDigest, approval: item.approval })) },
+    budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, status: 'queued', runsCreated: runnableFacts.length, reason: null });
   transaction.insertBatchBudgetRevision({ projectId: prepared.projectId, batchId: batch.id, version: 1,
     budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, approvedBy: identity.principalId, reason: 'initial_authorization' });
   const binding = transaction.getRepositoryBinding(prepared.projectId);
   const runIds: string[] = [];
-  for (const fact of facts) {
+  for (const fact of runnableFacts) {
     const workKey = computeExecutionWorkKey({ featureId: fact.snapshot.feature.id, purpose: EXECUTION_RUN_PURPOSE, planDigest: fact.snapshot.feature.planDigest!, inputs: fact.inputs });
     const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE, labels: envelope.payload.retryBatchId === null ? envelope.payload.labels : [],
-      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, binding, prepared.code.headCommit ?? '', prepared.baselines.find((baseline) => baseline.featureId === fact.snapshot.feature.id)?.baseCommit) } },
+      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), ...freezeRunWorkspaceAuthorization(prepared, fact.snapshot.feature.id, binding, () => resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, binding, prepared.code.headCommit ?? '', prepared.baselines.find((baseline) => baseline.featureId === fact.snapshot.feature.id)?.baseCommit)) },
       configSnapshot: { schemaVersion: 1, runLimits: prepared.budget.run }, status: 'queued', scopeDigest: prepared.previewDigest, workKey, dispatchOrdinal: 1,
       maxAttemptsPerRun: prepared.budget.run.maxAttemptsPerRun, runTimeLimitMs: prepared.budget.run.runTimeLimitMs, reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON });
     transaction.appendExecutionEvent({ projectId: prepared.projectId, eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE, aggregateType: 'run', aggregateId: run.id, aggregateRevision: run.revision, payload: { dispatched: true } });
@@ -593,7 +600,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         featureIds: payload.featureIds,
         budget: payload.budget,
       });
-      if (current.status !== 'ready') {
+      if (current.status !== 'ready' && current.status !== 'authorization_ready') {
         return { kind: 'not_startable', currentStatus: current.status };
       }
       if (current.previewDigest === null || current.summary === null) {
@@ -609,6 +616,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       const summary = current.summary;
       return {
         kind: 'fresh',
+        ...(summary.authorization === undefined ? {} : { authorization: summary.authorization }),
         projectId,
         featureId: payload.featureIds[0],
         scopeFeatureIds: 'memberFeatureIds' in current.scope ? [...current.scope.memberFeatureIds] : [payload.featureIds[0]!],
@@ -693,7 +701,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         return rejected('preview_stale');
       }
 
-      if (fresh !== null && fresh.scopeFeatureIds.length > 1) {
+      if (fresh !== null && (fresh.scopeFeatureIds.length > 1 || fresh.authorization !== undefined)) {
         return submitMultiExecutionStart(deps, identity, envelope, transaction, fresh, context, receiptIdentity);
       }
       if (retry !== null && retry.scopeFeatureIds.length > 1) {

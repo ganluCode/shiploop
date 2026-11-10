@@ -34,7 +34,9 @@ export function createSqliteFeatureCloseoutContext(session: SqliteStorageSession
         const plan = tx.getFeaturePlan(projectId, run.featureId);
         if (!plan.tasks.length || plan.tasks.some(task => task.status !== 'passed')) fail('tasks_not_passed');
         const approval = verifyFeaturePlanApprovalInTransaction(tx, projectId, run.featureId);
-        const frozen = batch.configSnapshot.approval as { planDigest?: string; checkPolicyDigest?: string; decisionId?: string } | undefined;
+        const memberApproval = Array.isArray(batch.configSnapshot.members)
+          ? (batch.configSnapshot.members as {featureId:string;approval?:unknown}[]).find(member=>member.featureId===run.featureId)?.approval : undefined;
+        const frozen = (memberApproval ?? batch.configSnapshot.approval) as { planDigest?: string; checkPolicyDigest?: string; decisionId?: string } | undefined;
         if (!approval.validity.valid || !approval.planDigest || frozen?.planDigest !== approval.planDigest
           || frozen.checkPolicyDigest !== approval.checkPolicyDigest
           || (frozen.decisionId !== undefined && frozen.decisionId !== approval.currentDecision?.id)) fail('plan_approval_invalid');

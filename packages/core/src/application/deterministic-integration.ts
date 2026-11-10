@@ -4,7 +4,7 @@ import type { AtomicCommandStore, CommandTransaction } from '../ports/atomic-com
 import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { stableCanonicalJson } from '../ports/command-receipts.js';
-import { evaluateBatchBudgetReservation } from '../ports/execution-budget.js';
+import { existingRunBudgetAllowsIntegration } from './integration-budget.js';
 import { assertIntegrationResourceFence } from './integration-resource-fence.js';
 import type { FeatureResourceLeaseRecord, FeatureResourceSet } from '../ports/feature-resources.js';
 import { validateGitOperationRegisterInput } from '../ports/git-operations.js';
@@ -94,17 +94,11 @@ export function createDeterministicIntegrationService(deps: {
       || binding.canonicalPath !== plan.target.canonicalPath || binding.gitCommonDir !== plan.target.gitCommonDir) fail('repo_identity_changed');
     const run = tx.getExecutionRun(request.projectId, intent.runId);
     const batch = tx.getExecutionBatch(request.projectId, plan.batchId);
-    if (run.batchId !== batch.id || run.featureId !== intent.featureId || batch.featureId !== intent.featureId
+    if (run.batchId !== batch.id || run.featureId !== intent.featureId
+      || !tx.listExecutionBatchMemberFeatureIds(request.projectId, batch.id).includes(intent.featureId)
       || batch.phaseId !== plan.phaseId || !['queued', 'running'].includes(batch.status)
       || !['queued', 'running'].includes(run.status)) fail('execution_not_current');
-    const budget = evaluateBatchBudgetReservation(batch.budgetSnapshot.batch, {
-      runsCreated: batch.runsCreated, attemptsCreated: batch.attemptsCreated,
-      runtimeStarts: batch.runtimeStarts, noProgressRuns: batch.noProgressRuns,
-    }, now());
-    // Deterministic Git does not reserve a model start or a new Run/Attempt.
-    // Existing cumulative ceilings and the original absolute deadlines still gate it.
-    if (!budget.allowed || batch.deadlineAtUtcMs <= now()
-      || run.startedAtUtcMs !== null && run.startedAtUtcMs + run.runTimeLimitMs <= now()) fail('budget_exhausted');
+    if (!existingRunBudgetAllowsIntegration(batch, run, now())) fail('budget_exhausted');
     assertIntegrationResourceFence({ projectId: request.projectId, integrationId: plan.integrationId,
       ownerId: intent.ownerId, ownerVersion: auth.ownerVersion, resourceSet: auth.resourceSet, leases: auth.leases }, now());
     if (original && !isDeepStrictEqual(auth, original)) fail('authorization_changed');

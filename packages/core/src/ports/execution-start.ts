@@ -183,6 +183,7 @@ export interface PreparedExecutionStartNotStartable {
 
 /** 新授权就绪身份：与事务内权威重核比对的一切成分（代码身份来自事务外受控 I/O）。 */
 export interface PreparedExecutionStartFresh {
+  readonly authorization?: import('./execution-preview.js').ExecutionScopeAuthorization;
   readonly kind: 'fresh';
   readonly projectId: string;
   readonly featureId: string;

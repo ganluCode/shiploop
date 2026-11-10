@@ -92,6 +92,32 @@ describe('P05-3 F-003 multi-member execution preview', () => {
     expect(calls.inspect).toBe(1);
   });
 
+  it('[case:dag-authorization-before-integration] authorizes a visible fixed scope while keeping successor coding blocked', async () => {
+    const root = member('feature-a'), successor = member('feature-b');
+    successor.readiness = { ...successor.readiness, ready: false, dependencyCompleted: false,
+      dependencyCompletion: 'pending', dependencyIntegrationReady: false, reason: 'dependency_pending' };
+    const view = { ...scopeView([root, successor]), featureDependencies: [
+      { id: 'edge-1', projectId: 'project-1', phaseId: 'phase-1', featureId: 'feature-b', dependsOnId: 'feature-a', codeBaselineRef: null },
+    ] } as ExecutionPreviewScopeView;
+    const result = await previewWith(view, { inspect: 0 }).previewExecution('project-1', {
+      featureIds: ['feature-a', 'feature-b'], phaseId: null, budget: BUDGET,
+    });
+    expect(result.status).toBe('authorization_ready');
+    expect(result.previewDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.summary?.baselines?.find(row => row.featureId === 'feature-b')?.source).toBe('authorization_pending');
+    expect(result.summary?.members.find(row => row.featureId === 'feature-b')?.readiness.ready).toBe(false);
+    expect(result.blocked).toEqual([{ kind: 'feature_dependency', featureId: 'feature-b', reason: 'dependency_pending' }]);
+  });
+
+  it('[case:dag-authorization-does-not-bypass-approval] a pending dependency cannot hide an unapproved member', async () => {
+    const successor = member('feature-b', false);
+    successor.readiness = { ...successor.readiness, ready: false, reason: 'integration_not_ready' };
+    const result = await previewWith(scopeView([member('feature-a'), successor]), { inspect: 0 })
+      .previewExecution('project-1', { featureIds: ['feature-a', 'feature-b'], budget: BUDGET });
+    expect(result.status).toBe('blocked');
+    expect(result.previewDigest).toBeNull();
+  });
+
   it('[case:member-blocker-no-repository-io] returns a member-associated blocker before repository inspection', async () => {
     const calls = { inspect: 0 };
     const blocked = member('feature-b', false);

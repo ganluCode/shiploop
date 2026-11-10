@@ -58,6 +58,7 @@ import type {
   ExecutionPreviewScopeView,
   ExecutionPreviewMemberView,
   ExecutionPreviewSummary,
+  ExecutionScopeAuthorization,
   ExecutionPreviewTaskPermissions,
   ExecutionPreviewTaskSummary,
   ExecutionPreviewView,
@@ -101,6 +102,7 @@ export const EXECUTION_PREVIEW_IMPACT = Object.freeze({
 
 /** 预览服务装配依赖（全部窄端口/用例；不接触具体适配器）。 */
 export interface ExecutionPreviewServiceDeps {
+  readonly integrationCapabilities?: () => NonNullable<ExecutionPreviewSummary['integrationCapabilities']>;
   readonly views: ExecutionPreviewViewStore;
   readonly inspector: RepositoryInspector;
   readonly workspace: BaselineWorkspaceReader;
@@ -348,8 +350,7 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       let scopeView: ExecutionPreviewScopeView | undefined;
       let legacyView: ExecutionPreviewView | undefined;
       try {
-        if (typeof views.readExecutionPreviewScopeView === 'function' &&
-            (phaseSelector !== null || payload.featureIds.length > 1)) {
+        if (typeof views.readExecutionPreviewScopeView === 'function') {
           scopeView = views.readExecutionPreviewScopeView(projectKey, {
             phaseId: phaseSelector,
             featureIds: [...payload.featureIds],
@@ -470,7 +471,7 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         const readiness = entry.member.readiness;
         if (readiness.reason === 'dependency_pending' || readiness.reason === 'dependency_failed') {
           blocked.push({ kind: 'feature_dependency', featureId: entry.member.feature.id, reason: readiness.reason });
-        } else if (readiness.reason === 'integration_not_ready') {
+        } else if (readiness.reason.startsWith('integration_')) {
           blocked.push({ kind: 'feature_integration', featureId: entry.member.feature.id, reason: readiness.reason });
         }
         for (const run of [...entry.member.activeRuns].sort((left, right) => left.id < right.id ? -1 : 1)) {
@@ -501,7 +502,16 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
           blocked.push(memberReason(member.feature.id, { kind: 'required_input_unavailable', artifactId: input.artifactId, detail } as const));
         }
       }
-      if (blocked.length > 0) {
+      const canAuthorizePending = (reason: ExecutionPreviewBlockedReason): boolean => {
+        if (reason.kind === 'feature_integration') return reason.reason === 'integration_not_ready';
+        if (reason.kind !== 'feature_dependency' || reason.reason !== 'dependency_pending') return false;
+        const parents = (scopeView?.featureDependencies ?? []).filter(edge => edge.featureId === reason.featureId);
+        return parents.length > 0 && parents.every(edge => finalFeatureIds.includes(edge.dependsOnId));
+      };
+      const hardBlocked = blocked.filter(reason => !canAuthorizePending(reason));
+      const deferredMembers = new Set(blocked.filter(canAuthorizePending)
+        .map(reason => (reason as { featureId: string }).featureId));
+      if (hardBlocked.length > 0) {
         return {
           ...base,
           scope,
@@ -546,20 +556,19 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
           .filter((edge) => edge.featureId === member.feature.id)
           .map((edge) => edge.dependsOnId)
           .sort();
-        const baseline = deps.baseline?.({
-          projectId: projectKey,
-          phaseId: phase.id,
-          featureId: member.feature.id,
-          dependencyFeatureIds,
-          currentHeadCommit: inspection.headCommit,
-        }) ?? {
-          baseCommit: inspection.headCommit ?? '',
-          treeSha: null,
-          integrationId: null,
-          inputDigest: null,
-          planRevision: null,
-          source: 'execution_snapshot',
-        };
+        let baseline;
+        if (deferredMembers.has(member.feature.id)) {
+          baseline = {
+            baseCommit: inspection.headCommit ?? '', treeSha: null, integrationId: null,
+            inputDigest: null, planRevision: null, source: 'authorization_pending',
+          };
+        } else {
+          baseline = deps.baseline?.({ projectId: projectKey, phaseId: phase.id, featureId: member.feature.id,
+            dependencyFeatureIds, currentHeadCommit: inspection.headCommit }) ?? {
+            baseCommit: inspection.headCommit ?? '', treeSha: null, integrationId: null,
+            inputDigest: null, planRevision: null, source: 'execution_snapshot',
+          };
+        }
         if (baseline.baseCommit === null || baseline.baseCommit.length === 0) {
           throw publicError('conflict', 'baseline_missing', { featureId: member.feature.id });
         }
@@ -681,7 +690,18 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       const digestBaselines = [...baselineByMember.values()]
         .filter((baseline) => baseline.source !== 'execution_snapshot')
         .sort((left, right) => left.featureId < right.featureId ? -1 : 1);
+      const authorization: ExecutionScopeAuthorization | undefined = deferredMembers.size === 0 ? undefined : {
+        deferredFeatureIds: [...deferredMembers].sort(),
+        dependencies: [...deferredMembers].flatMap(featureId => (scopeView?.featureDependencies ?? [])
+          .filter(edge => edge.featureId === featureId)
+          .map(edge => ({ featureId, dependsOnId: edge.dependsOnId, revision: edge.revision ?? null }))),
+        dagDigest: createHash('sha256').update(stableStringify({
+          phaseId: phase.id, members: finalFeatureIds, dependencies: scopeView?.featureDependencies ?? [],
+        })).digest('hex'),
+      };
       const summary: ExecutionPreviewSummary = {
+        ...(deps.integrationCapabilities === undefined ? {} : { integrationCapabilities: deps.integrationCapabilities() }),
+        ...(authorization === undefined ? {} : { authorization }),
         members: memberSummaries,
         approval: {
           planDigest: aggregatePlanDigest,
@@ -710,6 +730,7 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         projectId: projectKey,
         phaseId: phase.id,
         featureIds: finalFeatureIds,
+        ...(authorization === undefined ? {} : { authorization }),
         planDigest: members.length === 1 ? members[0]!.feature.planDigest : aggregatePlanDigest,
         code,
         ...(digestBaselines.length === 0 ? {} : { baselines: digestBaselines }),
@@ -728,9 +749,9 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       const result: ExecutionPreviewResult = {
         ...base,
         scope,
-        status: 'ready',
+        status: authorization === undefined ? 'ready' : 'authorization_ready',
         noWorkReason: null,
-        blocked: [],
+        blocked,
         previewDigest,
         summary,
         generatedAtUtcMs: now,

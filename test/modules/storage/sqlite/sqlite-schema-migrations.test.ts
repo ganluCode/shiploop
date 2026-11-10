@@ -140,6 +140,9 @@ const SCHEMA_TABLES = [
   ['feature_closeouts', schema.featureCloseouts],
   ['feature_repair_attempts', schema.featureRepairAttempts],
   ['git_pushes', schema.gitPushes],
+  ['run_execution_baselines', schema.runExecutionBaselines],
+  ['integration_execution_claims', schema.integrationExecutionClaims],
+  ['integration_processes', schema.integrationProcesses],
 ] as const;
 
 const EXPECTED_TABLE_NAMES = [
@@ -580,6 +583,12 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
       // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键
       // 与 P02-3 / F-007 基线四表的同项目复合外键/制品引用外键。
       const expectedFks = new Set([
+        'run_execution_baselines:(project_id,run_id)->runs.(project_id,id)',
+        'run_execution_baselines:(project_id,integration_id)->integration_plans.(project_id,id)',
+        'run_execution_baselines:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
+        'integration_execution_claims:(project_id,run_id)->runs.(project_id,id)',
+        'integration_execution_claims:(project_id,source_plan_id)->integration_plans.(project_id,id)',
+        'integration_processes:(project_id,operation_id)->integration_execution_claims.(project_id,operation_id)',
         'entity_display_codes:(project_id)->projects.(id)',
         'feature_closeouts:(project_id)->projects.(id)',
         'feature_closeouts:(project_id,run_id)->runs.(project_id,id)',

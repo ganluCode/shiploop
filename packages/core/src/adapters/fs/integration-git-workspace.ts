@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { access, lstat, readFile, realpath, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -426,7 +427,25 @@ export function createIntegrationGitWorkspace(options: {
       return outcome(reason === 'stop_unconfirmed' || reason === 'operation_unknown' ? 'unknown' : 'blocked', reason, workspace, details(error));
     }
   }
-  return { prepare, merge, cleanup };
+  async function resume(input: IntegrationWorkspacePrepareInput, workspace: IntegrationWorkspaceHandle): Promise<IntegrationWorkspaceOutcome> {
+    try {
+      if (input.integrationPath !== workspace.path || !isDeepStrictEqual(input.plan, workspace.plan)
+        || workspace.ownerId !== input.owner.ownerId || workspace.ownerVersion !== input.owner.ownerVersion) throw new IntegrationGitError('workspace_not_owned');
+      const source = await verifyTarget(input);
+      const privateDir = await privateGitDir(input.integrationPath, input);
+      const state: State = { input, source, privateGitDir: privateDir, workspaceId: workspace.workspaceId };
+      if (!await markerMatches(state, workspace)) throw new IntegrationGitError('workspace_not_owned');
+      const observed = await facts(input.integrationPath, input);
+      if (!isDeepStrictEqual(observed, workspace.facts) || observed.statusPorcelain !== '') throw new IntegrationGitError('workspace_head_drift');
+      input.beforeWrite?.();
+      states.set(workspace.workspaceId, state);
+      return outcome('ready', null, workspace);
+    } catch (error) {
+      const reason = error instanceof IntegrationGitError ? error.reason : 'git_failed';
+      return outcome(reason === 'stop_unconfirmed' ? 'unknown' : 'blocked', reason, workspace);
+    }
+  }
+  return { prepare, merge, cleanup, resume };
 }
 
 export const createIntegrationWorkspace = createIntegrationGitWorkspace;

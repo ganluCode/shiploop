@@ -17,6 +17,7 @@ import type { CommandProcessIdentity } from '../../ports/command-process.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { createSqliteWorkspaceAccess } from './workspace.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
+import { readRunExecutionBaseline } from './run-execution-baseline.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteStateAccess, transactSqliteConsistentRead } from './state-store.js';
 import { createSqliteAtomicCommandStore } from './atomic-commands.js';
@@ -64,7 +65,8 @@ export function createSqliteWorkspacePreparationStore(session: SqliteStorageSess
       || snapshot.leases.some(l => !['held', 'quarantined'].includes(l.state) || l.leaseUntilUtcMs <= now() || l.processIdentity !== null))) fail('attempt_not_live_preflight');
     const run = executions.getExecutionRunInTransaction(identity.projectId, input.runId);
     const batch = executions.getExecutionBatchInTransaction(identity.projectId, run.batchId);
-    if (run.featureId !== attempt.featureId || batch.featureId !== attempt.featureId) fail('authorization_scope_mismatch');
+    if (run.featureId !== attempt.featureId
+      || !executions.listExecutionBatchMemberFeatureIdsInTransaction(identity.projectId, batch.id).includes(attempt.featureId)) fail('authorization_scope_mismatch');
     const planning = isPlanningAttemptSnapshot(attempt.inputSnapshot) ? attempt.inputSnapshot : null;
     const authorizationOperation = planning === null ? 'execution.start' : 'planning.start';
     if (!db.prepare("SELECT id FROM command_receipts WHERE operation = ? AND status = 'accepted' AND operation_id = ? AND project_id = ?").get(authorizationOperation, batch.id, identity.projectId)) fail('committed_authorization_required');
@@ -75,7 +77,7 @@ export function createSqliteWorkspacePreparationStore(session: SqliteStorageSess
     const binding = state.getRepositoryBinding(identity.projectId);
     if (planning !== null && (planning.codeBaseline === undefined ||
       computePlanningCodeBaselineDigest(planning.codeBaseline) !== planning.digests.codeBaselineDigest)) fail('confirmed_planning_baseline_required');
-    const baseline = (planning === null ? run.inputSnapshot.workspaceBaseline : {
+    const baseline = (planning === null ? readRunExecutionBaseline(db, run) : {
       repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
       baseCommit: planning.codeBaseline!.headCommit,
     }) as { repositoryBindingId?: unknown; repositoryBindingRevision?: unknown; baseCommit?: unknown } | undefined;

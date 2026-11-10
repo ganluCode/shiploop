@@ -3380,7 +3380,7 @@ function validateExecutionPreviewMembershipWire(
       const readiness = requirePlain(operation, member.readiness);
       if (readiness.featureId !== member.featureId ||
           !['complete', 'pending', 'failed'].includes(readiness.dependencyCompletion as string) ||
-          !['ready', 'dependency_pending', 'dependency_failed', 'integration_not_ready', 'invalid_graph'].includes(readiness.reason as string) ||
+          !(FEATURE_DAG_REASONS as readonly string[]).includes(readiness.reason as string) ||
           readiness.dependencyCompleted !== (readiness.dependencyCompletion === 'complete') ||
           readiness.ready !== (readiness.dependencyCompleted && readiness.dependencyIntegrationReady)) malformed(operation, 'execution_preview_members_invalid');
     }
@@ -3407,7 +3407,38 @@ function validateExecutionPreviewMembershipWire(
 
 function validateExecutionPreviewSummaryWire(operation: HostOperation, value: unknown): void {
   const summary = requirePlain(operation, value);
-  exactKeys(operation, summary, ['members', 'approval', 'plan', 'code', 'checkPolicyDigest', 'tasks', 'permissions', 'inputs', 'budget', 'concurrency']);
+  exactKeys(operation, summary, ['members', 'approval', 'plan', 'code', 'baselines', 'authorization', 'integrationCapabilities', 'checkPolicyDigest', 'tasks', 'permissions', 'inputs', 'budget', 'concurrency']);
+  if (summary.integrationCapabilities !== undefined) {
+    const capabilities = requirePlain(operation,summary.integrationCapabilities);
+    exactKeys(operation,capabilities,['deterministic','verification','recovery','gitAgent']);
+    for (const key of ['deterministic','verification','recovery','gitAgent']) if (!['available','unsupported'].includes(capabilities[key] as string)) malformed(operation,'execution_preview_capability_invalid');
+  }
+  if (summary.authorization !== undefined) {
+    const auth = requirePlain(operation, summary.authorization);
+    exactKeys(operation, auth, ['deferredFeatureIds', 'dependencies', 'dagDigest']);
+    requireSha256Hex(operation, auth.dagDigest, 'execution_preview_digest_invalid');
+    executionFeatureIdsWire(operation, auth.deferredFeatureIds);
+    if (!Array.isArray(auth.dependencies) || auth.dependencies.length > 5000) malformed(operation, 'execution_preview_scope_invalid');
+    for (const value of auth.dependencies) {
+      const edge = requirePlain(operation, value);
+      exactKeys(operation, edge, ['featureId', 'dependsOnId', 'revision']);
+      requireStableId(operation, edge.featureId); requireStableId(operation, edge.dependsOnId);
+      if (edge.revision !== null) requirePositiveInteger(operation, edge.revision);
+    }
+  }
+  if (summary.baselines !== undefined) {
+    if (!Array.isArray(summary.baselines)) malformed(operation, 'execution_preview_rows_invalid');
+    for (const value of summary.baselines) {
+      const base = requirePlain(operation, value);
+      exactKeys(operation, base, ['featureId', 'baseCommit', 'treeSha', 'integrationId', 'inputDigest', 'planRevision', 'source']);
+      requireStableId(operation, base.featureId);
+      for (const key of ['baseCommit', 'treeSha']) if (base[key] !== null && (typeof base[key] !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(base[key] as string))) malformed(operation, 'execution_preview_commit_invalid');
+      if (base.integrationId !== null) requireStableId(operation, base.integrationId);
+      if (base.inputDigest !== null) requireSha256Hex(operation, base.inputDigest, 'execution_preview_digest_invalid');
+      if (base.planRevision !== null) requirePositiveInteger(operation, base.planRevision);
+      if (!['execution_snapshot', 'planning_snapshot', 'single_predecessor', 'integration_result', 'authorization_pending'].includes(base.source as string)) malformed(operation, 'execution_preview_baseline_invalid');
+    }
+  }
   if (summary.members !== undefined) {
     if (!Array.isArray(summary.members)) malformed(operation, 'execution_preview_members_invalid');
     for (const value of summary.members) {
@@ -3424,7 +3455,7 @@ function validateExecutionPreviewSummaryWire(operation: HostOperation, value: un
       if (!Array.isArray(member.pendingTaskIds)) malformed(operation, 'execution_preview_member_invalid');
       for (const id of member.pendingTaskIds) requireStableId(operation, id);
       const readiness = requirePlain(operation, member.readiness);
-      exactKeys(operation, readiness, ['featureId', 'dependencyCompleted', 'dependencyCompletion', 'integrationReady', 'dependencyIntegrationReady', 'ready', 'reason']);
+      exactKeys(operation, readiness, ['featureId', 'dependencyCompleted', 'dependencyCompletion', 'integrationReady', 'dependencyIntegrationReady', 'ready', 'reason', 'dependencyStaleReasons', 'dependencyBlockReasons']);
       requireStableId(operation, readiness.featureId);
       for (const key of ['dependencyCompleted', 'integrationReady', 'dependencyIntegrationReady', 'ready']) {
         if (typeof readiness[key] !== 'boolean') malformed(operation, 'execution_preview_member_invalid');
@@ -3493,7 +3524,7 @@ function validateExecutionPreviewSummaryWire(operation: HostOperation, value: un
   }
   const concurrency = requirePlain(operation, summary.concurrency);
   exactKeys(operation, concurrency, ['maxConcurrentWorks', 'source']);
-  if (concurrency.maxConcurrentWorks !== 1) malformed(operation, 'execution_preview_concurrency_invalid');
+  if (!Number.isSafeInteger(concurrency.maxConcurrentWorks) || (concurrency.maxConcurrentWorks as number) < 1 || (concurrency.maxConcurrentWorks as number) > 16) malformed(operation, 'execution_preview_concurrency_invalid');
   text(concurrency.source);
 }
 
@@ -3561,7 +3592,7 @@ export function validateExecutionPreviewResultWire(
   } else if (featureIds.length > 1) {
     malformed(operation, 'execution_preview_scope_invalid');
   }
-  if (object.status !== 'ready' && object.status !== 'no_work' && object.status !== 'blocked') {
+  if (object.status !== 'ready' && object.status !== 'authorization_ready' && object.status !== 'no_work' && object.status !== 'blocked') {
     malformed(operation, 'execution_preview_status_invalid');
   }
   if (object.noWorkReason !== null && object.noWorkReason !== 'empty_scope' && object.noWorkReason !== 'no_pending_tasks') {
@@ -3584,7 +3615,18 @@ export function validateExecutionPreviewResultWire(
   if (object.status === 'ready' && (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length !== 0 || featureIds.length === 0)) {
     malformed(operation, 'execution_preview_ready_invariant');
   }
-  if (object.status !== 'ready' && (object.previewDigest !== null || object.summary !== null)) {
+  if (object.status === 'authorization_ready') {
+    if (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length === 0) malformed(operation, 'execution_preview_authorization_invariant');
+    const auth = requirePlain(operation, requirePlain(operation, object.summary).authorization);
+    const deferred = executionFeatureIdsWire(operation, auth.deferredFeatureIds);
+    if (deferred.length === 0 || deferred.some(id => !featureIds.includes(id)) || object.blocked.some(value => {
+      const reason = requirePlain(operation, value);
+      return !deferred.includes(reason.featureId as string)
+        || !(reason.kind === 'feature_dependency' && reason.reason === 'dependency_pending'
+          || reason.kind === 'feature_integration' && reason.reason === 'integration_not_ready');
+    })) malformed(operation, 'execution_preview_authorization_invariant');
+  }
+  if (object.status !== 'ready' && object.status !== 'authorization_ready' && (object.previewDigest !== null || object.summary !== null)) {
     malformed(operation, 'execution_preview_non_ready_invariant');
   }
   if (object.status === 'blocked' && (object.blocked.length === 0 || object.noWorkReason !== null || featureIds.length === 0)) {

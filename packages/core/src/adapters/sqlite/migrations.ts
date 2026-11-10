@@ -15,6 +15,7 @@
  *   本模块只声明内容与身份，不在 import 时打开数据库或产生任何副作用。
  */
 import { createHash } from 'node:crypto';
+import { DAG_EXECUTION_ASSEMBLY_MIGRATION_SQL } from './dag-execution-assembly-migration.js';
 import { ENTITY_DISPLAY_CODES_MIGRATION_SQL } from './entity-display-codes-migration.js';
 import { GIT_NAMING_MIGRATION_SQL } from './git-naming-migration.js';
 import { MANAGED_DOCUMENTS_MIGRATION_SQL } from './managed-documents-migration.js';
@@ -4575,4 +4576,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 69, sql: ENTITY_DISPLAY_CODES_MIGRATION_SQL, checksum: sha256Hex(ENTITY_DISPLAY_CODES_MIGRATION_SQL) },
   { version: 70, sql: GIT_NAMING_MIGRATION_SQL, checksum: sha256Hex(GIT_NAMING_MIGRATION_SQL) },
   { version: 71, sql: MIGRATION_071_SQL, checksum: sha256Hex(MIGRATION_071_SQL) },
+  { version: 72, sql: DAG_EXECUTION_ASSEMBLY_MIGRATION_SQL, checksum: sha256Hex(DAG_EXECUTION_ASSEMBLY_MIGRATION_SQL) },
 ];
