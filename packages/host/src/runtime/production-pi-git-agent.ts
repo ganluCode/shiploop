@@ -9,7 +9,6 @@ import type { WorkRuntimeFactory } from 'shiploop-core/assembly';
 import type { PiGitAgentRuntimeDriver } from './pi-git-agent-adapter.js';
 import { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
 import { getRuntimePromptTemplates } from './prompt-templates.js';
-import { productionPiOptions } from './production-pi.js';
 
 export interface ProductionGitAgentBinding {
   /** The trusted resolver must bind policy/workspace/context to this exact authorization. */
@@ -222,6 +221,7 @@ export function createProductionPiGitAgentDriver(options: {
 
 /** Real assembly: same private config, credential resolver, SDK runner and OS supervision as Work. */
 export async function productionPiGitAgentRuntime(dataRoot: string, authority: ProductionGitAgentAuthority) {
+  const { productionPiOptions } = await import('./production-pi.js');
   const options = await productionPiOptions(dataRoot);
   return createPiGitAgentRuntimeAdapter({ driver: createProductionPiGitAgentDriver({
     runtimeFactory: options.workRuntimeFactory, capabilityCatalog: options.capabilityCatalog!, authority,

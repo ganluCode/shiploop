@@ -9,7 +9,7 @@ import type { CommandProcessIdentity, CommandProcessPort } from '../ports/comman
 import type { GitCommitDriver } from '../ports/controlled-git-commit.js';
 import type { IntegrationVerificationExecutionInput, IntegrationVerificationExecutor } from '../ports/integration-verification.js';
 import type { WorkspaceBaseline } from '../ports/workspace.js';
-import type { WorkspaceInspector } from '../ports/workspace-inspector.js';
+import type { WorkspaceInspector, WorkspaceInspection } from '../ports/workspace-inspector.js';
 import { StorageError } from '../ports/errors.js';
 
 export interface IntegrationVerificationExecutorOptions {
@@ -37,6 +37,22 @@ function fail(reason: string): never {
 
 /** Real CommandProcess + bounded/redacted Artifact evidence; no synthetic Task/Attempt or model. */
 export function createNodeIntegrationVerificationExecutor(options: IntegrationVerificationExecutorOptions): IntegrationVerificationExecutor {
+  return createExecutor(options);
+}
+
+/** Trusted Core-only frozen input; never populated from a Runtime result or Host payload. */
+export interface IntegrationCandidateVerificationSource {
+  readonly operationId: string;
+  readonly inputDigest: string;
+  readonly inspection: WorkspaceInspection;
+}
+
+export function createNodeIntegrationCandidateVerificationExecutor(options: IntegrationVerificationExecutorOptions,
+  source: IntegrationCandidateVerificationSource): IntegrationVerificationExecutor {
+  return createExecutor(options,structuredClone(source));
+}
+
+function createExecutor(options: IntegrationVerificationExecutorOptions, candidate?: IntegrationCandidateVerificationSource): IntegrationVerificationExecutor {
   const now = options.nowUtcMs ?? Date.now;
   for (const key of ['authorize', 'confirmProcessIdentity', 'resolveCwd', 'resolveEnvironment', 'assertOutsideTransaction', 'driverFor'] as const) {
     if (typeof options[key] !== 'function') throw new TypeError(`Integration verification requires ${key}`);
@@ -51,6 +67,7 @@ export function createNodeIntegrationVerificationExecutor(options: IntegrationVe
     options.assertOutsideTransaction();
     const input = structuredClone(raw);
     const { workspace, plan } = input;
+    if (candidate && (candidate.operationId !== input.operationId || candidate.inputDigest !== input.inputDigest)) fail('source_changed');
     if (plan.status !== 'ready' || plan.selectedChecks.length === 0 || plan.selectedChecks.length > 64
       || new Set(plan.selectedCheckKeys).size !== plan.selectedChecks.length
       || new Set(plan.selectedChecks.map(check => check.checkKey)).size !== plan.selectedChecks.length
@@ -78,15 +95,27 @@ export function createNodeIntegrationVerificationExecutor(options: IntegrationVe
       const bytes = await options.inspector.inspect(baseline);
       if (bytes.repository.headCommit !== workspace.currentHead || bytes.repository.canonicalPath !== workspace.path
         || bytes.repository.gitCommonDir !== workspace.gitCommonDir || bytes.repository.repoIdentity !== workspace.repoIdentity
-        || bytes.statusPorcelainBase64 !== '' || !/^[a-f0-9]{64}$/.test(bytes.codeDigest)) fail('source_changed');
+        || !/^[a-f0-9]{64}$/.test(bytes.codeDigest)) fail('source_changed');
+      if (candidate) {
+        const frozen = candidate.inspection;
+        const identity = (value: WorkspaceInspection) => ({repository:value.repository,registration:value.registration,
+          status:value.statusPorcelainBase64,refsDigest:value.refsDigest,codeDigest:value.codeDigest,ignoredDigest:value.ignoredDigest,
+          contents:value.contents,conflictMarkerPaths:value.conflictMarkerPaths,
+          ignoredProtection:value.ignoredProtection,directoryProtection:value.directoryProtection});
+        if (!frozen.complete || !bytes.complete || frozen.schemaVersion !== 1 || bytes.schemaVersion !== 1
+          || !/^[a-f0-9]{64}$/.test(frozen.refsDigest) || frozen.conflictMarkerPaths === undefined || frozen.conflictMarkerPaths.length !== 0
+          || !isDeepStrictEqual(identity(frozen),identity(bytes))) fail('source_changed');
+      } else if (bytes.statusPorcelainBase64 !== '') fail('source_changed');
       const currentContent = { codeDigest: bytes.codeDigest, ignoredDigest: bytes.ignoredDigest, contents: bytes.contents };
       if (codeDigest === undefined) { codeDigest = bytes.codeDigest; contentIdentity = structuredClone(currentContent); }
       else if (!isDeepStrictEqual(contentIdentity, currentContent)) fail('source_changed');
       const facts = await git.facts();
-      if (facts.head !== workspace.currentHead || facts.tree !== workspace.facts.tree
-        || (await git.stagedPaths()).length !== 0 || (await git.unstagedPaths()).length !== 0) fail('source_changed');
-      for (const predecessor of workspace.plan.predecessors) {
-        if (!predecessor.delivery || !await git.isAncestor(predecessor.delivery.commitSha, facts.head)) fail('integration_coverage_incomplete');
+      if (facts.head !== workspace.currentHead || facts.tree !== workspace.facts.tree) fail('source_changed');
+      if (!candidate) {
+        if ((await git.stagedPaths()).length !== 0 || (await git.unstagedPaths()).length !== 0) fail('source_changed');
+        for (const predecessor of workspace.plan.predecessors) {
+          if (!predecessor.delivery || !await git.isAncestor(predecessor.delivery.commitSha, facts.head)) fail('integration_coverage_incomplete');
+        }
       }
     };
     await inspect();
@@ -101,10 +130,11 @@ export function createNodeIntegrationVerificationExecutor(options: IntegrationVe
         || published.artifact.contentHash !== expectedHash) fail('verification_evidence_incomplete');
       return { id: published.artifact.id, digest: expectedHash };
     };
-    const verificationPlan = await publish('integration-verification-plan', {
+    const candidateIdentity = candidate ? {candidate:{workingTreeDigest:codeDigest!,hasUncommittedChanges:true}} : {};
+    const verificationPlan = await publish(candidate ? 'integration-candidate-verification-plan' : 'integration-verification-plan', {
       schemaVersion: 1, operationId: input.operationId, sourcePlanId: input.sourcePlanId, inputDigest: input.inputDigest,
       integrationId: workspace.plan.integrationId, targetBaseline: input.targetBaseline, commitSha: workspace.currentHead,
-      treeSha: workspace.facts.tree, plan, targets: input.targets,
+      treeSha: workspace.facts.tree, plan, targets: input.targets, ...candidateIdentity,
     });
     const results: { checkKey: string; status: 'passed' | 'failed' | 'error' | 'inconclusive'; stopped: boolean;
       outputRef: unknown; reportRef: unknown; testCount: number | null; exitCode: number | null; signal: string | null; reason: string | null }[] = [];
@@ -128,7 +158,7 @@ export function createNodeIntegrationVerificationExecutor(options: IntegrationVe
         const observed = await observeNodeCheckProtocol(handle, input.targets);
         const captured = await evidence.collect({ projectId: input.projectId, operationId: evidenceId,
           checkKey: check.checkKey, request, handle: observed.handle, environmentRef: check.environmentRef,
-          codeIdentity: { headCommit: workspace.currentHead, workingTreeDigest: codeDigest!, hasUncommittedChanges: false } });
+          codeIdentity: { headCommit: workspace.currentHead, workingTreeDigest: codeDigest!, hasUncommittedChanges: candidate !== undefined } });
         let separatelyStopped = false;
         let stopTimer: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -157,9 +187,9 @@ export function createNodeIntegrationVerificationExecutor(options: IntegrationVe
     if (stopped) await inspect();
     const status = results.length !== plan.selectedChecks.length || results.some(result => result.status === 'inconclusive') ? 'inconclusive'
       : results.some(result => result.status === 'error') ? 'error' : results.some(result => result.status === 'failed') ? 'failed' : 'passed';
-    const verificationResult = await publish('integration-verification-result', {
+    const verificationResult = await publish(candidate ? 'integration-candidate-verification-result' : 'integration-verification-result', {
       schemaVersion: 1, operationId: input.operationId, inputDigest: input.inputDigest, verificationPlan, status, stopped, results,
-      commitSha: workspace.currentHead, treeSha: workspace.facts.tree, targetBaseline: input.targetBaseline,
+      commitSha: workspace.currentHead, treeSha: workspace.facts.tree, targetBaseline: input.targetBaseline, ...candidateIdentity,
     });
     return { status, stopped, integrationId: workspace.plan.integrationId, commitSha: workspace.currentHead,
       treeSha: workspace.facts.tree, targetBase: input.targetBaseline, targetBaseline: input.targetBaseline,

@@ -3,13 +3,16 @@ import type { GitOperationIntent } from './git-operations.js';
 import type { GitAgentRepairView } from './git-agent-repair-store.js';
 import type { IntegrationVerificationEvidenceRef } from './integration-verification.js';
 import { StorageError } from './errors.js';
-import { validateSha256Digest, validateStableId } from './validation.js';
+import { validatePositiveInteger, validateSha256Digest, validateStableId } from './validation.js';
 
 export interface GitAgentIntegrationCommitBinding {
   readonly repairId: string;
   readonly authorizationDigest: string;
   readonly sourceOperationId: string;
   readonly sourceInputDigest: string;
+  readonly repairAttemptId?: string;
+  readonly repairOwnerId?: string;
+  readonly repairOwnerVersion?: number;
   readonly parents: readonly string[];
   readonly verification: {
     readonly planRef: IntegrationVerificationEvidenceRef;
@@ -29,6 +32,8 @@ export function gitAgentIntegrationCommitPlan(repair: GitAgentRepairView, source
     || source.runId !== request.runId || source.successorFeatureId !== request.featureId
     || source.target.repoIdentity !== request.target.repoIdentity || source.target.baseCommit !== request.target.baselineCommitSha) fail();
   return createIntegrationExecutionPlan({ projectId: source.projectId, phaseId: source.phaseId,
+    ...(repair.receipt.runId !== source.runId ? {} : { repairAuthorization: { repairId: request.repairId,
+      authorizationDigest: request.authorizationDigest, sourceOperationId: request.source.operationId } }),
     batchId: source.batchId, runId: repair.receipt.runId, successorFeatureId: source.successorFeatureId,
     target: source.target, predecessors: source.predecessors.map(p => ({ ...p, runId: repair.receipt.runId! })),
     approvedInputs: source.approvedInputs, mergeOrder: source.mergeOrder, verificationScope: source.verificationScope, integrationResult: null });
@@ -41,6 +46,12 @@ export function readGitAgentIntegrationCommitBinding(intent: Pick<GitOperationIn
   const context = { operation: 'GitAgentIntegrationCommit' };
   validateStableId(value.repairId, context, 'repairId'); validateStableId(value.sourceOperationId, context, 'sourceOperationId');
   validateSha256Digest(value.authorizationDigest, context, 'authorizationDigest'); validateSha256Digest(value.sourceInputDigest, context, 'sourceInputDigest');
+  if (value.repairAttemptId !== undefined) validateStableId(value.repairAttemptId, context, 'repairAttemptId');
+  if (value.repairOwnerId !== undefined) validateStableId(value.repairOwnerId, context, 'repairOwnerId');
+  if (value.repairOwnerVersion !== undefined) validatePositiveInteger(value.repairOwnerVersion, context, 'repairOwnerVersion');
+  const repairIdentity = intent.integrationPlan.repairAuthorization;
+  if (repairIdentity !== undefined && (repairIdentity.repairId !== value.repairId
+    || repairIdentity.authorizationDigest !== value.authorizationDigest || repairIdentity.sourceOperationId !== value.sourceOperationId)) fail();
   if (!Array.isArray(value.parents) || value.parents.length < 1 || value.parents.length > 2 || value.parents.some(p => !oid(p))
     || new Set(value.parents).size !== value.parents.length || value.parents[0] !== intent.expectedHead
     || value.parents.length === 2 && !intent.integrationPlan.predecessors.some(p => p.delivery?.commitSha === value.parents[1])) fail();

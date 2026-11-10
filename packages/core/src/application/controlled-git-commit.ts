@@ -7,7 +7,8 @@ import { validateStableId } from '../ports/validation.js';
 import { stripPrecondition, validateGitOperationRegisterInput } from '../ports/git-operations.js';
 import type { GitOperationStore, GitOperationRecord } from '../ports/git-operations.js';
 import { GitCommitProcessError, gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
-import type { ControlledGitCommitService, GitCommitAuthorization, GitCommitDriver, GitCommitRequest } from '../ports/controlled-git-commit.js';
+import type { ControlledGitCommitService, GitCommitAuthorization, GitCommitDriver, GitCommitRequest, IntegrationCommitResourceFence } from '../ports/controlled-git-commit.js';
+import { readIntegrationCommitResources } from './integration-resource-fence.js';
 import type { GitPublicMetadataLock } from '../ports/git-public-metadata-lock.js';
 import type { WorkspaceInspector, WorkspaceInspection } from '../ports/workspace-inspector.js';
 import type { WorkResourceAccess, WorkResourceStopVerifier } from '../ports/work-resources.js';
@@ -37,6 +38,7 @@ export function createControlledGitCommitService(deps: {
   readonly inspector: WorkspaceInspector;
   readonly resources: Pick<WorkResourceAccess, 'read'>;
   readonly stopVerifier: WorkResourceStopVerifier;
+  readonly integrationResources?: IntegrationCommitResourceFence;
   readonly lock: GitPublicMetadataLock;
   readonly driver: GitCommitDriver;
   readonly readAuthorization: (request: GitCommitRequest) => GitCommitAuthorization;
@@ -97,6 +99,9 @@ export function createControlledGitCommitService(deps: {
       || Buffer.byteLength(JSON.stringify(allowedPaths)) > 32_768) fail('invalid_allowed_paths');
     const workspaceKey = `workspace:${createHash('sha256').update(JSON.stringify([intent.repoIdentity, intent.worktreePath])).digest('hex')}`;
     function held() {
+      if (repairBinding !== null) {
+        return readIntegrationCommitResources(deps.integrationResources,request,resourceIdentity,repairBinding.sourceOperationId,now());
+      }
       const snapshot = deps.resources.read(resourceIdentity);
       if (!isDeepStrictEqual(snapshot.identity, resourceIdentity) || snapshot.leases.length !== 3
         || ['global:execution', `project:${intent.projectId}:work`, workspaceKey].some((key, index) => {
@@ -118,13 +123,19 @@ export function createControlledGitCommitService(deps: {
       const snapshot = held();
       if (stoppedSnapshot !== null && (snapshot.invocationId !== stoppedSnapshot.invocationId
         || !isDeepStrictEqual(snapshot.processIdentity, stoppedSnapshot.processIdentity)
-        || !isDeepStrictEqual(snapshot.leases.map(lease => lease.processIdentity), stoppedSnapshot.leases.map(lease => lease.processIdentity)))) {
+        || !isDeepStrictEqual('resourceSet' in snapshot ? snapshot : snapshot.leases.map(lease => lease.processIdentity),
+          'resourceSet' in stoppedSnapshot ? stoppedSnapshot : stoppedSnapshot.leases.map(lease => lease.processIdentity)))) {
         fail('writer_identity_changed');
       }
     }
     async function stopped() {
-      const snapshot = held(), token = await deps.stopVerifier.verify(snapshot);
-      if (token === null || !isDeepStrictEqual(deps.stopVerifier.inspect(token), snapshot)) fail('previous_writer_stop_unconfirmed');
+      const snapshot = held();
+      if ('resourceSet' in snapshot) {
+        if (!await deps.integrationResources!.verifyStopped(snapshot) || !isDeepStrictEqual(held(),snapshot)) fail('previous_writer_stop_unconfirmed');
+      } else {
+        const token = await deps.stopVerifier.verify(snapshot);
+        if (token === null || !isDeepStrictEqual(deps.stopVerifier.inspect(token), snapshot)) fail('previous_writer_stop_unconfirmed');
+      }
       stoppedSnapshot = structuredClone(snapshot);
       current();
     }

@@ -3218,3 +3218,57 @@ export const integrationProcesses = sqliteTable('integration_processes', {
 }, table => [primaryKey({ columns: [table.projectId, table.operationId, table.launchId] }),
   foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [integrationExecutionClaims.projectId, integrationExecutionClaims.operationId] }).onDelete('restrict'),
 ]);
+
+/** v73: immutable repair authorization bound to an existing pending member. */
+export const integrationRepairAuthorizations = sqliteTable('integration_repair_authorizations', {
+  projectId: text('project_id').notNull(), repairId: text('repair_id').notNull(), operationId: text('operation_id').notNull(),
+  runId: text('run_id').notNull(), commandId: text('command_id').notNull(), commandDigest: text('command_digest').notNull(),
+  request: text('request').notNull(), fence: text('fence').notNull(), receipt: text('receipt').notNull(), createdAt: integer('created_at').notNull(),
+}, table => [primaryKey({ columns: [table.projectId, table.repairId] }),
+  uniqueIndex('integration_repair_authorizations_operation_unique').on(table.projectId, table.operationId),
+  uniqueIndex('integration_repair_authorizations_command_unique').on(table.projectId, table.commandId),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [integrationExecutionClaims.projectId, integrationExecutionClaims.operationId] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+]);
+
+export const integrationRepairAttempts = sqliteTable('integration_repair_attempts', {
+  projectId: text('project_id').notNull(), attemptId: text('attempt_id').notNull(), repairId: text('repair_id').notNull(),
+  runId: text('run_id').notNull(), operationId: text('operation_id').notNull(), ownerId: text('owner_id').notNull(), hostInstanceId: text('host_instance_id').notNull(),
+  executionVersion: integer('execution_version').notNull(), request: text('request').notNull(), runtimeRequest: text('runtime_request'),
+  dispatch: text('dispatch').notNull(),
+  processIdentity: text('process_identity'),
+  startedAt: integer('started_at').notNull(), deadlineAt: integer('deadline_at').notNull(), maxTokens: integer('max_tokens').notNull(), maxRuntimeMs: integer('max_runtime_ms').notNull(),
+  output: text('output'), stoppedAt: integer('stopped_at'),
+}, table => [primaryKey({ columns: [table.projectId, table.attemptId] }),
+  uniqueIndex('integration_repair_attempts_repair_unique').on(table.projectId, table.repairId),
+  uniqueIndex('integration_repair_attempts_active_unique').on(table.projectId, table.repairId).where(sql`${table.stoppedAt} IS NULL`),
+  foreignKey({ columns: [table.projectId, table.repairId], foreignColumns: [integrationRepairAuthorizations.projectId, integrationRepairAuthorizations.repairId] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [integrationExecutionClaims.projectId, integrationExecutionClaims.operationId] }).onDelete('restrict'),
+  foreignKey({ columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+]);
+
+export const integrationRepairContexts = sqliteTable('integration_repair_contexts', {
+  projectId:text('project_id').notNull(),repairId:text('repair_id').notNull(),authorizationDigest:text('authorization_digest').notNull(),
+  factsDigest:text('facts_digest').notNull(),artifactId:text('artifact_id').notNull(),artifactRef:text('artifact_ref').notNull(),createdAt:integer('created_at').notNull(),
+},table=>[primaryKey({columns:[table.projectId,table.repairId]}),
+  foreignKey({columns:[table.projectId,table.repairId],foreignColumns:[integrationRepairAuthorizations.projectId,integrationRepairAuthorizations.repairId]}).onDelete('restrict'),
+  foreignKey({columns:[table.projectId,table.artifactId],foreignColumns:[artifacts.projectId,artifacts.id]}).onDelete('restrict'),
+]);
+
+export const integrationRepairCandidateHolds = sqliteTable('integration_repair_candidate_holds', {
+  projectId:text('project_id').notNull(),repairId:text('repair_id').notNull(),attemptId:text('attempt_id').notNull(),
+  reason:text('reason').notNull(),createdAt:integer('created_at').notNull(),
+},table=>[primaryKey({columns:[table.projectId,table.repairId]}),
+  foreignKey({columns:[table.projectId,table.repairId],foreignColumns:[integrationRepairAuthorizations.projectId,integrationRepairAuthorizations.repairId]}).onDelete('restrict'),
+  foreignKey({columns:[table.projectId,table.attemptId],foreignColumns:[integrationRepairAttempts.projectId,integrationRepairAttempts.attemptId]}).onDelete('restrict'),
+]);
+
+export const integrationRepairVerifications = sqliteTable('integration_repair_verifications', {
+  projectId:text('project_id').notNull(),repairId:text('repair_id').notNull(),attemptId:text('attempt_id').notNull(),
+  artifactId:text('artifact_id').notNull(),artifactRef:text('artifact_ref').notNull(),planRef:text('plan_ref').notNull(),
+  resultRef:text('result_ref').notNull(),inputDigest:text('input_digest').notNull(),status:text('status').notNull(),createdAt:integer('created_at').notNull(),
+},table=>[primaryKey({columns:[table.projectId,table.repairId]}),
+  foreignKey({columns:[table.projectId,table.repairId],foreignColumns:[integrationRepairAuthorizations.projectId,integrationRepairAuthorizations.repairId]}).onDelete('restrict'),
+  foreignKey({columns:[table.projectId,table.attemptId],foreignColumns:[integrationRepairAttempts.projectId,integrationRepairAttempts.attemptId]}).onDelete('restrict'),
+  foreignKey({columns:[table.projectId,table.artifactId],foreignColumns:[artifacts.projectId,artifacts.id]}).onDelete('restrict'),
+]);

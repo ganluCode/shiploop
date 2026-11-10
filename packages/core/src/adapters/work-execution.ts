@@ -117,7 +117,7 @@ export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
 };
 
 export function assembleWorkExecution(options: {
-  readonly integration?: { ensure(projectId:string,runId:string): Promise<void>; scan?():Promise<void>; enterQuiesce?():{accepted:number}; awaitQuiesce?(budgetMs:number):Promise<{confirmed:boolean;pending:readonly string[]}>; recover?():Promise<void>; activeCount?():number };
+  readonly integration?: { ensure(projectId:string,runId:string): Promise<void>; consumeRepairForRun?(projectId:string,runId:string):Promise<boolean>; scan?():Promise<void>; enterQuiesce?():{accepted:number}; awaitQuiesce?(budgetMs:number):Promise<{confirmed:boolean;pending:readonly string[]}>; recover?():Promise<void>; activeCount?():number };
   readonly session: SqliteStorageSession;
   readonly application: Pick<CoreApplication, 'dataRoot' | 'artifactStore' | 'artifactFileStore' | 'stateStore' |
     'configurationService' | 'projectResourceService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare' | 'planningInputPrepare'> & {
@@ -821,6 +821,7 @@ export function assembleWorkExecution(options: {
 
   const featureCloseout = options.featureCloseoutFactory?.({ ownerId: owner, hostInstanceId });
   const scheduler = createWorkScheduler({ store, featureDag, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
+    ...(options.integration?.consumeRepairForRun === undefined ? {} : { integrationRepair: { consume: (ref: {projectId:string;runId:string}) => options.integration!.consumeRepairForRun!(ref.projectId,ref.runId) } }),
     ...(featureCloseout === undefined ? {} : { onHandoff: async (handoff: { projectId: string; runId: string }) => {
       const result = await featureCloseout.execute(handoff);
       settleRun(handoff.projectId, handoff.runId);

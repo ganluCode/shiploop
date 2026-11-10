@@ -16,6 +16,11 @@
  */
 import { createHash } from 'node:crypto';
 import { DAG_EXECUTION_ASSEMBLY_MIGRATION_SQL } from './dag-execution-assembly-migration.js';
+import { INTEGRATION_REPAIR_AUTHORIZATION_MIGRATION_SQL } from './integration-repair-authorization-migration.js';
+import { INTEGRATION_REPAIR_ATTEMPTS_MIGRATION_SQL } from './integration-repair-attempts-migration.js';
+import { INTEGRATION_REPAIR_CONTEXTS_MIGRATION_SQL } from './integration-repair-contexts-migration.js';
+import { INTEGRATION_REPAIR_CANDIDATES_MIGRATION_SQL } from './integration-repair-candidates-migration.js';
+import { INTEGRATION_REPAIR_VERIFICATIONS_MIGRATION_SQL } from './integration-repair-verifications-migration.js';
 import { ENTITY_DISPLAY_CODES_MIGRATION_SQL } from './entity-display-codes-migration.js';
 import { GIT_NAMING_MIGRATION_SQL } from './git-naming-migration.js';
 import { MANAGED_DOCUMENTS_MIGRATION_SQL } from './managed-documents-migration.js';
@@ -4577,4 +4582,9 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 70, sql: GIT_NAMING_MIGRATION_SQL, checksum: sha256Hex(GIT_NAMING_MIGRATION_SQL) },
   { version: 71, sql: MIGRATION_071_SQL, checksum: sha256Hex(MIGRATION_071_SQL) },
   { version: 72, sql: DAG_EXECUTION_ASSEMBLY_MIGRATION_SQL, checksum: sha256Hex(DAG_EXECUTION_ASSEMBLY_MIGRATION_SQL) },
+  { version: 73, sql: INTEGRATION_REPAIR_AUTHORIZATION_MIGRATION_SQL, checksum: sha256Hex(INTEGRATION_REPAIR_AUTHORIZATION_MIGRATION_SQL) },
+  { version: 74, sql: INTEGRATION_REPAIR_ATTEMPTS_MIGRATION_SQL, checksum: sha256Hex(INTEGRATION_REPAIR_ATTEMPTS_MIGRATION_SQL) },
+  { version: 75, sql: INTEGRATION_REPAIR_CONTEXTS_MIGRATION_SQL, checksum: sha256Hex(INTEGRATION_REPAIR_CONTEXTS_MIGRATION_SQL) },
+  { version: 76, sql: INTEGRATION_REPAIR_CANDIDATES_MIGRATION_SQL, checksum: sha256Hex(INTEGRATION_REPAIR_CANDIDATES_MIGRATION_SQL) },
+  { version: 77, sql: INTEGRATION_REPAIR_VERIFICATIONS_MIGRATION_SQL, checksum: sha256Hex(INTEGRATION_REPAIR_VERIFICATIONS_MIGRATION_SQL) },
 ];

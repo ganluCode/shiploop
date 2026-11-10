@@ -291,6 +291,8 @@ import { createSqliteGitAgentRepairQueryStore } from './sqlite/git-agent-repair-
 import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
 import { assembleDagIntegration } from './dag-integration.js';
+import type { ProductionGitAgentRuntimeFactory } from '../ports/git-agent-production.js';
+export type { ProductionGitAgentRuntimeFactory, ProductionGitAgentAuthority } from '../ports/git-agent-production.js';
 import { createIntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
 import type { IntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
@@ -315,6 +317,8 @@ export interface CoreApplicationOptions {
   readonly maintenanceGate?: MaintenanceWriteGate;
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  /** Static Host dependency; supplying it does not authorize any repair or model call. */
+  readonly gitAgentRuntimeFactory?: ProductionGitAgentRuntimeFactory;
   /** Explicit trusted recording policy; omitted means required. Never supplied by Work tools. */
   readonly workRecordingMode?: 'required' | 'best_effort';
   /** Trusted delivery adapters; absent until explicitly assembled. */
@@ -554,6 +558,7 @@ const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
   'maintenanceGate',
   'workRuntimeFactory',
+  'gitAgentRuntimeFactory',
   'workRecordingMode',
   'batchDeliveryFactory',
   'featureDeliveryFactory',
@@ -666,6 +671,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   }
   if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
     throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
+  }
+  if (object.gitAgentRuntimeFactory !== undefined && typeof object.gitAgentRuntimeFactory !== 'function') {
+    throw validationError(context, 'gitAgentRuntimeFactory', 'trusted_factory_required');
   }
   if (object.batchDeliveryFactory !== undefined && typeof object.batchDeliveryFactory !== 'function') {
     throw validationError(context, 'batchDeliveryFactory', 'trusted_factory_required');
@@ -1503,6 +1511,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const workExecution = assembleWorkExecution({ session,
       integration: {
         ensure: (projectId, runId) => dagIntegration!.ensure(projectId,runId),
+        consumeRepairForRun: (projectId, runId) => dagIntegration!.consumeRepairForRun(projectId,runId),
         recover: () => dagIntegration!.recover(),
         enterQuiesce: () => dagIntegration!.enterQuiesce(),
         awaitQuiesce: budgetMs => dagIntegration!.awaitQuiesce(budgetMs),
@@ -1538,6 +1547,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     /* P07-1 / F-008：受信补回执后恢复状态重评为 complete 时，恢复周期调度
      * （start 幂等；startup 时被 blocked 跳过的定时器在此补启）。 */
     dagIntegration = assembleDagIntegration({session,dataRoot:basePathService.dataRoot(),artifacts:artifactStore,files:artifactFileStore,
+      capabilityCatalog,
+      runtimeFactory: dataRestoreIsolation ? undefined : object.gitAgentRuntimeFactory as ProductionGitAgentRuntimeFactory | undefined,
       publisher:workspacePublisher,processes:workspaceCommandProcess,lock:workspaceGitLock,nowUtcMs,
       assertCanDispatch() {
         if(dataRestoreIsolation || startupRecovery.blocked()) throw new PublicError('resource_busy','execution.start',undefined,{details:{reason:'startup_recovery'}});

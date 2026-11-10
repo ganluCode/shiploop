@@ -169,6 +169,8 @@ export interface WorkSchedulerOptions {
    * planning Task 送入编码 DAG，也不自行准备输入或认领。
    */
   readonly gitAgentRepair?: { consume(ref: SchedulerRunRef): Promise<void> };
+  /** P08 repair integration: an authorized queued Run is consumed before the normal DAG. */
+  readonly integrationRepair?: { consume(ref: SchedulerRunRef): Promise<boolean> };
   readonly planning?: SchedulerPlanningPorts;
   /**
    * 每个候选 Run 在 DAG 评估/认领之前的受信短操作（当前用于 F-006 派发归属与

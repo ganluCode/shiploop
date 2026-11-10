@@ -14,6 +14,7 @@ import { gitCommitSourceDigest } from './controlled-git-commit.js';
 import type { createControlledGitCommitService } from './controlled-git-commit.js';
 import type { GitIntegrationReconciliationDependencies, GitIntegrationReconciliationService } from '../ports/git-integration-reconciliation.js';
 import { createGitIntegrationReconciliationService } from './git-integration-reconciliation.js';
+import { readIntegrationCommitResources } from './integration-resource-fence.js';
 
 const OP = 'GitCommit.reconcile';
 function fail(reason: string): never {
@@ -54,7 +55,8 @@ export function createGitCommitReconciliationService(deps: any): any {
     // A recorded terminal result is historical evidence, never a fresh delivery grant.
     if (original.status !== 'pending') return recorded(original);
     const intent = original.intent;
-    if (!isUuidV4(request.operationId) && readGitAgentIntegrationCommitBinding(intent) === null) fail('invalid_operation_id');
+    const repairBinding = readGitAgentIntegrationCommitBinding(intent);
+    if (!isUuidV4(request.operationId) && repairBinding === null) fail('invalid_operation_id');
     const authorization = structuredClone(deps.readAuthorization(request));
     const { baseline, resourceIdentity } = authorization;
     function sameIntent(auth: GitCommitAuthorization) {
@@ -75,6 +77,7 @@ export function createGitCommitReconciliationService(deps: any): any {
       || baseline.repositoryBindingId !== intent.repositoryBindingId) fail('authorization_identity_mismatch');
     const workspaceKey = `workspace:${createHash('sha256').update(JSON.stringify([intent.repoIdentity, intent.worktreePath])).digest('hex')}`;
     function held() {
+      if (repairBinding !== null) return readIntegrationCommitResources(deps.integrationResources,request,resourceIdentity,repairBinding.sourceOperationId,now());
       const snapshot = deps.resources.read(resourceIdentity);
       if (!isDeepStrictEqual(snapshot.identity, resourceIdentity) || snapshot.leases.length !== 3
         || ['global:execution', `project:${intent.projectId}:work`, workspaceKey].some((key, index) => {
@@ -92,8 +95,12 @@ export function createGitCommitReconciliationService(deps: any): any {
       if (!isDeepStrictEqual(held(), snapshot)) fail('writer_identity_changed');
     }
     current();
-    const token = await deps.stopVerifier.verify(snapshot);
-    if (token === null || !isDeepStrictEqual(deps.stopVerifier.inspect(token), snapshot)) fail('previous_writer_stop_unconfirmed');
+    if (repairBinding !== null) {
+      if (!await deps.integrationResources.verifyStopped(snapshot)) fail('previous_writer_stop_unconfirmed');
+    } else {
+      const token = await deps.stopVerifier.verify(snapshot);
+      if (token === null || !isDeepStrictEqual(deps.stopVerifier.inspect(token), snapshot)) fail('previous_writer_stop_unconfirmed');
+    }
     current();
     const lockInput = { repoIdentity: intent.repoIdentity, workspacePath: intent.worktreePath,
       gitCommonDir: baseline.gitCommonDir, operationId: controlledGitCommitLockId(intent.operationId) };

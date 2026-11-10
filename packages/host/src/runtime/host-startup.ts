@@ -91,6 +91,7 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 const ALLOWED_OPTION_KEYS = [
   'workToolAuthority',
   'workRuntimeFactory',
+  'gitAgentRuntimeFactory',
   'workRecordingMode',
   'batchDeliveryFactory',
   'featureDeliveryFactory',
@@ -119,6 +120,7 @@ export interface HostStartOptions {
   readonly workToolAuthority?: Pick<WorkToolChannelDeps, 'currentBinding' | 'candidateContext'>;
   /** Trusted code injection only; not accepted from CLI, environment or discovery. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  readonly gitAgentRuntimeFactory?: CoreApplicationOptions['gitAgentRuntimeFactory'];
   /** Explicit trusted recording policy; omitted means required. Not a request/env/CLI option. */
   readonly workRecordingMode?: CoreApplicationOptions['workRecordingMode'];
   /** Static trusted adapters only; never read from argv, env or request fields. */
@@ -263,6 +265,9 @@ function validateStartOptions(options: HostStartOptions): void {
   if (options.batchDeliveryFactory !== undefined && typeof options.batchDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'batchDeliveryFactory' });
   }
+  if (options.gitAgentRuntimeFactory !== undefined && typeof options.gitAgentRuntimeFactory !== 'function') {
+    throw invalidInput('trusted_factory_required', { field: 'gitAgentRuntimeFactory' });
+  }
   if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
   }
@@ -405,6 +410,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       ...(options.projectResourceSources === undefined ? {} : { projectResourceSources: options.projectResourceSources }),
       ...(options.notificationChannels === undefined ? {} : { notificationChannels: options.notificationChannels }),
       workRuntimeFactory: options.workRuntimeFactory,
+      gitAgentRuntimeFactory: options.gitAgentRuntimeFactory,
       workRecordingMode: options.workRecordingMode,
       batchDeliveryFactory: options.batchDeliveryFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,

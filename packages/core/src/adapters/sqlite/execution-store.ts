@@ -1867,12 +1867,15 @@ export function createSqliteExecutionAccess(
    * ------------------------------------------------------------ */
 
   function activeRepairAttemptCount(projectId: string, runIds: readonly string[]): number {
-    if (runIds.length === 0 || !session.database.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'git_agent_repair_attempts'",
-    ).get()) return 0;
-    return (session.database.prepare(`SELECT COUNT(*) AS count FROM git_agent_repair_attempts
-      WHERE project_id = ? AND run_id IN (${runIds.map(() => '?').join(',')}) AND stopped_at IS NULL`)
-      .get(projectId, ...runIds) as { count: number }).count;
+    if (runIds.length === 0) return 0;
+    let count = 0;
+    for (const table of ['git_agent_repair_attempts','integration_repair_attempts']) {
+      if (!session.database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
+      count += (session.database.prepare(`SELECT COUNT(*) AS count FROM ${table}
+        WHERE project_id = ? AND run_id IN (${runIds.map(() => '?').join(',')}) AND stopped_at IS NULL`)
+        .get(projectId, ...runIds) as { count: number }).count;
+    }
+    return count;
   }
 
   function activeAttemptCountForRun(projectId: string, runId: string): number {

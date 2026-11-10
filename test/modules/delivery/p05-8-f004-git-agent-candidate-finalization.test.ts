@@ -9,6 +9,9 @@ import type { GitCommitAuthorization } from '../../../packages/core/src/ports/co
 import type { GitAgentRepairView } from '../../../packages/core/src/ports/git-agent-repair-store.ts';
 import { gitCommitFixture } from '../../helpers/controlled-git-commit.ts';
 import { git } from '../../helpers/git-repo.ts';
+import { createIntegrationExecutionPlan, computeCoveredInputDigest } from '../../../packages/core/src/ports/integration-execution-plan.ts';
+import { createIntegrationRepairCommitAuthorization } from '../../../packages/core/src/application/integration-repair-commit-authorization.ts';
+import type { IntegrationRepairVerificationRecord } from '../../../packages/core/src/ports/integration-repair-verification.ts';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
@@ -58,6 +61,50 @@ async function fixture(status: 'modified' | 'no_change' = 'modified') {
 }
 
 describe('P05-8 F-004 GitAgent candidate finalization', () => {
+  it('[case:git-agent-repair-integration-authorization] derives repair commit parents and verification refs from frozen Core facts', async () => {
+    const f = await fixture();
+    const sourcePlan = createIntegrationExecutionPlan({
+      projectId: f.f.box.projectId, phaseId: 'phase-1', batchId: 'batch-1', runId: 'run-1', successorFeatureId: f.f.box.featureId,
+      target: { baseCommit: f.f.baseline.baseCommit, repoIdentity: f.f.baseline.repoIdentity, canonicalPath: f.f.baseline.canonicalPath, gitCommonDir: f.f.baseline.gitCommonDir },
+      predecessors: [{ projectId: f.f.box.projectId, phaseId: 'phase-1', batchId: 'batch-1', runId: 'run-1', featureId: 'predecessor',
+        dependencyPassed: true, coveredInputIds: ['input'], delivery: { commitSha: 'a'.repeat(40), repoIdentity: f.f.baseline.repoIdentity,
+          inputDigest: computeCoveredInputDigest([{ inputId: 'input', digest: digest('input') }]), evidenceId: 'delivery-evidence', evidenceDigest: digest('delivery') } }],
+      approvedInputs: [{ inputId: 'input', digest: digest('input') }], mergeOrder: ['predecessor'], verificationScope: ['combined-checks'], integrationResult: null,
+    });
+    const sourceDigest = digest('source-operation');
+    const source = { intentDigest: sourceDigest, intent: { ...f.f.authorization.intent, operationId: sourcePlan.integrationId,
+      operationType: 'integration' as const, runId: sourcePlan.runId, featureId: f.f.box.featureId, integrationPlan: sourcePlan,
+      expectedHead: f.f.baseline.baseCommit, codeDigest: digest('source-code'),budgetSnapshot:{sourcePlanId:'business-plan'} } } as never;
+    const repairId = 'repair-1';
+    const repair = {
+      receipt: { repairId, parentBatchId: sourcePlan.batchId, runId: sourcePlan.runId, authorizationDigest: digest('repair-authorization'), blockedReason: null },
+      request: { projectId: f.f.box.projectId, phaseId: sourcePlan.phaseId, parentBatchId: sourcePlan.batchId, featureId: f.f.box.featureId, runId: sourcePlan.runId,
+        repairId, authorizationDigest: digest('repair-authorization'), source: { operationId: sourcePlan.integrationId, operationDigest: sourceDigest,
+          inputDigest: sourcePlan.inputDigest, integrationId: sourcePlan.integrationId }, target: { repoIdentity: f.f.baseline.repoIdentity, baselineCommitSha: f.f.baseline.baseCommit } },
+      authorizationVersion: 1, blockedReason: null, attempts: [{ id: 'attempt-1', repairId, projectId: f.f.box.projectId, runId: sourcePlan.runId,
+        ownerId: 'owner-1', hostInstanceId: 'host-1', authorizationVersion: 1, dispatch: {} as never, startedAtUtcMs: 1,
+        deadlineUtcMs: Date.now() + 10_000, maxTokens: 10, maxRuntimeMs: 10_000, output: { schemaVersion: 1, repairId, status: 'modified',
+          changedPaths: ['source.ts'], usage: { consumedTokens: 1, runtimeMs: 1 }, failureCode: null }, stoppedAtUtcMs: 2 }],
+    } as never;
+    const inspection = await f.f.inspector.inspect(f.f.baseline);
+    const facts = await f.f.deps.driver.open(f.f.baseline, () => undefined).facts();
+    const verification: IntegrationRepairVerificationRecord = { projectId: f.f.box.projectId, repairId, attemptId: 'attempt-1',
+      artifact: { artifactId: 'artifact-1', projectId: f.f.box.projectId, contentHash: digest('artifact'), sizeBytes: 1, locator: 'test/artifact.json', version: 1 },
+      planRef: { id: 'plan-evidence', digest: digest('plan') }, resultRef: { id: 'result-evidence', digest: digest('result') }, inputDigest: sourcePlan.inputDigest, status: 'passed' };
+    const authorization = createIntegrationRepairCommitAuthorization({ repair, source, verification, baseline: f.f.baseline, inspection, facts,
+      changedPaths: ['source.ts'], attemptId: 'attempt-1', ownerId: 'owner-1', hostInstanceId: 'host-1', executionVersion: 1,
+      expectedFeatureRevision: f.f.authorization.intent.expectedFeatureRevision,
+      sourcePlan:{integrationId:'business-plan',inputDigest:digest('business'),revision:3},mergeParents:['a'.repeat(40)] });
+    expect(authorization.intent.operationType).toBe('integration_commit');
+    expect(authorization.intent.integrationPlan?.repairAuthorization).toMatchObject({ repairId, sourceOperationId: sourcePlan.integrationId });
+    expect(authorization.intent.budgetSnapshot?.gitAgentRepair).toMatchObject({ parents: [sourcePlan.target.baseCommit, 'a'.repeat(40)] });
+    expect(authorization.intent.verificationRefs).toEqual([
+      { kind: 'artifact', id: 'plan-evidence', digest: digest('plan') },
+      { kind: 'verification_result', id: 'result-evidence', digest: digest('result') },
+    ]);
+    expect(authorization.allowedPaths).toEqual(['source.ts']);
+  });
+
   it('[case:git-agent-candidate-verified-commit] Core verifies the real candidate and creates one controlled operation', async () => {
     const f = await fixture();
     writeFileSync(join(f.f.root, 'source.ts'), 'candidate repair\n');

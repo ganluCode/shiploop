@@ -81,6 +81,18 @@ function fixture() {
 }
 
 describe('DAG F-011 integration candidate chain', () => {
+  it('[case:repair-same-run-operation-identity] reusing the pending member Run produces a distinct stable repair operation', () => {
+    const f = fixture();
+    const view = { ...f.view, receipt: { ...f.view.receipt, runId: f.sourcePlan.runId } };
+    const plan = gitAgentIntegrationCommitPlan(view, f.sourcePlan);
+    expect(plan.runId).toBe(f.sourcePlan.runId);
+    expect(plan.integrationId).not.toBe(f.sourcePlan.integrationId);
+    expect(gitAgentIntegrationCommitPlan(structuredClone(view), f.sourcePlan)).toEqual(plan);
+    expect(plan.approvedInputs).toEqual(f.sourcePlan.approvedInputs);
+    expect(plan.predecessors).toEqual(f.sourcePlan.predecessors);
+    const other = { ...view, request: { ...view.request, repairId: 'different-repair' } };
+    expect(gitAgentIntegrationCommitPlan(other, f.sourcePlan).integrationId).not.toBe(plan.integrationId);
+  });
   it('[case:repair-integration-commit-and-replay] publishes only after a controlled integration commit and reuses it on replay', async () => {
     const f = fixture(), service = createGitAgentCandidateFinalizationService(f.deps);
     expect(await service.finalize(f.candidateRequest)).toMatchObject({ outcome: 'committed', successorUnlocked: true });

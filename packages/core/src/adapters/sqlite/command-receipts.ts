@@ -182,10 +182,16 @@ export function createSqliteCommandReceiptAccess(
     const rows = db.prepare("SELECT id, feature_id FROM runs WHERE project_id = ? AND batch_id = ? AND purpose = 'execute' AND dispatch_ordinal = 1 ORDER BY feature_id, id")
       .all(projectId, batchId) as { id: string; feature_id: string }[];
     if (rows.length !== members.length ||
-        new Set(rows.map(row => row.feature_id)).size !== members.length || rows.some(row => !members.includes(row.feature_id)) || rows[0]?.id !== runId) {
+        new Set(rows.map(row => row.feature_id)).size !== members.length || rows.some(row => !members.includes(row.feature_id))) {
       throw new StorageError('corrupt', RECEIPT_READ_OPERATION, '初始 Run 关联与固定 Batch 不一致', { details: { reason: 'corrupt_receipt_association' } });
     }
-    return rows.map(row => row.id);
+    // The accepted receipt follows the immutable member order, not UUID collation.
+    const byFeature = new Map(rows.map(row => [row.feature_id, row.id]));
+    const ordered = members.map(id => byFeature.get(id)!);
+    if (ordered[0] !== runId) throw new StorageError('corrupt', RECEIPT_READ_OPERATION, '初始 Run 锚点与固定 Batch 不一致', {
+      details: { reason: 'corrupt_receipt_association' },
+    });
+    return ordered;
   }
 
   function mapRow(row: CommandReceiptSqlRow | undefined, operation: string): CommandReceipt | undefined {

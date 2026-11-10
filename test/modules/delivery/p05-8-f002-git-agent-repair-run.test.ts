@@ -201,6 +201,61 @@ describe('P05-8 F-002 durable GitAgent orchestration', () => {
     expect(batchFor(f)).toMatchObject({ attemptsCreated: 1, runtimeStarts: 1 });
   });
 
+  it.each(['modified', 'no_change'])('[case:repair-last-successful-candidate-%s] the last allowed successful attempt remains eligible for candidate verification', async status => {
+    const f = await fixture();
+    const request = revised(f.request, { budget: { ...f.request.budget, remainingAttempts: 1 } });
+    const receipt = f.service().authorize(request);
+    const identity = claimFor(f);
+    f.service().claim(identity);
+    const settled = f.service().settle(identity, output(status), { stopped: true });
+    expect(settled.blockedReason).toBeNull();
+    expect(settled.attempts[0]?.output?.status).toBe(status);
+    expect(runFor(f, receipt.runId!)).toMatchObject({ status: 'paused', reason: 'repair_pending_verification' });
+    expect(f.service().settle(identity, output(status), { stopped: true })).toEqual(settled);
+    expect(f.service().claim(claimFor(f, 'no-retry-after-candidate'))).toBeNull();
+    expect(batchFor(f)).toMatchObject({ attemptsCreated: 1, runtimeStarts: 1 });
+  });
+
+  it.each(['maxTotalAttempts', 'maxRuntimeStarts', 'maxNoProgressRuns'] as const)(
+    '[case:repair-candidate-at-parent-admission-cap-%s] parent admission counters do not reject an already produced candidate', async cap => {
+      const f = await fixture();
+      const receipt = f.service().authorize(f.request);
+      const identity = claimFor(f);
+      f.service().claim(identity);
+      const column = { maxTotalAttempts: 'attempts_created', maxRuntimeStarts: 'runtime_starts', maxNoProgressRuns: 'no_progress_runs' }[cap];
+      f.box.session.database.prepare(`UPDATE execution_batches SET ${column} = ? WHERE id = ?`)
+        .run(batchFor(f).budgetSnapshot.batch[cap], f.plan.batchId);
+      const before = batchFor(f);
+      const settled = f.service().settle(identity, output('modified'), { stopped: true });
+      expect(settled.blockedReason).toBeNull();
+      expect(runFor(f, receipt.runId!)).toMatchObject({ status: 'paused', reason: 'repair_pending_verification' });
+      expect(f.service().claim(claimFor(f, 'candidate-must-not-restart'))).toBeNull();
+      expect(batchFor(f)).toEqual(before);
+    },
+  );
+
+  it('[case:repair-last-candidate-with-failure] successful status with a failure code is not a valid final candidate', async () => {
+    const f = await fixture();
+    f.service().authorize(revised(f.request, { budget: { ...f.request.budget, remainingAttempts: 1 } }));
+    const identity = claimFor(f);
+    f.service().claim(identity);
+    expect(f.service().settle(identity, output('modified', 10, 100, 'runtime_failed'), { stopped: true }).blockedReason)
+      .toBe('budget_exhausted');
+  });
+
+  it.each(['maxTotalAttempts', 'maxRuntimeStarts', 'maxNoProgressRuns'] as const)(
+    '[case:repair-candidate-over-parent-cap-%s] successful candidates cannot bypass an exceeded parent counter', async cap => {
+      const f = await fixture();
+      f.service().authorize(f.request);
+      const identity = claimFor(f);
+      f.service().claim(identity);
+      const column = { maxTotalAttempts: 'attempts_created', maxRuntimeStarts: 'runtime_starts', maxNoProgressRuns: 'no_progress_runs' }[cap];
+      f.box.session.database.prepare(`UPDATE execution_batches SET ${column} = ? WHERE id = ?`)
+        .run(batchFor(f).budgetSnapshot.batch[cap] + 1, f.plan.batchId);
+      expect(f.service().settle(identity, output('modified'), { stopped: true }).blockedReason).toBe('budget_exhausted');
+    },
+  );
+
   it('[case:repair-pause-keeps-input-and-budget] pause waits for the admitted writer, then retains usage and original deadline', async () => {
     const f = await fixture();
     const receipt = f.service().authorize(f.request);

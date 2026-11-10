@@ -14,6 +14,7 @@ import type { EffectiveSettings } from '../../application/effective-settings.js'
 import { observeWithin } from '../../application/execution-supervision.js';
 import { loadBuiltinPromptTemplates } from '../fs/prompt-templates.js';
 import { publishRuntimeDocumentContext } from '../runtime-document-context.js';
+import { integrationRepairReservedTokens } from './integration-repair-budget.js';
 
 type RepairPolicy = Extract<ResolvedFeatureAutoFixPolicy, { status: 'ready' }>;
 
@@ -49,7 +50,7 @@ export async function executeFeatureRepair(options: {
     if (parent.runtime_starts >= limits.maxRuntimeStarts || parent.deadline_at <= o.now()) throw new Error('feature_repair_parent_budget');
     if (limits.maxCostTotal !== undefined) throw new Error('feature_repair_cost_budget_unconfirmed');
     if (limits.maxTokenTotal !== undefined) {
-      let used = 0;
+      let used = integrationRepairReservedTokens(o.session, o.projectId, parent.id);
       const coding = db.prepare(`SELECT a.usage_summary FROM attempts a JOIN runs r ON r.id=a.run_id
         WHERE a.project_id=? AND r.batch_id=?`).all(o.projectId, parent.id) as { usage_summary: string | null }[];
       for (const item of coding) {

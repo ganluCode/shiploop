@@ -2,12 +2,15 @@ import type { GitOperationRegisterInput, GitOperationRecord } from './git-operat
 import type { ConfirmedGitIdentity } from './delivery-policy.js';
 import type { WorkspaceBaseline } from './workspace.js';
 import type { WorkspaceContentEntry } from './workspace-inspector.js';
-import type { FeatureResourceLeaseRecord } from './feature-resources.js';
+import type { FeatureResourceLeaseRecord, FeatureResourceSet } from './feature-resources.js';
 import type { CommandProcessIdentity } from './command-process.js';
 import type { WorkResourceIdentity } from './work-resources.js';
 
 /** Real integration/repair delegation; it never fabricates the three Task workspace leases. */
 export interface IntegrationCommitResourceSnapshot {
+  readonly integrationId: string;
+  readonly ownerVersion: number;
+  readonly resourceSet: FeatureResourceSet;
   readonly identity: WorkResourceIdentity;
   readonly invocationId: string | null;
   readonly processIdentity: CommandProcessIdentity | null;

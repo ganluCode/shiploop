@@ -28,6 +28,54 @@ function manualTimers() {
 }
 
 describe('F-006 bounded Work Scheduler', () => {
+  function minimalRun(status: 'queued' | 'running' = 'queued') {
+    return { id: 'r-1', createdAtUtcMs: NOW, projectId: 'p-1', revision: 1, updatedAtUtcMs: NOW,
+      batchId: 'b-1', featureId: 'f-1', purpose: 'execute', labels: [], inputSnapshot: {}, configSnapshot: {},
+      status, scopeDigest: 'scope', workKey: 'work', dispatchOrdinal: 0, maxAttemptsPerRun: 1,
+      runTimeLimitMs: 60_000, attemptsCreated: 0, reason: null, startedAtUtcMs: null, endedAtUtcMs: null,
+      pauseRequestedAtUtcMs: null } as const;
+  }
+
+  it('hands an integration repair Run to its consumer before beforeRun or the coding DAG', async () => {
+    const run = minimalRun();
+    const beforeRun = vi.fn();
+    const consume = vi.fn(async () => true);
+    const store = {
+      listActiveRuns: () => ({ runs: [{ projectId: run.projectId, runId: run.id }], hasMore: false, nextCursor: null }),
+      readRun: () => run,
+      recordRunReason: vi.fn(),
+      isFinalVerificationHandoffClaimed: () => false,
+      recordFinalVerificationHandoff: () => false,
+    } as never;
+    const scheduler = createWorkScheduler({ store, dag: { evaluate: () => ({ reason: 'ready', readyTaskIds: ['t-1'] }) } as never,
+      integrationRepair: { consume }, beforeRun });
+    try {
+      expect((await scheduler.scan()).runs[0]).toMatchObject({ reason: 'repair_consumer_handed_off', claimed: false });
+      expect(consume).toHaveBeenCalledWith({ projectId: 'p-1', runId: 'r-1' });
+      expect(beforeRun).not.toHaveBeenCalled();
+    } finally { await scheduler.close(); }
+  });
+
+  it('keeps the normal beforeRun and coding path when no integration repair is consumed', async () => {
+    const run = minimalRun();
+    const beforeRun = vi.fn();
+    const consume = vi.fn(async () => false);
+    const store = {
+      listActiveRuns: () => ({ runs: [{ projectId: run.projectId, runId: run.id }], hasMore: false, nextCursor: null }),
+      readRun: () => run,
+      recordRunReason: vi.fn(),
+      isFinalVerificationHandoffClaimed: () => false,
+      recordFinalVerificationHandoff: () => false,
+    } as never;
+    const scheduler = createWorkScheduler({ store, dag: { evaluate: () => ({ reason: 'ready', readyTaskIds: ['t-1'] }) } as never,
+      integrationRepair: { consume }, beforeRun });
+    try {
+      expect((await scheduler.scan()).runs[0]).toMatchObject({ reason: 'scheduler_capability_missing', claimed: false });
+      expect(consume).toHaveBeenCalledTimes(1);
+      expect(beforeRun).toHaveBeenCalledWith({ projectId: 'p-1', runId: 'r-1' });
+    } finally { await scheduler.close(); }
+  });
+
   it('persists the public preparation failure reason without creating an attempt', async () => {
     const f = await openClaimFixture();
     const scheduler = createWorkScheduler({ ...schedulerOptions(f), claims: f.store(),

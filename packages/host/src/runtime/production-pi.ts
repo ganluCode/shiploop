@@ -18,6 +18,8 @@ import { startProductionPlanningBridge } from './production-planning-bridge.js';
 import { createProductionCredentialStore } from './production-pi-auth.js';
 import { productionGitAgentRequest } from './pi-git-agent-adapter.js';
 import { captureProjectDocuments, parseProjectDocumentSnapshot } from './production-project-documents.js';
+import { createProductionPiGitAgentDriver } from './production-pi-git-agent.js';
+import { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
 
 export interface ProductionPiBootstrap {
   readonly config: ProductionPiConfig;
@@ -34,7 +36,7 @@ export interface ProductionPiBootstrap {
 }
 
 /** Returns an empty catalog until the operator explicitly installs private pi/runtime.json. */
-export async function productionPiOptions(dataRoot: string): Promise<Pick<HostStartOptions, 'capabilityCatalog' | 'workRuntimeFactory' | 'notificationChannels'>> {
+export async function productionPiOptions(dataRoot: string): Promise<Pick<HostStartOptions, 'capabilityCatalog' | 'workRuntimeFactory' | 'gitAgentRuntimeFactory' | 'notificationChannels'>> {
   dataRoot = existsSync(dataRoot) ? realpathSync(dataRoot) : dataRoot;
   const config = readProductionPiConfig(dataRoot);
   if (!config) return { capabilityCatalog: createStaticRuntimeCapabilityCatalog([]) };
@@ -189,5 +191,9 @@ export async function productionPiOptions(dataRoot: string): Promise<Pick<HostSt
       catalog: context.capabilityCatalog, descriptor: base.entries[0].descriptor,
       controlsFor: projectId => context.effectiveSettings?.(projectId).policies.piAgent?.value }) };
   };
-  return { capabilityCatalog, workRuntimeFactory, notificationChannels: productionFeishuChannels(dataRoot, config, () => effectiveSettings) };
+  return { capabilityCatalog, workRuntimeFactory,
+    gitAgentRuntimeFactory: authority => createPiGitAgentRuntimeAdapter({ driver: createProductionPiGitAgentDriver({
+      runtimeFactory: workRuntimeFactory, capabilityCatalog, authority,
+    }) }),
+    notificationChannels: productionFeishuChannels(dataRoot, config, () => effectiveSettings) };
 }

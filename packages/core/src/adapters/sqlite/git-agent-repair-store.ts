@@ -16,6 +16,7 @@ import { enqueueAuthorizedRunInTransaction } from '../../application/execution-d
 import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
 import { GIT_REPAIR_STATUS_EVENT_TYPE } from '../../ports/events.js';
 import type { SqliteStorageSession } from './session.js';
+import { integrationRepairReservedTokens } from './integration-repair-budget.js';
 
 const OP = 'GitAgentRepair';
 const hash = (value: unknown) => createHash('sha256').update(stableStringify(value)).digest('hex');
@@ -163,7 +164,7 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
     const batch = tx.getExecutionBatch(request.projectId, request.parentBatchId);
     const limit = batch.budgetSnapshot.batch.maxTokenTotal;
     if (limit === undefined) return Number.MAX_SAFE_INTEGER;
-    let used = 0;
+    let used = integrationRepairReservedTokens(session, request.projectId, batch.id);
     const coding = db.prepare(`SELECT a.usage_summary FROM attempts a JOIN runs r ON r.id = a.run_id
       WHERE a.project_id = ? AND r.batch_id = ?`).all(request.projectId, batch.id) as { usage_summary: string | null }[];
     for (const item of coding) {
@@ -187,7 +188,7 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
     }
     return Number.isSafeInteger(used) ? Math.max(0, limit - used) : 0;
   }
-  function parentAllows(tx: CommandTransaction, request: GitAgentRepairRequest, creatingRun: boolean, checkControl = true): boolean {
+  function parentAllows(tx: CommandTransaction, request: GitAgentRepairRequest, creatingRun: boolean, checkControl = true, checkAdmission = true): boolean {
     const batch = tx.getExecutionBatch(request.projectId, request.parentBatchId);
     const limit = batch.budgetSnapshot.batch;
     const tokens = parentTokensRemaining(tx, request);
@@ -195,8 +196,11 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
     return (!checkControl || (['queued', 'running'].includes(batch.status) && batch.pauseRequestedAtUtcMs === null))
       && now() < Math.min(batch.deadlineAtUtcMs, request.budget.deadlineUtcMs)
       && (!creatingRun || batch.runsCreated < limit.maxRuns)
-      && batch.attemptsCreated < limit.maxTotalAttempts && batch.runtimeStarts < limit.maxRuntimeStarts
-      && batch.noProgressRuns < limit.maxNoProgressRuns
+      && (checkAdmission
+        ? batch.attemptsCreated < limit.maxTotalAttempts && batch.runtimeStarts < limit.maxRuntimeStarts
+          && batch.noProgressRuns < limit.maxNoProgressRuns
+        : batch.attemptsCreated <= limit.maxTotalAttempts && batch.runtimeStarts <= limit.maxRuntimeStarts
+          && batch.noProgressRuns <= limit.maxNoProgressRuns)
       && tokens !== null && tokens > 0 && limit.maxCostTotal === undefined;
   }
   function claimIdentity(input: GitAgentRepairClaim) {
@@ -379,18 +383,22 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
       const tokensUsed = current.attempts.reduce((n, a) => n + (a.id === attempt.id ? output.usage.consumedTokens : (a.output?.usage.consumedTokens ?? a.maxTokens)), 0);
       const runtimeUsed = current.attempts.reduce((n, a) => n + (a.id === attempt.id ? Math.max(output.usage.runtimeMs, now() - a.startedAtUtcMs)
         : Math.max(a.output?.usage.runtimeMs ?? a.maxRuntimeMs, (a.stoppedAtUtcMs ?? now()) - a.startedAtUtcMs)), 0);
+      // A final successful candidate needs verification, not another Runtime admission.
+      const candidate = (output.status === 'modified' || output.status === 'no_change') && output.failureCode === null;
       if (tokensUsed >= current.request.budget.remainingTokens || output.usage.consumedTokens > attempt.maxTokens
         || runtimeUsed >= Math.min(current.request.budget.remainingRuntimeMs, run.runTimeLimitMs)
         || (run.startedAtUtcMs !== null && now() >= run.startedAtUtcMs + run.runTimeLimitMs)
-        || current.attempts.length >= Math.min(current.request.budget.remainingAttempts, run.maxAttemptsPerRun)
-        || !parentAllows(tx, current.request, false, false)
+        || (candidate
+          ? current.attempts.length > Math.min(current.request.budget.remainingAttempts, run.maxAttemptsPerRun)
+          : current.attempts.length >= Math.min(current.request.budget.remainingAttempts, run.maxAttemptsPerRun))
+        || !parentAllows(tx, current.request, false, false, !candidate)
         || now() >= Math.min(attempt.deadlineUtcMs, batch.deadlineAtUtcMs)) hold(tx, input.projectId, input.repairId, 'budget_exhausted');
       const risk = output.failureCode as GitAgentRepairHold | null;
       if (risk !== null && GIT_AGENT_REPAIR_HOLDS.includes(risk)) hold(tx, input.projectId, input.repairId, risk);
       // Only lifecycle bookkeeping: no integration evidence or successor readiness is changed.
       if (run.status === 'pausing') db.prepare("UPDATE runs SET status = 'paused', revision = revision + 1, updated_at = ? WHERE id = ?")
         .run(now(), run.id);
-      else if (run.status === 'running' && output.status === 'modified') db.prepare("UPDATE runs SET status = 'paused', reason = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
+      else if (run.status === 'running' && candidate) db.prepare("UPDATE runs SET status = 'paused', reason = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
         .run(row(input.projectId, input.repairId).blocked_reason ?? 'repair_pending_verification', now(), run.id);
       if (batch.status === 'pausing') {
         const coding = db.prepare(`SELECT a.id FROM attempts a JOIN runs r ON r.id = a.run_id

@@ -116,6 +116,15 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
   }
 
   async function processRun(projectId: string, runId: string): Promise<SchedulerRunResult> {
+    const initialRun = options.store.readRun(projectId, runId);
+    if (options.integrationRepair !== undefined && ['queued', 'running'].includes(initialRun.status)) {
+      const consumed = await options.integrationRepair.consume({ projectId, runId });
+      if (consumed) {
+        const result: SchedulerRunResult = { projectId, runId, reason: 'repair_consumer_handed_off', capabilityGaps: [], claimed: false, handoff: null };
+        diagnostics.set(key(projectId, runId), result);
+        return result;
+      }
+    }
     // F-006：先结算已无活动执行的派发归属/槽位（暂停/取消/终态），再评估 DAG。
     // 结算失败不影响补扫：保留当前占槽，原因由调用方记录并可查询。
     if (options.beforeRun !== undefined) {

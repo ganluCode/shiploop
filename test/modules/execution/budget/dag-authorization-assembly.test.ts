@@ -9,7 +9,7 @@ import { createBaselineWorkspaceReader } from '../../../../packages/core/src/ada
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../../../../packages/core/src/ports/execution-input-prepare.ts';
 import { readRunExecutionBaseline } from '../../../../packages/core/src/adapters/sqlite/run-execution-baseline.ts';
 
-it('[case:dag-authorize-one-visible-batch] pending members are visible Runs in one approved Batch with no coding baseline, Attempt or worktree', async () => {
+it.each(['ascending', 'descending'] as const)('[case:dag-authorize-one-visible-batch-%s] pending members are visible Runs in one approved Batch with no coding baseline, Attempt or worktree', async order => {
   const f = await openBudgetFixture();
   try {
     const db=f.session.database;
@@ -27,10 +27,13 @@ it('[case:dag-authorize-one-visible-batch] pending members are visible Runs in o
     const preview=createExecutionPreviewService({views:createSqlitePlanAccess(f.session),inspector:createRepositoryInspector(),
       workspace:createBaselineWorkspaceReader(),permissions:TRUSTED_PROJECT_PERMISSIONS_READER,nowMs:()=>NOW});
     const service=createExecutionStartService({preview,permissions:TRUSTED_PROJECT_PERMISSIONS_READER,nowMs:()=>NOW});
-    const preparedPreview=await preview.previewExecution(f.projectId,{featureIds:[f.featureId,successor],budget:{...f.budget}});
+    const featureIds = [f.featureId,successor].sort();
+    if (order === 'descending') featureIds.reverse();
+    const preparedPreview=await preview.previewExecution(f.projectId,{featureIds,budget:{...f.budget}});
     expect(preparedPreview.status).toBe('authorization_ready');
-    const payload = {featureIds:[f.featureId,successor],budget:{...f.budget} as Record<string,unknown>,previewDigest:preparedPreview.previewDigest!,retryBatchId:null as null,labels:[]};
+    const payload = {featureIds,budget:{...f.budget} as Record<string,unknown>,previewDigest:preparedPreview.previewDigest!,retryBatchId:null as null,labels:[]};
     const prepared=await service.prepareExecutionStart(f.projectId,payload);
+    if (prepared.kind !== 'fresh') throw new Error('expected fresh authorization');
     const commandId=randomUUID(),issuedAt=new Date(NOW).toISOString();
     const receipt=f.atomic.transact('fixture.authorize',tx=>service.submitExecutionStart({principalId:f.owner.principalId,commandId,
       scope:f.scope as {kind:'project';projectId:string},requestDigest:'a'.repeat(64),issuedAt},{payload,scope:f.scope as {kind:'project';projectId:string}},tx,prepared,{schedulerAssembled:true}));
@@ -38,6 +41,7 @@ it('[case:dag-authorize-one-visible-batch] pending members are visible Runs in o
     if(receipt.status!=='accepted'||!('runIds' in receipt))throw new Error('expected work accepted');
     const runs=db.prepare('SELECT id,feature_id,input_snapshot FROM runs WHERE batch_id=?').all(receipt.batchId) as {id:string;feature_id:string;input_snapshot:string}[];
     expect(runs).toHaveLength(2);
+    expect(receipt.runIds).toEqual(prepared.scopeFeatureIds.map(id => runs.find(run => run.feature_id === id)!.id));
     const target=runs.find(run=>run.feature_id===successor)!;
     const input=JSON.parse(target.input_snapshot);
     expect(input.workspaceBaseline).toBeUndefined();

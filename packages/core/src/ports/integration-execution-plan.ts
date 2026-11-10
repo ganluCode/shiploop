@@ -83,6 +83,8 @@ export interface IntegrationExecutionResult {
 }
 
 export interface IntegrationExecutionPlanInput {
+  /** Only repair operations set this; absent preserves historical deterministic identities. */
+  readonly repairAuthorization?: { readonly repairId: string; readonly authorizationDigest: string; readonly sourceOperationId: string };
   readonly projectId: string;
   readonly phaseId: string;
   readonly batchId: string;
@@ -107,7 +109,7 @@ export interface IntegrationExecutionPlan extends IntegrationExecutionPlanInput 
 
 const INPUT_KEYS = [
   'projectId', 'phaseId', 'batchId', 'runId', 'successorFeatureId', 'target', 'predecessors',
-  'approvedInputs', 'mergeOrder', 'verificationScope', 'integrationResult',
+  'approvedInputs', 'mergeOrder', 'verificationScope', 'integrationResult', 'repairAuthorization',
 ] as const;
 const TARGET_KEYS = ['baseCommit', 'repoIdentity', 'canonicalPath', 'gitCommonDir'] as const;
 const APPROVED_INPUT_KEYS = ['inputId', 'digest'] as const;
@@ -303,6 +305,7 @@ function frozenBody(input: IntegrationExecutionPlanInput): Record<string, unknow
     approvedInputs: input.approvedInputs,
     mergeOrder: input.mergeOrder,
     verificationScope: input.verificationScope,
+    ...(input.repairAuthorization === undefined ? {} : { repairAuthorization: input.repairAuthorization }),
   };
 }
 
@@ -316,6 +319,14 @@ function normalize(value: unknown, operation: string): IntegrationExecutionPlanI
   const runId = validateStableId(object.runId, ctx, 'runId');
   const successorFeatureId = validateStableId(object.successorFeatureId, ctx, 'successorFeatureId');
   const targetValue = target(object.target, ctx);
+  let repairAuthorization: IntegrationExecutionPlanInput['repairAuthorization'];
+  if (object.repairAuthorization !== undefined) {
+    const repair = requirePlainObject(object.repairAuthorization,ctx,'repairAuthorization');
+    rejectUnknownKeys(repair,['repairId','authorizationDigest','sourceOperationId'],ctx,'repairAuthorization');
+    repairAuthorization = { repairId:validateStableId(repair.repairId,ctx,'repairAuthorization.repairId'),
+      authorizationDigest:validateSha256Digest(repair.authorizationDigest,ctx,'repairAuthorization.authorizationDigest'),
+      sourceOperationId:validateStableId(repair.sourceOperationId,ctx,'repairAuthorization.sourceOperationId') };
+  }
 
   if (!Array.isArray(object.approvedInputs) || object.approvedInputs.length === 0 || object.approvedInputs.length > MAX_APPROVED_INPUTS) {
     throw validationError(ctx, 'approvedInputs', `必须是 1..${MAX_APPROVED_INPUTS} 项数组`, object.approvedInputs);
@@ -363,6 +374,7 @@ function normalize(value: unknown, operation: string): IntegrationExecutionPlanI
   return {
     projectId, phaseId, batchId, runId, successorFeatureId, target: targetValue,
     predecessors, approvedInputs, mergeOrder, verificationScope, integrationResult,
+    ...(repairAuthorization === undefined ? {} : { repairAuthorization }),
   };
 }
 

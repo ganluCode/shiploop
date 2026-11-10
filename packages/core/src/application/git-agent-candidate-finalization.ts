@@ -50,6 +50,7 @@ export interface GitAgentCandidateAuthorizationContext {
   readonly facts: GitCommitFacts;
   readonly verification: GitAgentCandidateVerificationResult;
   readonly operationId: string;
+  readonly commitPaths: readonly string[];
 }
 
 export interface GitAgentCandidateFinalizationResult {
@@ -385,6 +386,7 @@ export function createGitAgentCandidateFinalizationService(deps: GitAgentCandida
       }
       const verificationContext: GitAgentCandidateAuthorizationContext = {
         repair, attempt, output, baseline, inspection: afterVerification, facts: afterFacts, verification, operationId,
+        commitPaths: integrationPlan ? status.paths : changedPaths,
       };
       let authorization: GitCommitAuthorization;
       try { authorization = deps.readAuthorization(verificationContext); }

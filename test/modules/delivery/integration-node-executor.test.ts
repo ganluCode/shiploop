@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { createNodeIntegrationVerificationExecutor } from '../../../packages/core/src/adapters/integration-verification.ts';
+import { createNodeIntegrationVerificationExecutor, createNodeIntegrationCandidateVerificationExecutor } from '../../../packages/core/src/adapters/integration-verification.ts';
 import type { IntegrationVerificationExecutionInput } from '../../../packages/core/src/ports/integration-verification.ts';
 import type { ArtifactPublishResult } from '../../../packages/core/src/application/artifact-publish.ts';
 import type { WorkspaceInspection } from '../../../packages/core/src/ports/workspace-inspector.ts';
@@ -146,4 +146,61 @@ it('[case:integration-node-exec-evidence-publication] a missing or mismatched Ar
   f.publishArtifact.mockResolvedValue({ artifact: { projectId: 'foreign', id: 'wrong', status: 'ready', contentHash: 'f'.repeat(64) } } as unknown as ArtifactPublishResult);
   await expect(createNodeIntegrationVerificationExecutor(f.deps).start(f.input)).rejects.toMatchObject({ details: { reason: 'verification_evidence_incomplete' } });
   expect(f.start).not.toHaveBeenCalled();
+});
+
+function candidateFixture() {
+  const f = fixture();
+  const inspection: WorkspaceInspection = {...f.inspection,schemaVersion:1,complete:true,refsDigest:'3'.repeat(64),
+    conflictMarkerPaths:[],statusPorcelainBase64:Buffer.from('UU source.ts\0').toString('base64'),
+    contents:{tracked:[{path:'source.ts',state:'present',sizeBytes:10,digest:'4'.repeat(64),mode:420,
+      indexMode:'100644',indexObject:'a'.repeat(40),protection:'tracked'}],untracked:[],ignored:[],directories:[]}};
+  f.inspector.inspect.mockResolvedValue(inspection);
+  // A predecessor currently being merged is not an ancestor until Core commits.
+  f.git.isAncestor.mockResolvedValue(false);
+  const candidate = {inspection,operationId:f.input.operationId,inputDigest:f.input.inputDigest};
+  return {...f,inspection,candidate};
+}
+
+it('[case:integration-candidate-exec-evidence] independently checks frozen uncommitted bytes without claiming a committed integration', async () => {
+  const f = candidateFixture();
+  const result = await createNodeIntegrationCandidateVerificationExecutor(f.deps,f.candidate).start(f.input);
+  expect(result).toMatchObject({status:'passed',stopped:true});
+  expect(f.start).toHaveBeenCalledOnce();
+  expect(state.collect).toHaveBeenCalledWith(expect.objectContaining({codeIdentity:{headCommit:f.input.workspace.currentHead,
+    workingTreeDigest:f.inspection.codeDigest,hasUncommittedChanges:true}}));
+  const plan = JSON.parse(Buffer.from(f.publishArtifact.mock.calls[0]![0].content[0]).toString());
+  const report = JSON.parse(Buffer.from(f.publishArtifact.mock.calls[1]![0].content[0]).toString());
+  expect(plan.candidate).toMatchObject({workingTreeDigest:f.inspection.codeDigest,hasUncommittedChanges:true});
+  expect(report.candidate).toEqual(plan.candidate);
+  expect(f.git.isAncestor).not.toHaveBeenCalled();
+  expect(f.git.stagedPaths).not.toHaveBeenCalled();
+  await expect(createNodeIntegrationVerificationExecutor(f.deps).start(f.input)).rejects.toMatchObject({details:{reason:'source_changed'}});
+});
+
+it.each(['bytes','refs','status','markers','incomplete','operation','input'] as const)(
+  '[case:integration-candidate-exec-reject-%s] refuses altered or unbound candidates before launching checks', async change => {
+    const f = candidateFixture();
+    const candidate = structuredClone(f.candidate);
+    if (change === 'operation') candidate.operationId = 'other';
+    if (change === 'input') candidate.inputDigest = '9'.repeat(64);
+    const observed = change === 'bytes' ? {...f.inspection,codeDigest:'8'.repeat(64)}
+      : change === 'refs' ? {...f.inspection,refsDigest:'8'.repeat(64)}
+      : change === 'status' ? {...f.inspection,statusPorcelainBase64:''}
+      : change === 'markers' ? {...f.inspection,conflictMarkerPaths:['source.ts']}
+      : change === 'incomplete' ? {...f.inspection,complete:false} : f.inspection;
+    f.inspector.inspect.mockResolvedValue(observed as WorkspaceInspection);
+    await expect(createNodeIntegrationCandidateVerificationExecutor(f.deps,candidate).start(f.input)).rejects.toThrow();
+    expect(f.start).not.toHaveBeenCalled();
+  });
+
+it('[case:integration-candidate-exec-mutation] refuses bytes changed by the verification command and publishes no passing result', async () => {
+  const f = candidateFixture();
+  const capture = state.collect.getMockImplementation()!;
+  state.collect.mockImplementation(async input => {
+    const result = await capture(input);
+    f.inspector.inspect.mockResolvedValue({...f.inspection,codeDigest:'8'.repeat(64)});
+    return result;
+  });
+  await expect(createNodeIntegrationCandidateVerificationExecutor(f.deps,f.candidate).start(f.input)).rejects.toThrow();
+  expect(f.publishArtifact).toHaveBeenCalledTimes(1);
 });
