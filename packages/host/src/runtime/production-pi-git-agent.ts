@@ -57,6 +57,14 @@ export function createProductionPiGitAgentDriver(options: {
   readonly authority: ProductionGitAgentAuthority;
   readonly nowUtcMs?: () => number;
 }): PiGitAgentRuntimeDriver {
+  if (options === null || typeof options !== 'object' || typeof options.capabilityCatalog?.resolve !== 'function'
+    || options.authority === null || typeof options.authority !== 'object'
+    || ['resolve', 'assertCurrent', 'confirmProcess', 'inspectCandidate', 'record']
+      .some(key => typeof options.authority[key as keyof ProductionGitAgentAuthority] !== 'function')) {
+    throw new RuntimeError('configuration', 'git_agent_authority_invalid');
+  }
+  if (options.runtimeFactory === undefined) throw new RuntimeError('missing_runtime', 'git_agent_driver_unavailable');
+  if (typeof options.runtimeFactory !== 'function') throw new RuntimeError('configuration', 'git_agent_driver_invalid');
   const now = options.nowUtcMs ?? Date.now;
   // Retain admission even for failures. A new authorized attempt must use a new invocation.
   const admitted = new Map<string, { digest: string; handle: ReturnType<PiGitAgentRuntimeDriver['start']> }>();

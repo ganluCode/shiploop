@@ -10,12 +10,52 @@
       "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-002.json"
     },
     {
+      "task_id": "F-003",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-003.json"
+    },
+    {
+      "task_id": "F-004",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-004.json"
+    },
+    {
+      "task_id": "F-005",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-005.json"
+    },
+    {
+      "task_id": "F-006",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-006.json"
+    },
+    {
+      "task_id": "F-007",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-007.json"
+    },
+    {
+      "task_id": "F-008",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-008.json"
+    },
+    {
       "task_id": "F-009",
       "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-009.json"
     },
     {
       "task_id": "F-010",
       "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-010.json"
+    },
+    {
+      "task_id": "F-011",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-011.json"
+    },
+    {
+      "task_id": "F-012",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-012.json"
+    },
+    {
+      "task_id": "F-013",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-013.json"
+    },
+    {
+      "task_id": "F-014",
+      "index": "test/index/phases/P08/features/shiploop-dag/tasks/F-014.json"
     }
   ]
 }

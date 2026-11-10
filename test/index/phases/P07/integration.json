@@ -563,6 +563,16 @@
           "file": "test/modules/delivery/p03-10-task-commit-store.test.ts",
           "all": true,
           "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-6-f006-integration-assembly.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p08-4-f009-phase-integration.test.ts",
+          "all": true,
+          "level": "integration"
         }
       ]
     }

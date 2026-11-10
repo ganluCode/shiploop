@@ -22,7 +22,7 @@
 
 模型使用获准 strategy，不执行 Work fallback 路由；GitAgent 的 SDK/适配器网络重试为零，模型多轮工具循环仍受 maxRequests、Token、剩余 runtime 和绝对 deadline 限制。配置和凭据缺失明确失败，认证正文只在受信生产凭据层处理。
 
-重复 invocation/requestDigest 复用同一启动句柄；同 invocation 的不同授权拒绝；失败准入不被遗忘。无法装配生产 Runtime 时返回 `git_agent_driver_unavailable`。未知 usage 明确失败并在记录中保留 null，不把 0 当作已核实用量；超预算只允许以 failed/budget_exhausted 保留真实消耗，不允许变成成功候选。Core 原预算累计与 hold 继续生效。
+重复 invocation/requestDigest 复用同一启动句柄；同 invocation 的不同授权拒绝；失败准入不被遗忘。F-014 将缺失 Runtime 工厂与损坏 authority/driver 的拒绝提前到构造阶段：未装配 Runtime 抛出 `missing_runtime/git_agent_driver_unavailable`，不返回半可用生产适配器。未知 usage 明确失败并在记录中保留 null，不把 0 当作已核实用量；超预算只允许以 failed/budget_exhausted 保留真实消耗，不允许变成成功候选。Core 原预算累计与 hold 继续生效。
 
 ## 监督
 

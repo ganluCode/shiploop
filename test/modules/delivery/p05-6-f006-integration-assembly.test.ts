@@ -20,6 +20,21 @@ describe('P05-6 F-006 production integration assembly', () => {
     }
   });
 
+  it('[case:integration-assembly-invalid-facts-close-session] rejects malformed factory facts and permits reopening the same SQLite root', async () => {
+    const sandbox = createTempSandbox('shiploop-invalid-integration-facts-');
+    const options = { dataRoot: `${sandbox.path}/data`, capabilityCatalog: catalog() };
+    try {
+      for (const result of [null, { batches: {}, predecessors: {} },
+        { batches: { readApprovedBatch() {} }, predecessors: { readEvidence() {} }, scheduler: null }]) {
+        await expect(openCoreApplication({ ...options, integrationPlanFactory: () => result }))
+          .rejects.toMatchObject({ kind: 'validation', details: { field: 'integrationPlanFactory' } });
+        const reopened = await openCoreApplication(options);
+        try { expect(reopened.integrationPlanGeneration).toBeUndefined(); }
+        finally { reopened.close(); }
+      }
+    } finally { sandbox.cleanup(); }
+  });
+
   it('[case:integration-assembly-trusted-facts] assembles generation and control over one plan store', async () => {
     const sandbox = createTempSandbox('shiploop-p05-6-f006-assembly-trusted-');
     const app = await openCoreApplication({

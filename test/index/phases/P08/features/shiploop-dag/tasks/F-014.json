@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-014",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/delivery/integration-assembly-validation.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/runtime/production-git-agent-assembly.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/runtime/production-pi-git-agent.test.ts", "all": true, "level": "unit" },
+      { "file": "test/modules/delivery/p05-6-f006-integration-assembly.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/delivery/p05-8-f007-git-agent-composition.test.ts", "all": true, "level": "integration" },
+      { "file": "test/modules/acceptance/p08-4-f009-phase-integration.test.ts", "all": true, "level": "integration" }
+    ]
+  }]
+}

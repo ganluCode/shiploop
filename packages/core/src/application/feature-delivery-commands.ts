@@ -59,8 +59,9 @@ export function createFeatureDeliveryCommandHandler(options: {
 }) {
   const { atomicStore: store, dependencies: deps, nowUtcMs } = options;
   if (typeof deps?.verify !== 'function' || typeof deps.readIntent !== 'function' || typeof deps.commit?.commit !== 'function'
-    || typeof deps.reconciliation?.reconcile !== 'function') {
-    throw new TypeError('Feature delivery requires trusted verification, commit and reconciliation adapters');
+    || typeof deps.reconciliation?.reconcile !== 'function'
+    || deps.integrationStart !== undefined && typeof deps.integrationStart?.start !== 'function') {
+    throw new TypeError('Feature delivery requires trusted verification, commit, reconciliation and integration start adapters');
   }
   const finalization = createFeatureFinalizationService({ atomic: store, verify: deps.verify, commit: deps.commit,
     ...(deps.afterFinalization === undefined ? {} : { onFinalized: deps.afterFinalization }),

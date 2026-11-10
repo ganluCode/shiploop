@@ -1,0 +1,185 @@
+{
+  "schema_version": 2,
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p05-10-f005-git-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/acceptance/p08-4-f009-phase-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/git-agent-integration-commit.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-10-task-commit-store.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f004-git-commit-reconciliation.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-6-f006-integration-assembly.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-7-f004-deterministic-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f002-git-agent-repair-run.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f003-git-agent-runtime.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f004-git-agent-candidate-finalization.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f005-git-agent-recovery-sqlite.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f007-git-agent-composition.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval-sqlite.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/delivery/p07-5-f004-git-recovery-boundary.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/p05-9-f006-batch-delivery-host.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/host/production-pi-startup.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/notifications/p07-4-f006-notification-projection.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/planning/feature-dag-diamond-evidence.test.ts",
+          "level": "integration",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/feature-dag-store-evidence.test.ts",
+          "level": "integration",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/planning-baseline-separation.test.ts",
+          "level": "integration",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-failure-routing-integration.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/p06-7-f005-process-recovery.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-auth.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-file-tools.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/runtime/production-pi-runner.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/scheduling/p05-5-f008-cross-layer.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/storage/sqlite/p08-dag-f013-delivery-context.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts",
+          "all": true,
+          "level": "integration"
+        },
+        {
+          "file": "test/modules/workspace/p03-5-workspace-inspector.test.ts",
+          "all": true,
+          "level": "integration"
+        }
+      ]
+    }
+  ]
+}

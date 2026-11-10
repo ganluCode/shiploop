@@ -282,22 +282,16 @@ import { validatePlanningRequest } from '../ports/planning-candidates.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
 import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
 import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
-import type {
-  IntegrationBatchApprovalReader,
-  IntegrationPlanGenerationService,
-  IntegrationPredecessorEvidenceReader,
-} from '../application/integration-plan-generation.js';
+import type { IntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
+import { validateIntegrationPlanFacts } from './integration-assembly.js';
+import type { IntegrationPlanFacts } from './integration-assembly.js';
 import { createGitAgentRepairService, type GitAgentRepairService } from '../application/git-agent-repair.js';
 import { createSqliteGitAgentRepairStore } from './sqlite/git-agent-repair-store.js';
 import { createSqliteGitAgentRepairQueryStore } from './sqlite/git-agent-repair-query-store.js';
 import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
 import { createIntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
-import type {
-  IntegrationPlanScheduler,
-  IntegrationPlanScheduleCandidateReader,
-  IntegrationPlanDispatchWriter,
-} from '../application/integration-plan-scheduler.js';
+import type { IntegrationPlanScheduler } from '../application/integration-plan-scheduler.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
 import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
 import { createExecutionBaselineAuthority } from '../application/execution-baseline-authority.js';
@@ -329,15 +323,7 @@ export interface CoreApplicationOptions {
   readonly integrationPlanFactory?: (deps: {
     readonly atomicStore: AtomicCommandStore;
     readonly planStore: IntegrationPlanAccess;
-  }) => {
-    readonly batches: IntegrationBatchApprovalReader;
-    readonly predecessors: IntegrationPredecessorEvidenceReader;
-    /** Optional trusted operation-intent and SQLite candidate readers for event/scan scheduling. */
-    readonly scheduler?: {
-      readonly candidates: IntegrationPlanScheduleCandidateReader;
-      readonly dispatch: IntegrationPlanDispatchWriter;
-    };
-  };
+  }) => IntegrationPlanFacts;
   /** P03-9 / F-011：受信 finalization-only Run 重验执行（未装配时调度保留 capability gap）。 */
   readonly finalizationExecution?: FinalizationExecutionPort;
   /** P03-9 / F-012：重验后最终审批/提交/完成消费者（不启动 Runtime）。 */
@@ -1601,17 +1587,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       atomicStore,
       planStore: integrationPlanStore,
     });
-    if (object.integrationPlanFactory !== undefined && (
-      integrationPlanFacts === undefined || integrationPlanFacts.batches === undefined || integrationPlanFacts.predecessors === undefined
-    )) {
-      throw validationError(context, 'integrationPlanFactory', 'integration_fact_adapters_required');
-    }
-    if (integrationPlanFacts?.scheduler !== undefined && (
-      typeof integrationPlanFacts.scheduler.candidates?.list !== 'function'
-      || typeof integrationPlanFacts.scheduler.dispatch?.reserve !== 'function'
-    )) {
-      throw validationError(context, 'integrationPlanFactory', 'integration_scheduler_adapters_required');
-    }
+    if (object.integrationPlanFactory !== undefined) validateIntegrationPlanFacts(integrationPlanFacts);
     const gitAgentRepair = createGitAgentRepairService({ atomic: atomicStore,
       store: createSqliteGitAgentRepairStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }) });
     const integrationPlanControl = createIntegrationPlanControlService({ atomic: atomicStore, plans: integrationPlanStore });

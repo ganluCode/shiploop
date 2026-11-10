@@ -87,8 +87,8 @@ it('[case:production-git-agent-idempotency] admits one launch and fences a chang
 
 it('[case:production-git-agent-unavailable] missing driver and authentication fail without model fallback', async () => {
   const f = fixture();
-  const unavailable = createProductionPiGitAgentDriver({ ...f.options, runtimeFactory: undefined });
-  await expect(unavailable.start(f.value)).rejects.toMatchObject({ reason: 'git_agent_driver_unavailable' });
+  expect(() => createProductionPiGitAgentDriver({ ...f.options, runtimeFactory: undefined }))
+    .toThrow(expect.objectContaining({ kind: 'missing_runtime', reason: 'git_agent_driver_unavailable' }));
   expect(f.authority.resolve).not.toHaveBeenCalled();
   f.start.mockRejectedValue(new RuntimeError('authentication', 'production_pi_auth_missing'));
   const completion = await superviseGitAgentRuntime(f.driver, f.value);
